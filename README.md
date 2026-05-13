@@ -52,8 +52,8 @@ srt_speaker_separator.exe input.srt
 ## 🛠 빌드 방법
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --console --name srt_speaker_separator srt_speaker_separator.py
+python -m pip install pyinstaller
+python -m PyInstaller --onefile --noconsole --name srt_speaker_separator srt_speaker_separator.py
 ```
 
 결과:

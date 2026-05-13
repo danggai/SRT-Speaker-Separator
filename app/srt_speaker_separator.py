@@ -740,7 +740,6 @@ class SRTEditor(tk.Tk):
         self._rows_win = self.canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.vsb.set)
 
-        # canvas 크기 바뀌면 rows_frame 너비를 canvas에 맞춤 (핵심!)
         def _on_canvas_resize(e):
             self.canvas.itemconfig(self._rows_win, width=e.width)
             self._schedule_col_layout()
@@ -849,7 +848,6 @@ class SRTEditor(tk.Tk):
         self._apply_col_layout_to_rows()
 
     def _schedule_col_layout(self, delay_ms=60):
-        """Configure 이벤트 연속 발생 시 마지막 것만 실행 (debounce)."""
         if self._layout_debounce_job is not None:
             try:
                 self.after_cancel(self._layout_debounce_job)
@@ -859,7 +857,6 @@ class SRTEditor(tk.Tk):
 
     # ── 기존 행 위젯에 컬럼 너비만 반영 (재생성 없음) ──
     def _apply_col_layout_to_rows(self, visible_only=True):
-        """뷰포트에 보이는 행만 즉시 처리, 나머지는 idle 시간에 청크 처리."""
         if not self._row_widgets:
             return
         pos = self._get_col_positions()
@@ -1132,12 +1129,12 @@ class SRTEditor(tk.Tk):
 
     # ── 설정 창 ────────────────────────────
     def _open_settings(self):
-        """설정 창: 화자 구분 패턴 변경 (% = 화자명, & = 자막 내용)"""
+        """설정 창: 화자 구분 패턴 변경 + 앱 정보"""
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("520x300")
+        win.geometry("520x380")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
@@ -1166,7 +1163,6 @@ class SRTEditor(tk.Tk):
                              highlightcolor=ACCENT)
         pat_entry.pack(fill="x", ipady=4)
 
-        # 변환된 정규식 미리보기
         preview_lbl = tk.Label(sec, text="", bg=BG, fg=FG_DIM,
                                font=(FONT_MONO, 8), wraplength=460, justify="left")
         preview_lbl.pack(anchor="w", pady=(3, 0))
@@ -1228,6 +1224,56 @@ class SRTEditor(tk.Tk):
                   font=(FONT_FAMILY, 10), padx=12, pady=5,
                   activebackground="#333333",
                   command=win.destroy).pack(side="right", padx=(0, 8))
+
+        # ── 앱 정보 섹션 ──────────────────────
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(4, 0))
+
+        about = tk.Frame(win, bg=BG)
+        about.pack(fill="x", padx=20, pady=12)
+
+        # 버전
+        ver_row = tk.Frame(about, bg=BG)
+        ver_row.pack(fill="x", pady=(0, 6))
+        tk.Label(ver_row, text="버전", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 9)).pack(side="left")
+        tk.Label(ver_row, text="0.1.0", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold")).pack(side="left", padx=(8, 0))
+
+        # GitHub 링크 버튼
+        GH_URL = "https://github.com/danggai/SRT-Speaker-Separator"
+
+        def _open_github(e=None):
+            import webbrowser
+            webbrowser.open(GH_URL)
+
+        gh_row = tk.Frame(about, bg=BG)
+        gh_row.pack(fill="x")
+
+        # GitHub SVG 아이콘을 Canvas로 표현
+        icon_c = tk.Canvas(gh_row, width=16, height=16, bg=BG,
+                           highlightthickness=0, cursor="hand2")
+        icon_c.pack(side="left")
+        # 원형 배경
+        icon_c.create_oval(1, 1, 15, 15, fill=FG_DIM, outline="")
+        # 고양이 실루엣 간략화 (머리+귀 도형)
+        icon_c.create_oval(3, 3, 13, 13, fill=BG, outline="")
+        icon_c.create_oval(4, 4, 12, 12, fill=FG_DIM, outline="")
+        icon_c.create_oval(5, 5, 11, 11, fill=BG, outline="")
+        icon_c.create_oval(6, 6, 10, 10, fill=FG_DIM, outline="")
+
+        gh_lbl = tk.Label(gh_row, text="GitHub", bg=BG, fg=FG_DIM,
+                          font=(FONT_FAMILY, 9, "underline"), cursor="hand2")
+        gh_lbl.pack(side="left", padx=(5, 0))
+
+        def _on_enter(e):
+            gh_lbl.configure(fg=ACCENT)
+        def _on_leave(e):
+            gh_lbl.configure(fg=FG_DIM)
+
+        for w in (icon_c, gh_lbl):
+            w.bind("<Button-1>", _open_github)
+            w.bind("<Enter>",    _on_enter)
+            w.bind("<Leave>",    _on_leave)
 
     # ── 자막 행 렌더 ────────────────────────
     def _render_rows(self):
@@ -1677,10 +1723,9 @@ class SRTEditor(tk.Tk):
         self._apply_snapshot(subs, spks)
 
     def _apply_snapshot(self, new_subs, new_spks):
-        """스냅샷 복원: diff 비교로 변경된 행만 업데이트, 행 수 변화 시도 위젯 단위 처리."""
+        """스냅샷 복원: diff로 변경 구간만 위젯 재생성, 전체 재렌더 최소화."""
         old_subs    = self.subtitles
         spk_changed = (new_spks != self.speakers)
-
         self.subtitles = new_subs
         self.speakers  = new_spks
         self._unsaved  = True
@@ -1689,84 +1734,60 @@ class SRTEditor(tk.Tk):
         new_len = len(new_subs)
 
         if old_len == new_len:
-            # 행 수 동일: 내용이 다른 행만 부분 갱신
-            changed_indices = [
-                i for i, (a, b) in enumerate(zip(old_subs, new_subs)) if a != b
-            ]
+            changed = [i for i, (a, b) in enumerate(zip(old_subs, new_subs)) if a != b]
             if spk_changed:
                 self._render_rows()
                 self._render_speakers()
                 return
-            for i in changed_indices:
+            for i in changed:
                 self._refresh_row_full(i)
             self._update_count()
             return
 
-        # ── 행 수가 달라진 경우: 위젯 단위 diff 처리 ──
-        # 삭제(old > new) / 삽입(old < new) 모두 처리
-        # 변경 범위를 앞에서부터 탐색해 최소한만 재생성
+        # 앞뒤 공통 구간 제외, 변경된 구간만 처리
         min_len = min(old_len, new_len)
-
-        # 앞쪽 공통 구간 찾기
         first_diff = 0
         while first_diff < min_len and old_subs[first_diff] == new_subs[first_diff]:
             first_diff += 1
 
-        # 뒤쪽 공통 구간 찾기
-        last_old = old_len - 1
-        last_new = new_len - 1
+        last_old, last_new = old_len - 1, new_len - 1
         while (last_old >= first_diff and last_new >= first_diff
                and old_subs[last_old] == new_subs[last_new]):
             last_old -= 1
             last_new -= 1
 
-        # first_diff ~ last_old 구간 위젯 제거
+        # 변경 구간 위젯 제거
         for i in range(last_old, first_diff - 1, -1):
             if i < len(self._row_widgets):
                 frame = self._row_widgets[i].get("_row_frame")
                 if frame:
-                    try:
-                        frame.destroy()
-                    except Exception:
-                        pass
+                    try: frame.destroy()
+                    except Exception: pass
                 self._row_widgets.pop(i)
 
-        # first_diff ~ last_new 구간 위젯 삽입
+        # 변경 구간 위젯 삽입
         self._cached_col_pos = self._get_col_positions()
         children_before = list(self.rows_frame.winfo_children())
-        # first_diff 이후 기존 위젯들을 임시로 unpack
         for i in range(first_diff, len(children_before)):
-            try:
-                children_before[i].pack_forget()
-            except Exception:
-                pass
+            try: children_before[i].pack_forget()
+            except Exception: pass
 
         new_infos = []
         for i in range(first_diff, last_new + 1):
             self._make_row(i, new_subs[i])
             new_infos.append(self._row_widgets.pop())
 
-        # 새 위젯들을 올바른 위치에 삽입
-        for info in new_infos:
-            self._row_widgets.insert(first_diff + new_infos.index(info), info)
+        for j, info in enumerate(new_infos):
+            self._row_widgets.insert(first_diff + j, info)
 
-        # unpack했던 기존 위젯 재pack
         for i in range(first_diff, len(children_before)):
-            try:
-                children_before[i].pack(fill="x")
-            except Exception:
-                pass
+            try: children_before[i].pack(fill="x")
+            except Exception: pass
 
         self._cached_col_pos = None
-
-        # first_diff 이후 행 번호/배경색 갱신
         self._renumber_rows(first_diff)
         self._update_count()
-
-        if spk_changed:
-            self._render_speakers()
-        else:
-            self._render_speakers()
+        self._render_speakers()
 
     def _refresh_row_full(self, idx):
         """idx 행의 Entry 값 + pill을 모두 갱신 (위젯 재생성 없음)."""
