@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import re
 import os
+import copy
 from collections import defaultdict
 import threading
 import subprocess
@@ -233,7 +234,7 @@ class MediaPlayer:
             result = subprocess.run(
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
                  "-show_format", path],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             info = json.loads(result.stdout)
             return float(info["format"]["duration"])
         except Exception:
@@ -241,7 +242,7 @@ class MediaPlayer:
         try:
             result = subprocess.run(
                 ["ffmpeg", "-i", path],
-                capture_output=True, text=True, timeout=10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", result.stderr)
             if m:
                 h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
@@ -278,6 +279,15 @@ class MediaPlayer:
     def seek(self, delta):
         """delta 초만큼 이동 (양수/음수)"""
         new_pos = max(0.0, min(self._position + delta, self._duration))
+        was_playing = self._playing
+        self._kill_proc()
+        self._position = new_pos
+        if was_playing:
+            self._start_play(new_pos)
+
+    def seek_to(self, pos):
+        """절대 위치(초)로 이동"""
+        new_pos = max(0.0, min(pos, self._duration))
         was_playing = self._playing
         self._kill_proc()
         self._position = new_pos
@@ -382,6 +392,11 @@ class SRTEditor(tk.Tk):
         self._last_focused_idx = None
         self._unsaved   = False   # 미저장 변경사항 추적
 
+        # Undo / Redo 스택  (각 항목: (subtitles_deepcopy, speakers_copy))
+        self._undo_stack = []
+        self._redo_stack = []
+        self._clipboard  = None   # 잘라내기/복사한 자막 dict
+
         # 미디어 플레이어
         self.player      = MediaPlayer()
         self.media_path  = None
@@ -398,6 +413,13 @@ class SRTEditor(tk.Tk):
         self.bind("<space>",     self._on_space_key)
         self.bind("<Left>",      lambda e: self._media_seek(-5))
         self.bind("<Right>",     lambda e: self._media_seek(+5))
+        self.bind("<Control-z>", lambda e: self._undo())
+        self.bind("<Control-Z>", lambda e: self._redo())
+        self.bind("<Control-x>", self._on_cut)
+        self.bind("<Control-c>", self._on_copy)
+        self.bind("<Control-v>", self._on_paste)
+        self.bind("<Up>",        self._on_arrow_up)
+        self.bind("<Down>",      self._on_arrow_down)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── 스타일 ────────────────────────────────
@@ -510,6 +532,21 @@ class SRTEditor(tk.Tk):
 
         ttk.Button(top, text="📤  화자별 내보내기",
                    style="Ghost.TButton", command=self.export
+                   ).pack(side="left", padx=(0, 6), pady=8)
+
+        tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
+
+        ttk.Button(top, text="＋  자막 추가",
+                   style="Ghost.TButton",
+                   command=lambda: self.add_row(getattr(self, "_last_focused_idx", None))
+                   ).pack(side="left", padx=(0, 4), pady=8)
+
+        ttk.Button(top, text="↩  실행취소",
+                   style="Ghost.TButton", command=self._undo
+                   ).pack(side="left", padx=(0, 4), pady=8)
+
+        ttk.Button(top, text="↪  다시실행",
+                   style="Ghost.TButton", command=self._redo
                    ).pack(side="left", padx=(0, 6), pady=8)
 
         self.lbl_file = ttk.Label(top, text="파일을 열어주세요", style="Dim.TLabel")
@@ -693,10 +730,11 @@ class SRTEditor(tk.Tk):
                                     command=self.canvas.yview)
 
         self.rows_frame = tk.Frame(self.canvas, bg=BG)
+        self._layout_debounce_job = None
 
         def _on_rows_configure(e):
             self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-            self._on_rows_frame_resize()
+            self._schedule_col_layout()
 
         self.rows_frame.bind("<Configure>", _on_rows_configure)
         self._rows_win = self.canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
@@ -705,6 +743,7 @@ class SRTEditor(tk.Tk):
         # canvas 크기 바뀌면 rows_frame 너비를 canvas에 맞춤 (핵심!)
         def _on_canvas_resize(e):
             self.canvas.itemconfig(self._rows_win, width=e.width)
+            self._schedule_col_layout()
         self.canvas.bind("<Configure>", _on_canvas_resize)
 
         self.canvas.pack(side="left", fill="both", expand=True)
@@ -809,26 +848,63 @@ class SRTEditor(tk.Tk):
         self._layout_header()
         self._apply_col_layout_to_rows()
 
+    def _schedule_col_layout(self, delay_ms=60):
+        """Configure 이벤트 연속 발생 시 마지막 것만 실행 (debounce)."""
+        if self._layout_debounce_job is not None:
+            try:
+                self.after_cancel(self._layout_debounce_job)
+            except Exception:
+                pass
+        self._layout_debounce_job = self.after(delay_ms, self._on_rows_frame_resize)
+
     # ── 기존 행 위젯에 컬럼 너비만 반영 (재생성 없음) ──
-    def _apply_col_layout_to_rows(self):
-        """행을 destroy하지 않고 각 위젯의 place x/width만 업데이트."""
+    def _apply_col_layout_to_rows(self, visible_only=True):
+        """뷰포트에 보이는 행만 즉시 처리, 나머지는 idle 시간에 청크 처리."""
+        if not self._row_widgets:
+            return
         pos = self._get_col_positions()
         h   = self.ROW_H
-        # content 컬럼 포함 전체 처리
         all_cols = list(self._COL_IDS) + ["content"]
-        for row_info in self._row_widgets:
+
+        if visible_only:
+            try:
+                top_frac, bot_frac = self.canvas.yview()
+                total_h = len(self._row_widgets) * h
+                buf = h * 2
+                first = max(0, (int(top_frac * total_h) - buf) // h)
+                last  = min(len(self._row_widgets) - 1,
+                            (int(bot_frac * total_h) + buf) // h)
+            except Exception:
+                first, last = 0, len(self._row_widgets) - 1
+        else:
+            first, last = 0, len(self._row_widgets) - 1
+
+        def _place_row(idx):
+            row_info = self._row_widgets[idx]
             for cid in all_cols:
                 if cid not in row_info or cid not in pos:
                     continue
-                widget = row_info[cid]
                 x, w = pos[cid]
-                # ts_s, ts_e는 y 오프셋 3px
                 y_off = 3 if cid in ("ts_s", "ts_e", "content") else 0
                 h_use = (h - 6) if cid in ("ts_s", "ts_e", "content") else h
                 try:
-                    widget.place(x=x, y=y_off, width=w, height=h_use)
+                    row_info[cid].place(x=x, y=y_off, width=w, height=h_use)
                 except Exception:
                     pass
+
+        for idx in range(first, last + 1):
+            _place_row(idx)
+
+        if visible_only and (first > 0 or last < len(self._row_widgets) - 1):
+            offscreen = list(range(0, first)) + list(range(last + 1, len(self._row_widgets)))
+            CHUNK = 40
+            def _process(indices):
+                for idx in indices[:CHUNK]:
+                    if idx < len(self._row_widgets):
+                        _place_row(idx)
+                if indices[CHUNK:]:
+                    self.after_idle(lambda r=indices[CHUNK:]: _process(r))
+            self.after_idle(lambda: _process(offscreen))
 
     # 행 빌드 시 컬럼 너비 참조 헬퍼 (하위호환)
     def _row_col_w(self, col_id):
@@ -922,11 +998,13 @@ class SRTEditor(tk.Tk):
         w = c.winfo_width()
         h = c.winfo_height()
         if w <= 1:
+            # Canvas가 아직 배치되지 않은 경우 짧게 대기 후 재시도
+            self.after(50, self._pb_redraw)
             return
         c.delete("all")
-        dur = self.player.duration if self.player.duration > 0 else 1
+        dur = self.player.duration if self.player.duration > 0 else 0
         pos = self.media_progress_var.get()
-        ratio = min(pos / dur, 1.0)
+        ratio = min(pos / dur, 1.0) if dur > 0 else 0.0
         filled = int(w * ratio)
 
         # 트랙 배경
@@ -970,11 +1048,8 @@ class SRTEditor(tk.Tk):
         pos = self._pb_pos_from_x(event.x)
         self.media_progress_var.set(pos)
         was_playing = self.player.is_playing
-        self.player._kill_proc()
-        self.player._position = pos
-        self.player._playing  = False
+        self.player.seek_to(pos)
         if was_playing:
-            self.player.play()
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
         self._pb_redraw()
@@ -1049,6 +1124,7 @@ class SRTEditor(tk.Tk):
         idx = getattr(self, "_last_focused_idx", None)
         if idx is None or idx >= len(self.subtitles):
             return
+        self._push_undo()
         self.subtitles[idx]["speaker"] = name
         self._unsaved = True
         self._refresh_row(idx)
@@ -1159,12 +1235,14 @@ class SRTEditor(tk.Tk):
             w.destroy()
         self._row_widgets = []
         self._selected_row_idx = None
+        # 컬럼 위치를 한 번만 계산해 캐시 → 행마다 재계산 방지
+        self._cached_col_pos = self._get_col_positions()
         for idx, sub in enumerate(self.subtitles):
             self._make_row(idx, sub)
+        self._cached_col_pos = None   # 캐시 해제
         self._update_count()
-        self._auto_resize_speaker_col()
+        self._auto_resize_speaker_col()  # 내부에서 _apply_col_layout_to_rows 1회 호출
         self._layout_header()
-        self._apply_col_layout_to_rows()
 
     # ── 타임스탬프 유효성 패턴 ───────────────
     _TS_RE    = re.compile(r"^\d{2}:\d{2}:\d{2}[,\.]\d{3}$")
@@ -1243,7 +1321,8 @@ class SRTEditor(tk.Tk):
         _ts_style(ts_e, ts_end)
 
         # ── 자막 텍스트 (content, 가변) ───────
-        pos = self._get_col_positions()
+        # _render_rows 에서 미리 캐시된 위치 사용 (없으면 즉시 계산)
+        pos = getattr(self, "_cached_col_pos", None) or self._get_col_positions()
         cx, cw = pos["content"]
 
         txt_var = tk.StringVar(value=sub["text"])
@@ -1427,19 +1506,17 @@ class SRTEditor(tk.Tk):
         h, mi, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
         pos = h * 3600 + mi * 60 + s + ms / 1000.0
         was_playing = self.player.is_playing
-        self.player._kill_proc()
-        self.player._position = pos
-        self.player._playing  = False
+        self.player.seek_to(pos)
         self.media_progress_var.set(pos)
         self.lbl_pos.configure(text=self._fmt_time(pos))
         self._pb_redraw()
         if was_playing:
-            self.player.play()
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
 
     def _pill_select(self, sub_idx, val):
         """pill 클릭 시 화자 지정 + 해당 행만 재렌더"""
+        self._push_undo()
         self.subtitles[sub_idx]["speaker"] = val
         self._unsaved = True
         self._refresh_row(sub_idx)
@@ -1571,6 +1648,344 @@ class SRTEditor(tk.Tk):
         self.subtitles[idx]["text"] = var.get()
         self._unsaved = True
 
+    # ── Undo / Redo ───────────────────────────
+    _UNDO_MAX = 50   # 최대 스택 깊이
+
+    def _snapshot(self):
+        """현재 subtitles/speakers 상태를 스냅샷으로 저장."""
+        return (copy.deepcopy(self.subtitles), list(self.speakers))
+
+    def _push_undo(self):
+        """현재 상태를 undo 스택에 쌓고 redo 스택을 비움."""
+        self._undo_stack.append(self._snapshot())
+        if len(self._undo_stack) > self._UNDO_MAX:
+            self._undo_stack.pop(0)
+        self._redo_stack.clear()
+
+    def _undo(self):
+        if not self._undo_stack:
+            return
+        self._redo_stack.append(self._snapshot())
+        subs, spks = self._undo_stack.pop()
+        self._apply_snapshot(subs, spks)
+
+    def _redo(self):
+        if not self._redo_stack:
+            return
+        self._undo_stack.append(self._snapshot())
+        subs, spks = self._redo_stack.pop()
+        self._apply_snapshot(subs, spks)
+
+    def _apply_snapshot(self, new_subs, new_spks):
+        """스냅샷 복원: diff 비교로 변경된 행만 업데이트, 행 수 변화 시도 위젯 단위 처리."""
+        old_subs    = self.subtitles
+        spk_changed = (new_spks != self.speakers)
+
+        self.subtitles = new_subs
+        self.speakers  = new_spks
+        self._unsaved  = True
+
+        old_len = len(old_subs)
+        new_len = len(new_subs)
+
+        if old_len == new_len:
+            # 행 수 동일: 내용이 다른 행만 부분 갱신
+            changed_indices = [
+                i for i, (a, b) in enumerate(zip(old_subs, new_subs)) if a != b
+            ]
+            if spk_changed:
+                self._render_rows()
+                self._render_speakers()
+                return
+            for i in changed_indices:
+                self._refresh_row_full(i)
+            self._update_count()
+            return
+
+        # ── 행 수가 달라진 경우: 위젯 단위 diff 처리 ──
+        # 삭제(old > new) / 삽입(old < new) 모두 처리
+        # 변경 범위를 앞에서부터 탐색해 최소한만 재생성
+        min_len = min(old_len, new_len)
+
+        # 앞쪽 공통 구간 찾기
+        first_diff = 0
+        while first_diff < min_len and old_subs[first_diff] == new_subs[first_diff]:
+            first_diff += 1
+
+        # 뒤쪽 공통 구간 찾기
+        last_old = old_len - 1
+        last_new = new_len - 1
+        while (last_old >= first_diff and last_new >= first_diff
+               and old_subs[last_old] == new_subs[last_new]):
+            last_old -= 1
+            last_new -= 1
+
+        # first_diff ~ last_old 구간 위젯 제거
+        for i in range(last_old, first_diff - 1, -1):
+            if i < len(self._row_widgets):
+                frame = self._row_widgets[i].get("_row_frame")
+                if frame:
+                    try:
+                        frame.destroy()
+                    except Exception:
+                        pass
+                self._row_widgets.pop(i)
+
+        # first_diff ~ last_new 구간 위젯 삽입
+        self._cached_col_pos = self._get_col_positions()
+        children_before = list(self.rows_frame.winfo_children())
+        # first_diff 이후 기존 위젯들을 임시로 unpack
+        for i in range(first_diff, len(children_before)):
+            try:
+                children_before[i].pack_forget()
+            except Exception:
+                pass
+
+        new_infos = []
+        for i in range(first_diff, last_new + 1):
+            self._make_row(i, new_subs[i])
+            new_infos.append(self._row_widgets.pop())
+
+        # 새 위젯들을 올바른 위치에 삽입
+        for info in new_infos:
+            self._row_widgets.insert(first_diff + new_infos.index(info), info)
+
+        # unpack했던 기존 위젯 재pack
+        for i in range(first_diff, len(children_before)):
+            try:
+                children_before[i].pack(fill="x")
+            except Exception:
+                pass
+
+        self._cached_col_pos = None
+
+        # first_diff 이후 행 번호/배경색 갱신
+        self._renumber_rows(first_diff)
+        self._update_count()
+
+        if spk_changed:
+            self._render_speakers()
+        else:
+            self._render_speakers()
+
+    def _refresh_row_full(self, idx):
+        """idx 행의 Entry 값 + pill을 모두 갱신 (위젯 재생성 없음)."""
+        if idx >= len(self._row_widgets) or idx >= len(self.subtitles):
+            return
+        row_info = self._row_widgets[idx]
+        sub = self.subtitles[idx]
+
+        # 타임스탬프 Entry 갱신
+        ts_full  = sub.get("timestamp", "")
+        parts    = ts_full.split("-->")
+        ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
+        ts_end   = parts[1].strip() if len(parts) >= 2 else ""
+        for cid, val in (("ts_s", ts_start), ("ts_e", ts_end)):
+            w = row_info.get(cid)
+            if w:
+                try:
+                    w.delete(0, "end")
+                    w.insert(0, val)
+                except Exception:
+                    pass
+
+        # 자막 텍스트 Entry 갱신
+        w = row_info.get("content")
+        if w:
+            try:
+                cur = w.get()
+                if cur != sub["text"]:
+                    w.delete(0, "end")
+                    w.insert(0, sub["text"])
+            except Exception:
+                pass
+
+        # Speaker pill 갱신 (_refresh_row와 동일)
+        spk_frame = row_info.get("speaker")
+        if spk_frame:
+            is_selected = getattr(self, "_selected_row_idx", None) == idx
+            bg = ROW_HL if is_selected else (ROW_ODD if idx % 2 == 0 else ROW_EVEN)
+            for child in spk_frame.winfo_children():
+                child.destroy()
+            self._build_speaker_pills(spk_frame, idx, sub, bg)
+
+    # ── 클립보드 (자막 행 단위) ───────────────
+    def _focused_idx(self):
+        """현재 선택/포커스된 행 인덱스 반환 (없으면 None)."""
+        idx = getattr(self, "_last_focused_idx", None)
+        if idx is not None and 0 <= idx < len(self.subtitles):
+            return idx
+        return None
+
+    def _on_cut(self, event):
+        """Ctrl+X: Entry 포커스 중이면 기본 동작, 그 외엔 자막 행 잘라내기."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return  # Entry 내 텍스트 편집 허용
+        idx = self._focused_idx()
+        if idx is None:
+            return
+        self._clipboard = copy.deepcopy(self.subtitles[idx])
+        self._push_undo()
+        self._remove_row_widget(idx)
+        self.subtitles.pop(idx)
+        self._renumber_rows(idx)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        return "break"
+
+    def _on_copy(self, event):
+        """Ctrl+C: Entry 포커스 중이면 기본 동작, 그 외엔 자막 행 복사."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        idx = self._focused_idx()
+        if idx is None:
+            return
+        self._clipboard = copy.deepcopy(self.subtitles[idx])
+        return "break"
+
+    def _on_paste(self, event):
+        """Ctrl+V: Entry 포커스 중이면 기본 동작, 그 외엔 클립보드 자막 붙여넣기."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if self._clipboard is None:
+            return
+        idx = self._focused_idx()
+        insert_at = (idx + 1) if idx is not None else len(self.subtitles)
+        self._push_undo()
+        new_sub = copy.deepcopy(self._clipboard)
+        self.subtitles.insert(insert_at, new_sub)
+        # 새 행 삽입: insert_at 이후 행 번호 갱신
+        self._insert_row_widget(insert_at, new_sub)
+        self._renumber_rows(insert_at)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        self._select_row(insert_at)
+        return "break"
+
+    # ── 자막 추가 ─────────────────────────────
+    def add_row(self, after_idx=None):
+        """자막 한 줄 추가. after_idx=None이면 맨 끝에 추가."""
+        if after_idx is None:
+            after_idx = len(self.subtitles) - 1
+        # 이전 자막의 종료 시간을 시작으로 사용
+        prev_ts_end = "00:00:00,000"
+        if 0 <= after_idx < len(self.subtitles):
+            ts = self.subtitles[after_idx]["timestamp"]
+            parts = ts.split("-->")
+            if len(parts) == 2:
+                prev_ts_end = parts[1].strip()
+        new_sub = {
+            "timestamp": f"{prev_ts_end} --> {prev_ts_end}",
+            "text": "",
+            "speaker": ""
+        }
+        insert_at = after_idx + 1
+        self._push_undo()
+        self.subtitles.insert(insert_at, new_sub)
+        self._insert_row_widget(insert_at, new_sub)
+        self._renumber_rows(insert_at)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        # 새로 추가된 행으로 스크롤 + 포커스
+        self._select_row(insert_at)
+        self.after(50, lambda: self._scroll_to_row(insert_at))
+
+    # ── 자막 삭제 (부분 재렌더) ───────────────
+    def delete_row(self, idx):
+        self._push_undo()
+        self._remove_row_widget(idx)
+        self.subtitles.pop(idx)
+        self._renumber_rows(idx)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+
+    # ── 행 위젯 삽입 / 삭제 헬퍼 ─────────────
+    def _insert_row_widget(self, idx, sub):
+        """self.subtitles[idx]가 이미 삽입된 상태에서 위젯만 추가."""
+        # idx 이후 기존 위젯들을 잠시 unpack하고 재pack하는 대신
+        # rows_frame 자식 순서를 재정렬: 기존 구현에서 pack 순서가 곧 표시 순서
+        # 가장 단순한 방법: idx 이후 위젯들을 detach했다가 새 행 추가 후 재attach
+        children = list(self.rows_frame.winfo_children())
+
+        # idx 이후 위젯을 pack에서 제거 (destroy 안 함)
+        for i in range(idx, len(children)):
+            children[i].pack_forget()
+
+        # 새 행 생성 (idx 위치)
+        self._cached_col_pos = self._get_col_positions()
+        self._make_row(idx, sub)
+        self._cached_col_pos = None
+
+        # 제거했던 위젯들을 순서대로 다시 pack
+        for i in range(idx, len(children)):
+            children[i].pack(fill="x")
+
+        # _row_widgets도 삽입
+        # _make_row가 이미 self._row_widgets.append()를 했으므로
+        # 마지막에 추가된 것을 올바른 위치로 이동
+        new_info = self._row_widgets.pop()
+        self._row_widgets.insert(idx, new_info)
+
+    def _remove_row_widget(self, idx):
+        """idx 행의 위젯만 destroy하고 _row_widgets에서 제거."""
+        if idx >= len(self._row_widgets):
+            return
+        row_info = self._row_widgets[idx]
+        frame = row_info.get("_row_frame")
+        if frame:
+            try:
+                frame.destroy()
+            except Exception:
+                pass
+        self._row_widgets.pop(idx)
+
+    def _renumber_rows(self, from_idx=0):
+        """from_idx부터 행 번호 레이블 + 배경색 갱신 (위젯 재생성 없음)."""
+        for i in range(from_idx, len(self._row_widgets)):
+            row_info = self._row_widgets[i]
+            # 번호 레이블
+            num_lbl = row_info.get("num")
+            if num_lbl:
+                try:
+                    num_lbl.configure(text=str(i + 1))
+                except Exception:
+                    pass
+            # 배경색 (홀짝 변경)
+            is_sel = getattr(self, "_selected_row_idx", None) == i
+            base_bg = ROW_ODD if i % 2 == 0 else ROW_EVEN
+            bg = ROW_HL if is_sel else base_bg
+            frame = row_info.get("_row_frame")
+            if frame:
+                try:
+                    frame.configure(bg=bg)
+                except Exception:
+                    pass
+
+    def _scroll_to_row(self, idx):
+        """idx 행이 보이도록 canvas 스크롤."""
+        if idx >= len(self._row_widgets):
+            return
+        frame = self._row_widgets[idx].get("_row_frame")
+        if not frame:
+            return
+        try:
+            self.canvas.update_idletasks()
+            fy = frame.winfo_y()
+            fh = frame.winfo_height()
+            ch = self.canvas.winfo_height()
+            total_h = self.rows_frame.winfo_height()
+            if total_h <= ch:
+                return
+            # 화면 중앙에 오도록
+            target = max(0.0, min((fy - ch // 2 + fh // 2) / total_h, 1.0))
+            self.canvas.yview_moveto(target)
+        except Exception:
+            pass
+
     # ── 화자 관리 ─────────────────────────────
     def add_speaker(self):
         name = simpledialog.askstring("화자 추가", "화자 이름을 입력하세요:", parent=self)
@@ -1580,6 +1995,7 @@ class SRTEditor(tk.Tk):
         if name in self.speakers:
             messagebox.showwarning("중복", f"'{name}' 화자가 이미 있습니다.", parent=self)
             return
+        self._push_undo()
         self.speakers.append(name)
         self._render_rows()
         self._render_speakers()
@@ -1594,6 +2010,7 @@ class SRTEditor(tk.Tk):
         if new_name in self.speakers and new_name != old_name:
             messagebox.showwarning("중복", f"'{new_name}' 화자가 이미 있습니다.", parent=self)
             return
+        self._push_undo()
         idx = self.speakers.index(old_name)
         self.speakers[idx] = new_name
         for sub in self.subtitles:
@@ -1608,15 +2025,11 @@ class SRTEditor(tk.Tk):
                 f"'{name}' 화자를 삭제하시겠습니까?\n해당 화자가 지정된 자막은 '없음'으로 초기화됩니다.",
                 parent=self):
             return
+        self._push_undo()
         self.speakers.remove(name)
         for sub in self.subtitles:
             if sub["speaker"] == name:
                 sub["speaker"] = ""
-        self._render_rows()
-        self._render_speakers()
-
-    def delete_row(self, idx):
-        self.subtitles.pop(idx)
         self._render_rows()
         self._render_speakers()
 
@@ -1710,6 +2123,9 @@ class SRTEditor(tk.Tk):
                 if self.media_path == path:
                     self.player._duration = dur
                     self.lbl_dur.configure(text=self._fmt_time(dur))
+                    # 진행바 현재 위치가 0이면 비율 재계산을 위해 명시적으로 0 재설정
+                    if self.media_progress_var.get() == 0:
+                        self.media_progress_var.set(0)
                     self._pb_redraw()
             self.after(0, _apply)
 
@@ -1728,6 +2144,46 @@ class SRTEditor(tk.Tk):
             # content가 아닌 다른 Entry(타임스탬프 등)도 포커스 해제 후 재생
             self.focus_set()
         self._media_play_pause()
+
+    def _on_arrow_up(self, event):
+        """위 방향키: Entry 포커스 중이면 통과, 그 외엔 윗 행 선택."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is None:
+            idx = getattr(self, "_last_focused_idx", None)
+        if idx is None or not self.subtitles:
+            return "break"
+        new_idx = max(0, idx - 1)
+        if new_idx != idx:
+            self._select_row(new_idx)
+            self._scroll_to_row(new_idx)
+        return "break"
+
+    def _on_arrow_down(self, event):
+        """아래 방향키: Entry 포커스 중이면 통과, 그 외엔 아랫 행 선택."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is None:
+            idx = getattr(self, "_last_focused_idx", None)
+        if idx is None or not self.subtitles:
+            return "break"
+        new_idx = min(len(self.subtitles) - 1, idx + 1)
+        if new_idx != idx:
+            self._select_row(new_idx)
+            self._scroll_to_row(new_idx)
+        return "break"
+        if not self.media_path:
+            return
+        if self.player.is_playing:
+            self.player.pause()
+            self.btn_play.configure(text="▶")
+            self._stop_progress_poll()
+        else:
+            self.player.play()
+            self.btn_play.configure(text="⏸")
+            self._start_progress_poll()
 
     def _media_play_pause(self):
         if not self.media_path:
@@ -1772,11 +2228,8 @@ class SRTEditor(tk.Tk):
             return
         pos = self.media_progress_var.get()
         was_playing = self.player.is_playing
-        self.player._kill_proc()
-        self.player._position = pos
-        self.player._playing  = False
+        self.player.seek_to(pos)
         if was_playing:
-            self.player.play()
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
 
@@ -1931,15 +2384,17 @@ def main():
     try:
         from tkinterdnd2 import TkinterDnD
 
-        class SRTEditorDnD(SRTEditor):
+        class SRTEditorDnD(TkinterDnD.Tk, SRTEditor):
             """tkinterdnd2 기반 드래그앤드롭 지원 버전"""
             def __init__(self):
-                # Tk.__init__ 대신 TkinterDnD.Tk 방식으로 초기화
                 TkinterDnD.Tk.__init__(self)
                 self.title("SRT Speaker Editor")
                 self.geometry("1200x820")
                 self.minsize(900, 620)
                 self.configure(bg=BG)
+
+                global FONT_FAMILY
+                FONT_FAMILY = _pick_font(root=self)
 
                 self.subtitles  = []
                 self.speakers   = []
@@ -1950,6 +2405,11 @@ def main():
                 self.media_path = None
                 self._seek_job  = None
                 self._last_focused_idx = None
+                self._unsaved   = False
+
+                self._undo_stack = []
+                self._redo_stack = []
+                self._clipboard  = None
 
                 self._build_styles()
                 self._build_ui()
@@ -1961,26 +2421,58 @@ def main():
                 self.bind("<space>",     self._on_space_key)
                 self.bind("<Left>",      lambda e: self._media_seek(-5))
                 self.bind("<Right>",     lambda e: self._media_seek(+5))
+                self.bind("<Control-z>", lambda e: self._undo())
+                self.bind("<Control-Z>", lambda e: self._redo())
+                self.bind("<Control-x>", self._on_cut)
+                self.bind("<Control-c>", self._on_copy)
+                self.bind("<Control-v>", self._on_paste)
+                self.bind("<Up>",        self._on_arrow_up)
+                self.bind("<Down>",      self._on_arrow_down)
                 self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # TkinterDnD.Tk 를 상속해야 drop_target_register 사용 가능
-        class _Root(TkinterDnD.Tk):
-            pass
-
-        # SRTEditorDnD 의 MRO를 TkinterDnD.Tk 기반으로 교체
-        app = SRTEditorDnD.__new__(SRTEditorDnD)
-        TkinterDnD.Tk.__init__(app)
-        SRTEditorDnD.__init__(app)
+        app = SRTEditorDnD()
         app.mainloop()
 
     except ImportError:
         # tkinterdnd2 없는 경우: 기본 Tk (드래그앤드롭 비활성)
         app = SRTEditor()
         app.mainloop()
-    except Exception:
-        app = SRTEditor()
-        app.mainloop()
+    except Exception as e:
+        # tkinterdnd2 관련 에러면 기본 Tk로 재시도, 그 외 에러는 보여줌
+        import traceback, tkinter as _tk, tkinter.messagebox as _mb
+        err_msg = traceback.format_exc()
+        try:
+            root = _tk.Tk()
+            root.withdraw()
+            _mb.showerror("시작 오류", f"앱 초기화 중 오류가 발생했습니다:\n\n{err_msg[:800]}")
+            root.destroy()
+        except Exception:
+            print(err_msg)
+        try:
+            app = SRTEditor()
+            app.mainloop()
+        except Exception:
+            print(traceback.format_exc())
 
 
 if __name__ == "__main__":
-    main()
+    import traceback as _tb
+    try:
+        main()
+    except Exception:
+        err = _tb.format_exc()
+        print(err)
+        # 같은 폴더에 에러 로그 저장
+        log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "srt_error.log")
+        try:
+            with open(log_path, "w", encoding="utf-8") as _f:
+                _f.write(err)
+        except Exception:
+            pass
+        try:
+            import tkinter as _tk, tkinter.messagebox as _mb
+            _r = _tk.Tk(); _r.withdraw()
+            _mb.showerror("치명적 오류", f"앱이 시작되지 않았습니다.\n\n{err[:600]}\n\n로그: {log_path}")
+            _r.destroy()
+        except Exception:
+            pass
