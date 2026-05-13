@@ -407,6 +407,7 @@ class SRTEditor(tk.Tk):
         self.player      = MediaPlayer()
         self.media_path  = None
         self._seek_job   = None   # after job for progress polling
+        self._playing_rows: set = set()   # 재생 위치에 해당하는 자막 행 인덱스
 
         self._build_styles()
         self._build_ui()
@@ -2219,6 +2220,10 @@ class SRTEditor(tk.Tk):
             self.player.pause()
             self.btn_play.configure(text="▶")
             self._stop_progress_poll()
+            # 일시정지 시 하이라이트 해제
+            for idx in self._playing_rows:
+                self._set_playing_highlight(idx, False)
+            self._playing_rows.clear()
         else:
             self.player.play()
             self.btn_play.configure(text="⏸")
@@ -2231,6 +2236,10 @@ class SRTEditor(tk.Tk):
         self.lbl_pos.configure(text="0:00:00")
         self._stop_progress_poll()
         self._pb_redraw()
+        # 정지 시 하이라이트 해제
+        for idx in self._playing_rows:
+            self._set_playing_highlight(idx, False)
+        self._playing_rows.clear()
 
     def _media_seek(self, delta):
         if not self.media_path:
@@ -2265,6 +2274,92 @@ class SRTEditor(tk.Tk):
         self._stop_progress_poll()
         self._poll_progress()
 
+    @staticmethod
+    def _ts_to_sec(ts_str):
+        """'HH:MM:SS,mmm' 또는 'HH:MM:SS.mmm' → float 초. 실패 시 None."""
+        m = re.match(r"(\d+):(\d+):(\d+)[,.](\d+)", ts_str.strip())
+        if not m:
+            return None
+        h, mi, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        return h * 3600 + mi * 60 + s + ms / 1000.0
+
+    def _get_rows_at(self, pos_sec):
+        """현재 재생 위치(초)에 해당하는 자막 행 인덱스 집합 반환."""
+        result = set()
+        for i, sub in enumerate(self.subtitles):
+            ts = sub.get("timestamp", "")
+            parts = ts.split("-->")
+            if len(parts) < 2:
+                continue
+            t_start = self._ts_to_sec(parts[0])
+            t_end   = self._ts_to_sec(parts[1])
+            if t_start is None or t_end is None:
+                continue
+            if t_start <= pos_sec <= t_end:
+                result.add(i)
+        return result
+
+    ROW_PLAYING = "#1A2A1A"   # 재생 중 하이라이트 색상 (어두운 초록)
+
+    def _set_playing_highlight(self, idx, on: bool):
+        """재생 위치 하이라이트를 켜거나 끔. 클릭 선택(_selected_row_idx)과 독립."""
+        if idx >= len(self._row_widgets):
+            return
+        is_selected = getattr(self, "_selected_row_idx", None) == idx
+        if is_selected:
+            return  # 클릭 선택된 행은 건드리지 않음
+        row_info = self._row_widgets[idx]
+        base_bg  = ROW_ODD if idx % 2 == 0 else ROW_EVEN
+        bg = self.ROW_PLAYING if on else base_bg
+
+        row_frame = row_info.get("_row_frame")
+        if row_frame:
+            try:
+                row_frame.configure(bg=bg)
+            except Exception:
+                pass
+
+        for cid, widget in row_info.items():
+            if cid.startswith("_") or cid in ("ts_s", "ts_e", "content", "speaker"):
+                continue  # speaker(spk_frame)는 아래에서 별도 처리
+            try:
+                widget.configure(bg=bg)
+            except Exception:
+                pass
+
+        # spk_frame: 선택된 pill은 그대로, 비선택 pill만 행 배경색으로
+        spk_frame = row_info.get("speaker")
+        if spk_frame:
+            try:
+                spk_frame.configure(bg=bg)
+            except Exception:
+                pass
+            sub = self.subtitles[idx] if idx < len(self.subtitles) else {}
+            current = sub.get("speaker", "")
+            for child in spk_frame.winfo_children():
+                try:
+                    child_text = child.cget("text")
+                    is_pill_selected = (child_text == current) or \
+                                       (child_text == "(없음)" and current == "")
+                    if not is_pill_selected:
+                        child.configure(bg=bg)
+                except Exception:
+                    pass
+
+    def _update_playback_highlight(self, pos_sec):
+        """현재 재생 위치에 맞게 하이라이트 행 갱신. 이전 행 해제 → 새 행 켬."""
+        new_rows = self._get_rows_at(pos_sec)
+        # 이전에 켰던 것 중 이번엔 해당 안 되는 것 끄기
+        for idx in self._playing_rows - new_rows:
+            self._set_playing_highlight(idx, False)
+        # 새로 켜야 할 것 켜기
+        for idx in new_rows - self._playing_rows:
+            self._set_playing_highlight(idx, True)
+            # 보이도록 스크롤 (첫 번째 행만)
+            if idx == min(new_rows):
+                self._scroll_to_row(idx)
+        self._playing_rows = new_rows
+
     def _poll_progress(self):
         if self.player.is_playing:
             pos = self.player.position
@@ -2274,9 +2369,14 @@ class SRTEditor(tk.Tk):
             if dur > 0:
                 self.lbl_dur.configure(text=self._fmt_time(dur))
             self._pb_redraw()
-            self._seek_job = self.after(100, self._poll_progress)  # 300→100ms
+            self._update_playback_highlight(pos)
+            self._seek_job = self.after(100, self._poll_progress)
         else:
             self.btn_play.configure(text="▶")
+            # 재생 끝나면 하이라이트 모두 해제
+            for idx in self._playing_rows:
+                self._set_playing_highlight(idx, False)
+            self._playing_rows.clear()
             self._seek_job = None
 
     def _stop_progress_poll(self):
@@ -2433,6 +2533,7 @@ def main():
                 self._seek_job  = None
                 self._last_focused_idx = None
                 self._unsaved   = False
+                self._playing_rows: set = set()
 
                 self._undo_stack = []
                 self._redo_stack = []
