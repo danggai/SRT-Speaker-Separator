@@ -203,6 +203,9 @@ class MediaPlayer:
 
     SEEK_DELTA = 5   # 방향키 이동 초
 
+    # Windows에서 subprocess 콘솔 창 억제
+    _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
+
     def __init__(self):
         self._proc       = None
         self._filepath   = None
@@ -220,7 +223,7 @@ class MediaPlayer:
         for cmd in ["ffplay", "ffmpeg"]:
             try:
                 subprocess.run([cmd, "-version"],
-                               capture_output=True, timeout=2)
+                               capture_output=True, timeout=2, **self._NO_WINDOW)
                 return "ffplay"
             except Exception:
                 pass
@@ -234,7 +237,8 @@ class MediaPlayer:
             result = subprocess.run(
                 ["ffprobe", "-v", "quiet", "-print_format", "json",
                  "-show_format", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                **self._NO_WINDOW)
             info = json.loads(result.stdout)
             return float(info["format"]["duration"])
         except Exception:
@@ -242,7 +246,8 @@ class MediaPlayer:
         try:
             result = subprocess.run(
                 ["ffmpeg", "-i", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
+                **self._NO_WINDOW)
             m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", result.stderr)
             if m:
                 h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
@@ -328,7 +333,8 @@ class MediaPlayer:
             return
 
         self._proc       = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            **self._NO_WINDOW)
         self._playing    = True
         self._start_wall = time.time()
         self._start_pos  = start_sec
