@@ -28,27 +28,84 @@ FG_DIM    = "#777777"
 BORDER    = "#333333"
 ROW_ODD   = "#1E1E1E"
 ROW_EVEN  = "#1A1A1A"
-ROW_SEL   = "#2D2040"   # 선택 시 연보라 tint
+ROW_SEL   = "#2D2040"   # 선택 시 연보라 tint (Treeview용)
+ROW_HL    = "#221A35"   # 행 하이라이트 배경 (아주 연한 보라)
 MEDIA_BG  = "#111111"
 
 # ─────────────────────────────────────────────
-#  전역 설정 (정규식 화자 구분)
+#  전역 설정 (화자 구분 패턴)
+#  저장 형식:  [화자명] 자막내용
+#  패턴 표기:  [%] &   (% = 화자, & = 내용)
+#  예시: [Alice] 안녕하세요  →  화자=Alice, 내용=안녕하세요
 # ─────────────────────────────────────────────
 DEFAULT_SPEAKER_PATTERN = r"^\[([^\]]+)\]\s*"
 g_speaker_pattern = DEFAULT_SPEAKER_PATTERN
 
+# 사용자에게 보여주는 표시 패턴 (% = 화자명, & = 자막내용)
+DEFAULT_DISPLAY_PATTERN = "[%] &"
+g_display_pattern = DEFAULT_DISPLAY_PATTERN
+
+
+def display_to_regex(display: str) -> str:
+    """
+    사용자 표시 패턴(% = 화자명, & = 자막내용)을 내부 정규식으로 변환.
+    % → 첫 번째 캡처 그룹 (.+?), & → 나머지 내용 (무시, 패턴 끝)
+    """
+    # % 와 & 위치 찾기
+    pct = display.find('%')
+    amp = display.find('&')
+    if pct < 0:
+        raise ValueError("패턴에 % (화자명 위치)가 없습니다.")
+
+    # % 앞 부분을 regex 이스케이프, % → (.+?), & 이전까지 구분자 이스케이프
+    prefix = display[:pct]
+    if amp >= 0 and amp > pct:
+        between = display[pct + 1:amp]
+    else:
+        between = display[pct + 1:]
+
+    regex = "^" + re.escape(prefix) + r"([^\n]+?)" + re.escape(between.rstrip()) + r"\s*"
+    return regex
+
+
+def regex_to_display(regex: str) -> str:
+    """내부 정규식을 사용자 표시 패턴으로 역변환 (최선 노력)."""
+    # 기본 패턴 [%] & 이면 그대로 반환
+    if regex == DEFAULT_SPEAKER_PATTERN:
+        return DEFAULT_DISPLAY_PATTERN
+    # 역변환은 간단히: 캡처그룹 → %, 나머지는 unescape
+    try:
+        # ^re.escape(prefix)(.+?)re.escape(between)\s* 역산
+        inner = regex
+        if inner.startswith("^"):
+            inner = inner[1:]
+        if inner.endswith(r"\s*"):
+            inner = inner[: -len(r"\s*")]
+        # (.+?) 또는 ([^\n]+?) 를 % 로
+        inner = re.sub(r'\([^)]+\)', '%', inner, count=1)
+        # re.escape 된 특수문자 복원
+        inner = inner.replace(r'\[', '[').replace(r'\]', ']') \
+                     .replace(r'\.', '.').replace(r'\(', '(') \
+                     .replace(r'\)', ')').replace(r'\s', ' ')
+        return inner.strip() + " &"
+    except Exception:
+        return DEFAULT_DISPLAY_PATTERN
+
 # ─────────────────────────────────────────────
 #  한글 지원 폰트 탐색
 # ─────────────────────────────────────────────
-def _pick_font():
-    """시스템에서 한글 지원 폰트를 찾아 반환"""
-    try:
-        import tkinter.font as tkfont
-        root_tmp = tk.Tk()
-        root_tmp.withdraw()
-        available = set(tkfont.families())
-        root_tmp.destroy()
-    except Exception:
+def _pick_font(root=None):
+    """시스템에서 한글 지원 폰트를 찾아 반환.
+    root가 주어지면 해당 Tk 인스턴스 기준으로 폰트 목록 조회 (빈 창 없음).
+    root가 없으면 후보 목록을 이름만으로 반환 (OS별 기본값 우선)."""
+    if root is not None:
+        try:
+            import tkinter.font as tkfont
+            available = set(tkfont.families(root))
+        except Exception:
+            available = set()
+    else:
+        # 창을 띄우지 않고 OS 기반 우선순위만 사용
         available = set()
 
     candidates = [
@@ -56,21 +113,30 @@ def _pick_font():
         "맑은 고딕",
         "Apple SD Gothic Neo", # macOS 기본 한글
         "AppleGothic",
-        "Nanum Gothic",        # 나눔고딕 (설치 시)
+        "Nanum Gothic",
         "NanumGothic",
-        "NotoSansCJKkr",       # Noto CJK
+        "NotoSansCJKkr",
         "Noto Sans CJK KR",
         "UnDotum",             # Linux 한글
         "Gulim",
-        "Segoe UI",            # fallback
+        "Segoe UI",
         "TkDefaultFont",
     ]
-    for f in candidates:
-        if f in available:
-            return f
+    if available:
+        for f in candidates:
+            if f in available:
+                return f
+    # 창 없이 호출된 경우: OS 추측
+    import sys
+    if sys.platform == "win32":
+        return "Malgun Gothic"
+    if sys.platform == "darwin":
+        return "Apple SD Gothic Neo"
     return "TkDefaultFont"
 
-FONT_FAMILY = _pick_font()
+# 모듈 로드 시점에는 창을 띄우지 않고 OS 기본값으로 초기화
+# 실제 앱 시작 후 _init_font()에서 정확한 값으로 교체됨
+FONT_FAMILY = _pick_font(root=None)
 FONT_MONO   = "Courier New"
 
 # ─────────────────────────────────────────────
@@ -238,9 +304,11 @@ class MediaPlayer:
         self._kill_proc()
         backend = self._backend
         if backend == "ffplay":
+            # -ss를 -i 앞에 두면 fast seek, 뒤에 두면 정확하지만 느림
+            # 여기서는 빠른 seek + 타이머 보정으로 정확도 확보
             cmd = [
                 "ffplay", "-nodisp", "-autoexit",
-                "-ss", str(start_sec),
+                "-ss", f"{start_sec:.3f}",
                 self._filepath
             ]
         elif backend == "afplay":
@@ -249,7 +317,7 @@ class MediaPlayer:
         else:
             return
 
-        self._proc = subprocess.Popen(
+        self._proc       = subprocess.Popen(
             cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._playing    = True
         self._start_wall = time.time()
@@ -302,12 +370,17 @@ class SRTEditor(tk.Tk):
         self.minsize(900, 620)
         self.configure(bg=BG)
 
+        # 앱 창이 생성된 후 정확한 폰트 탐지 (빈 창 없음)
+        global FONT_FAMILY
+        FONT_FAMILY = _pick_font(root=self)
+
         self.subtitles  = []
         self.speakers   = []
         self.filepath   = None
         self.save_path  = None
         self.edited_row = None
         self._last_focused_idx = None
+        self._unsaved   = False   # 미저장 변경사항 추적
 
         # 미디어 플레이어
         self.player      = MediaPlayer()
@@ -322,9 +395,10 @@ class SRTEditor(tk.Tk):
         self.bind("<Control-s>", lambda e: self.save_file())
         self.bind("<Control-S>", lambda e: self.save_file_as())
         self.bind("<Control-o>", lambda e: self.open_file())
-        self.bind("<space>",     lambda e: self._media_play_pause())
+        self.bind("<space>",     self._on_space_key)
         self.bind("<Left>",      lambda e: self._media_seek(-5))
         self.bind("<Right>",     lambda e: self._media_seek(+5))
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── 스타일 ────────────────────────────────
     def _build_styles(self):
@@ -462,6 +536,10 @@ class SRTEditor(tk.Tk):
         # 파일 없을 때 드롭 오버레이
         self._build_drop_overlay()
 
+        # 어디를 클릭해도 content Entry 포커스/하이라이트 해제
+        # (단, Entry 자체 클릭은 제외 — tkinter가 자동으로 포커스를 줌)
+        self.bind_all("<Button-1>", self._on_global_click, add=True)
+
     # ── 드롭 존 오버레이 ─────────────────────
     def _build_drop_overlay(self):
         """파일 미로드 상태에서 보이는 드래그앤드롭 안내 오버레이"""
@@ -569,50 +647,192 @@ class SRTEditor(tk.Tk):
                    command=self.add_speaker).pack(fill="x")
 
     # ── 자막 테이블 ───────────────────────────
+    # 컬럼 정의: num / ts_s / ts_e / content(가변) / speaker / del
+    _COL_IDS   = ["num", "ts_s", "ts_e", "speaker", "del"]
+    _COL_DEF_W = {"num": 40, "ts_s": 132, "ts_e": 132, "speaker": 220, "del": 30}
+    ROW_H      = 34   # 행 높이 (px)
+
     def _build_table(self, parent):
         right = ttk.Frame(parent)
         right.pack(fill="both", expand=True)
 
-        # 헤더
-        hdr = tk.Frame(right, bg=BG2, height=32)
-        hdr.pack(fill="x")
-        hdr.pack_propagate(False)
+        self._col_w = dict(self._COL_DEF_W)
+        self._drag_col = None
+        self._drag_x0  = 0
+        self._drag_w0  = 0
 
-        for text, width, anchor in [
-            ("#",       38,  "center"),
-            ("타임스탬프", 200, "w"),
-            ("자막 내용", 0,   "w"),
-            ("화자",     140, "center"),
-            ("",        50,  "center"),
-        ]:
-            lbl = tk.Label(hdr, text=text, bg=BG2, fg=FG_DIM,
-                           font=(FONT_FAMILY, 9, "bold"), anchor=anchor)
-            if width == 0:
-                lbl.pack(side="left", fill="x", expand=True, padx=6, pady=5)
-            else:
-                lbl.pack(side="left", padx=6, pady=5)
-                lbl.configure(width=width // 10)
+        # ── 헤더 Canvas ───────────────────────
+        hdr_c = tk.Canvas(right, bg=BG2, height=28, highlightthickness=0)
+        hdr_c.pack(fill="x")
+        self._hdr_canvas = hdr_c
 
+        # 헤더 레이블 (Canvas window)
+        _titles = {"num":"#","ts_s":"시작시간","ts_e":"종료시간",
+                   "content":"자막 내용","speaker":"화자","del":""}
+        self._hdr_wins = {}
+        for cid in list(self._COL_IDS) + ["content"]:
+            lbl = tk.Label(hdr_c, text=_titles[cid],
+                           bg=BG2, fg=FG_DIM,
+                           font=(FONT_FAMILY, 9, "bold"), anchor="w")
+            win_id = hdr_c.create_window(0, 14, window=lbl, anchor="w",
+                                         height=20, width=10)
+            self._hdr_wins[cid] = (lbl, win_id)
+
+        hdr_c.bind("<Configure>",      lambda e: self._layout_header())
+        hdr_c.bind("<Motion>",         self._hdr_motion)
+        hdr_c.bind("<ButtonPress-1>",  self._hdr_press)
+        hdr_c.bind("<B1-Motion>",      self._hdr_b1motion)
+        hdr_c.bind("<ButtonRelease-1>",self._hdr_release)
+
+        # ── 스크롤 영역 ───────────────────────
         container = tk.Frame(right, bg=BG)
         container.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(container, bg=BG, highlightthickness=0, bd=0)
-        self.vsb = ttk.Scrollbar(container, orient="vertical",
-                                 command=self.canvas.yview)
+        self.vsb    = ttk.Scrollbar(container, orient="vertical",
+                                    command=self.canvas.yview)
+
         self.rows_frame = tk.Frame(self.canvas, bg=BG)
-        self.rows_frame.bind("<Configure>",
-            lambda e: self.canvas.configure(
-                scrollregion=self.canvas.bbox("all")))
-        self.canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
+
+        def _on_rows_configure(e):
+            self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+            self._on_rows_frame_resize()
+
+        self.rows_frame.bind("<Configure>", _on_rows_configure)
+        self._rows_win = self.canvas.create_window((0, 0), window=self.rows_frame, anchor="nw")
         self.canvas.configure(yscrollcommand=self.vsb.set)
+
+        # canvas 크기 바뀌면 rows_frame 너비를 canvas에 맞춤 (핵심!)
+        def _on_canvas_resize(e):
+            self.canvas.itemconfig(self._rows_win, width=e.width)
+        self.canvas.bind("<Configure>", _on_canvas_resize)
+
         self.canvas.pack(side="left", fill="both", expand=True)
         self.vsb.pack(side="right", fill="y")
-
         self.canvas.bind_all("<MouseWheel>",
             lambda e: self.canvas.yview_scroll(-1*(e.delta//120), "units"))
 
-        # SRT 파일 드래그 드롭 영역 (테이블 영역)
-        self.canvas.bind("<Enter>", lambda e: None)
+        self._row_widgets = []   # [{col_id: widget, ...}, ...]  행별 위젯 참조
+
+    # ── 컬럼 레이아웃 계산 ────────────────────
+    def _get_col_positions(self):
+        """헤더/행 공용 컬럼 x 좌표 + 너비 dict 반환.
+        content 컬럼은 canvas 실제 너비 기준으로 계산."""
+        total = self.canvas.winfo_width()
+        if total <= 1:
+            total = self.winfo_width() - self._col_w.get("__sidebar__", 230)
+        if total <= 1:
+            total = 900
+        # 스크롤바 너비 제외
+        vsb_w = self.vsb.winfo_width() if self.vsb.winfo_width() > 1 else 16
+        total = max(total - vsb_w, 200)
+        fixed = sum(self._col_w[c] for c in self._COL_IDS)
+        content_w = max(60, total - fixed)
+
+        pos = {}
+        x = 0
+        for cid in ["num", "ts_s", "ts_e"]:
+            pos[cid] = (x, self._col_w[cid]); x += self._col_w[cid]
+        pos["content"] = (x, content_w);     x += content_w
+        pos["speaker"] = (x, self._col_w["speaker"]); x += self._col_w["speaker"]
+        pos["del"]     = (x, self._col_w["del"])
+        return pos
+
+    # ── 헤더 레이아웃 ────────────────────────
+    def _layout_header(self):
+        c   = self._hdr_canvas
+        cw  = c.winfo_width()
+        if cw <= 1:
+            return
+        pos = self._get_col_positions()
+        c.delete("div")
+
+        for cid, (lbl, win_id) in self._hdr_wins.items():
+            x, w = pos[cid]
+            c.coords(win_id, x + 4, 14)
+            c.itemconfigure(win_id, width=max(4, w - 8))
+
+        # 구분선
+        for cid in ["ts_s", "ts_e", "content", "speaker"]:
+            x, w = pos[cid]
+            dx = x + w
+            c.create_line(dx, 3, dx, 25, fill=BORDER, width=2,
+                          tags="div", activefill=ACCENT)
+
+    def _hdr_divider_at(self, mx):
+        pos = self._get_col_positions()
+        for cid in ["ts_s", "ts_e", "content", "speaker"]:
+            x, w = pos[cid]
+            if abs(mx - (x + w)) <= 5:
+                return cid
+        return None
+
+    def _hdr_motion(self, e):
+        hit = self._hdr_divider_at(e.x)
+        self._hdr_canvas.configure(
+            cursor="sb_h_double_arrow" if hit else "arrow")
+
+    def _hdr_press(self, e):
+        hit = self._hdr_divider_at(e.x)
+        if hit:
+            self._drag_col = hit
+            self._drag_x0  = e.x
+            pos = self._get_col_positions()
+            self._drag_w0 = pos[hit][1] if hit == "content" \
+                            else self._col_w[hit]
+
+    def _hdr_b1motion(self, e):
+        if not self._drag_col:
+            return
+        delta = e.x - self._drag_x0
+        cid   = self._drag_col
+        if cid == "content":
+            # content 오른쪽 경계 드래그 → speaker 왼쪽 경계 이동
+            # speaker 너비를 줄이거나 늘림
+            new_sp = max(60, self._col_w["speaker"] - delta)
+            self._col_w["speaker"] = new_sp
+            self._drag_x0 = e.x          # 매 프레임 누적 방지
+        else:
+            new_w = max(40, self._drag_w0 + delta)
+            self._col_w[cid] = new_w
+        # 헤더만 즉시 갱신 — 행은 건드리지 않음
+        self._layout_header()
+
+    def _hdr_release(self, e):
+        if self._drag_col:
+            self._drag_col = None
+            # 드래그 종료 시 한 번만 행 레이아웃 재적용
+            self._apply_col_layout_to_rows()
+
+    # ── rows_frame 너비 변경 시 content 컬럼 재조정 ──
+    def _on_rows_frame_resize(self, event=None):
+        self._layout_header()
+        self._apply_col_layout_to_rows()
+
+    # ── 기존 행 위젯에 컬럼 너비만 반영 (재생성 없음) ──
+    def _apply_col_layout_to_rows(self):
+        """행을 destroy하지 않고 각 위젯의 place x/width만 업데이트."""
+        pos = self._get_col_positions()
+        h   = self.ROW_H
+        # content 컬럼 포함 전체 처리
+        all_cols = list(self._COL_IDS) + ["content"]
+        for row_info in self._row_widgets:
+            for cid in all_cols:
+                if cid not in row_info or cid not in pos:
+                    continue
+                widget = row_info[cid]
+                x, w = pos[cid]
+                # ts_s, ts_e는 y 오프셋 3px
+                y_off = 3 if cid in ("ts_s", "ts_e", "content") else 0
+                h_use = (h - 6) if cid in ("ts_s", "ts_e", "content") else h
+                try:
+                    widget.place(x=x, y=y_off, width=w, height=h_use)
+                except Exception:
+                    pass
+
+    # 행 빌드 시 컬럼 너비 참조 헬퍼 (하위호환)
+    def _row_col_w(self, col_id):
+        return self._col_w.get(col_id, self._COL_DEF_W.get(col_id, 80))
 
     # ── 미디어 패널 ───────────────────────────
     def _build_media_panel(self, parent):
@@ -826,40 +1046,43 @@ class SRTEditor(tk.Tk):
 
     def _assign_speaker_from_sidebar(self, name):
         """사이드바 화자 박스 클릭 시 현재 포커스된 자막에 화자 지정"""
-        # 현재 self._last_focused_idx 를 사용 (없으면 마지막 행)
         idx = getattr(self, "_last_focused_idx", None)
         if idx is None or idx >= len(self.subtitles):
             return
         self.subtitles[idx]["speaker"] = name
-        self._render_rows()
+        self._unsaved = True
+        self._refresh_row(idx)
         self._render_speakers()
 
     # ── 설정 창 ────────────────────────────
     def _open_settings(self):
-        """설정 창: 정규식 화자 구분 패턴 변경"""
+        """설정 창: 화자 구분 패턴 변경 (% = 화자명, & = 자막 내용)"""
+        global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("520x260")
+        win.geometry("520x300")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
 
         tk.Label(win, text="설정", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 14, "bold")).pack(anchor="w", padx=20, pady=(18, 4))
-
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=20)
 
-        # 정규식 패턴
         sec = tk.Frame(win, bg=BG)
         sec.pack(fill="x", padx=20, pady=14)
 
-        tk.Label(sec, text="화자 구분 정규식 패턴", bg=BG, fg=FG,
+        tk.Label(sec, text="화자 구분 패턴", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 10, "bold")).pack(anchor="w")
-        tk.Label(sec, text="첫 번째 캡처 그룹 ()이 화자 이름으로 인식됩니다.",
-                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9)).pack(anchor="w", pady=(2, 6))
+        tk.Label(sec,
+                 text="% = 현재 화자명,  & = 자막 내용\n"
+                      "예시:  [%] &  →  [Alice] 안녕하세요  (화자=Alice)\n"
+                      "예시:  (%): &  →  (Bob): 반갑습니다  (화자=Bob)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9),
+                 justify="left").pack(anchor="w", pady=(2, 6))
 
-        pat_var = tk.StringVar(value=g_speaker_pattern)
+        pat_var = tk.StringVar(value=g_display_pattern)
         pat_entry = tk.Entry(sec, textvariable=pat_var, width=52,
                              bg=BG3, fg=ACCENT, insertbackground=FG,
                              font=(FONT_MONO, 10), relief="flat",
@@ -867,30 +1090,45 @@ class SRTEditor(tk.Tk):
                              highlightcolor=ACCENT)
         pat_entry.pack(fill="x", ipady=4)
 
+        # 변환된 정규식 미리보기
+        preview_lbl = tk.Label(sec, text="", bg=BG, fg=FG_DIM,
+                               font=(FONT_MONO, 8), wraplength=460, justify="left")
+        preview_lbl.pack(anchor="w", pady=(3, 0))
+
         info_lbl = tk.Label(sec, text="", bg=BG, fg="#FF6B8A",
                             font=(FONT_FAMILY, 9))
-        info_lbl.pack(anchor="w", pady=(4, 0))
+        info_lbl.pack(anchor="w", pady=(2, 0))
 
-        def validate_pattern(p):
+        def update_preview(*_):
+            dp = pat_var.get().strip()
             try:
-                re.compile(p)
-                return True
-            except re.error as err:
-                return str(err)
+                rx = display_to_regex(dp)
+                re.compile(rx)
+                preview_lbl.configure(text=f"정규식: {rx}", fg=FG_DIM)
+                info_lbl.configure(text="")
+            except Exception as err:
+                preview_lbl.configure(text="")
+                info_lbl.configure(text=f"❌ {err}", fg="#FF6B8A")
+
+        pat_var.trace_add("write", update_preview)
+        update_preview()
 
         def on_apply():
-            global g_speaker_pattern
-            p = pat_var.get().strip()
-            result = validate_pattern(p)
-            if result is not True:
-                info_lbl.configure(text=f"❌ 정규식 오류: {result}")
+            global g_speaker_pattern, g_display_pattern
+            dp = pat_var.get().strip()
+            try:
+                rx = display_to_regex(dp)
+                re.compile(rx)
+            except Exception as err:
+                info_lbl.configure(text=f"❌ {err}", fg="#FF6B8A")
                 return
-            g_speaker_pattern = p
+            g_speaker_pattern = rx
+            g_display_pattern = dp
             info_lbl.configure(text="✔ 적용되었습니다.", fg=ACCENT)
-            win.after(1500, win.destroy)
+            win.after(1200, win.destroy)
 
         def on_reset():
-            pat_var.set(DEFAULT_SPEAKER_PATTERN)
+            pat_var.set(DEFAULT_DISPLAY_PATTERN)
             info_lbl.configure(text="기본값으로 초기화했습니다. '적용'을 눌러 저장하세요.",
                                fg=FG_DIM)
 
@@ -919,68 +1157,263 @@ class SRTEditor(tk.Tk):
     def _render_rows(self):
         for w in self.rows_frame.winfo_children():
             w.destroy()
+        self._row_widgets = []
+        self._selected_row_idx = None
         for idx, sub in enumerate(self.subtitles):
             self._make_row(idx, sub)
         self._update_count()
+        self._auto_resize_speaker_col()
+        self._layout_header()
+        self._apply_col_layout_to_rows()
+
+    # ── 타임스탬프 유효성 패턴 ───────────────
+    _TS_RE    = re.compile(r"^\d{2}:\d{2}:\d{2}[,\.]\d{3}$")
+    _TS_ERR_BG = "#3A1010"
+
+    def _ts_valid(self, val):
+        return bool(self._TS_RE.match(val.strip()))
 
     def _make_row(self, idx, sub):
+        h  = self.ROW_H
         bg = ROW_ODD if idx % 2 == 0 else ROW_EVEN
-        row = tk.Frame(self.rows_frame, bg=bg)
+
+        # 행 컨테이너 — pack으로 높이만, 너비는 rows_frame에 맞춤
+        row = tk.Frame(self.rows_frame, bg=bg, height=h)
         row.pack(fill="x")
+        row.pack_propagate(False)
 
-        # 번호 (클릭 시 해당 타임라인으로 이동)
-        num_lbl = tk.Label(row, text=str(idx + 1), width=3, bg=bg, fg=FG_DIM,
-                 font=(FONT_FAMILY, 9), cursor="hand2")
-        num_lbl.pack(side="left", padx=(8, 4), pady=8)
-        num_lbl.bind("<Button-1>", lambda e, i=idx: self._seek_to_subtitle(i))
+        row_info = {}  # cid → 위젯
 
-        # 타임스탬프 (클릭 시 타임라인 이동)
-        ts_var = tk.StringVar(value=sub["timestamp"])
-        ts_entry = tk.Entry(row, textvariable=ts_var, width=26,
-                            bg=BG3, fg=ACCENT, insertbackground=FG,
-                            font=(FONT_MONO, 9), relief="flat",
-                            highlightthickness=1, highlightbackground=BORDER,
-                            highlightcolor=ACCENT, cursor="hand2")
-        ts_entry.pack(side="left", padx=(0, 8), pady=6, ipady=3)
-        ts_entry.bind("<FocusOut>", lambda e, i=idx, v=ts_var: self._save_ts(i, v))
-        ts_entry.bind("<Return>",   lambda e, i=idx, v=ts_var: self._save_ts(i, v))
-        ts_entry.bind("<Button-1>", lambda e, i=idx: self._seek_to_subtitle(i))
+        # ── 번호 컬럼 ─────────────────────────
+        num_lbl = tk.Label(row, text=str(idx + 1), bg=bg, fg=FG_DIM,
+                           font=(FONT_FAMILY, 9), anchor="center", cursor="hand2")
+        num_lbl.place(x=0, y=0, width=self._col_w["num"], height=h)
+        num_lbl.bind("<Button-1>", lambda e, i=idx: self._select_row(i))
+        row_info["num"] = num_lbl
 
-        # 자막 텍스트
+        # ── 타임스탬프: 시작 ──────────────────
+        ts_full  = sub.get("timestamp", "")
+        parts    = ts_full.split("-->")
+        ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
+        ts_end   = parts[1].strip() if len(parts) >= 2 else ""
+
+        ts_s_var = tk.StringVar(value=ts_start)
+        ts_e_var = tk.StringVar(value=ts_end)
+
+        def _ts_style(entry, val):
+            ok = self._ts_valid(val)
+            entry.configure(bg=BG3 if ok else self._TS_ERR_BG,
+                            highlightbackground=BORDER if ok else "#8B1A1A")
+
+        ts_s = tk.Entry(row, textvariable=ts_s_var,
+                        bg=BG3, fg=ACCENT, insertbackground=FG,
+                        font=(FONT_MONO, 9), relief="flat",
+                        highlightthickness=1, highlightbackground=BORDER,
+                        highlightcolor=ACCENT)
+        ts_s.place(x=self._col_w["num"], y=3,
+                   width=self._col_w["ts_s"], height=h - 6)
+        row_info["ts_s"] = ts_s
+
+        # ── 타임스탬프: 종료 ──────────────────
+        ts_e = tk.Entry(row, textvariable=ts_e_var,
+                        bg=BG3, fg=ACCENT, insertbackground=FG,
+                        font=(FONT_MONO, 9), relief="flat",
+                        highlightthickness=1, highlightbackground=BORDER,
+                        highlightcolor=ACCENT)
+        ts_e.place(x=self._col_w["num"] + self._col_w["ts_s"], y=3,
+                   width=self._col_w["ts_e"], height=h - 6)
+        row_info["ts_e"] = ts_e
+
+        def _commit_ts(i=idx, sv=ts_s_var, ev=ts_e_var, se=ts_s, ee=ts_e):
+            s, e = sv.get().strip(), ev.get().strip()
+            _ts_style(se, s); _ts_style(ee, e)
+            if self._ts_valid(s) and self._ts_valid(e):
+                self.subtitles[i]["timestamp"] = f"{s} --> {e}"
+                self._unsaved = True
+
+        for ent in (ts_s, ts_e):
+            ent.bind("<Return>",    lambda e, f=_commit_ts: f())
+            ent.bind("<FocusOut>",  lambda e, f=_commit_ts: f())
+            ent.bind("<KeyRelease>",lambda e, sv=ts_s_var, ev=ts_e_var,
+                                           se=ts_s, ee=ts_e:
+                                    (_ts_style(se, sv.get()),
+                                     _ts_style(ee, ev.get())))
+
+        _ts_style(ts_s, ts_start)
+        _ts_style(ts_e, ts_end)
+
+        # ── 자막 텍스트 (content, 가변) ───────
+        pos = self._get_col_positions()
+        cx, cw = pos["content"]
+
         txt_var = tk.StringVar(value=sub["text"])
-        txt_entry = tk.Entry(row, textvariable=txt_var,
-                             bg=BG3, fg=FG, insertbackground=FG,
-                             font=(FONT_FAMILY, 10), relief="flat",
-                             highlightthickness=1, highlightbackground=BORDER,
-                             highlightcolor=ACCENT)
-        txt_entry.pack(side="left", fill="x", expand=True, padx=(0, 8), pady=6, ipady=3)
-        txt_entry.bind("<FocusOut>", lambda e, i=idx, v=txt_var: self._save_text(i, v))
-        txt_entry.bind("<Return>",   lambda e, i=idx, v=txt_var: self._save_text(i, v))
-        txt_entry.bind("<FocusIn>",  lambda e, i=idx: setattr(self, "_last_focused_idx", i))
+        txt_e = tk.Entry(row, textvariable=txt_var,
+                         bg=BG3, fg=FG, insertbackground=FG,
+                         font=(FONT_FAMILY, 10), relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER,
+                         highlightcolor=ACCENT)
+        txt_e.place(x=cx, y=3, width=cw, height=h - 6)
+        txt_e.bind("<FocusOut>", lambda e, i=idx, v=txt_var: self._save_text(i, v))
+        txt_e.bind("<Return>",   lambda e, i=idx, v=txt_var: self._save_text(i, v))
+        txt_e.bind("<FocusIn>",  lambda e, i=idx: (
+            setattr(self, "_last_focused_idx", i),
+            self._select_row(i)
+        ))
+        row_info["content"] = txt_e
 
-        # ── 화자 선택: 박스 버튼 형태 ────────
+        # ── 화자 pill 컨테이너 ────────────────
+        sx, sw = pos["speaker"], self._col_w["speaker"]
+        if isinstance(sx, tuple):
+            sx, sw = sx[0], sx[1]
+
         spk_frame = tk.Frame(row, bg=bg)
-        spk_frame.pack(side="left", padx=(0, 8), pady=4)
-        self._build_speaker_selector(spk_frame, idx, sub, bg)
+        spk_frame.place(x=pos["speaker"][0], y=0,
+                        width=self._col_w["speaker"], height=h)
+        self._build_speaker_pills(spk_frame, idx, sub, bg)
+        row_info["speaker"] = spk_frame
 
-        # 삭제 버튼
-        tk.Button(row, text="✕", bg=bg, fg="#FF6B8A",
-                  font=(FONT_FAMILY, 11), bd=0, cursor="hand2",
-                  activebackground=bg, activeforeground=ACCENT,
-                  command=lambda i=idx: self.delete_row(i)
-                  ).pack(side="left", padx=(0, 8), pady=6)
+        # ── 삭제 버튼 ─────────────────────────
+        del_x = pos["del"][0]
+        del_btn = tk.Button(row, text="✕", bg=bg, fg="#FF6B8A",
+                            font=(FONT_FAMILY, 10), bd=0, cursor="hand2",
+                            activebackground=bg, activeforeground=ACCENT,
+                            command=lambda i=idx: self.delete_row(i))
+        del_btn.place(x=del_x, y=0, width=self._col_w["del"], height=h)
+        row_info["del"] = del_btn
 
-        # 호버
-        hover_bg = "#2A2A2A"
-        for widget in [row]:
-            widget.bind("<Enter>",
-                lambda e, r=row:
-                    [w.configure(bg=hover_bg) for w in [r] + r.winfo_children()
-                     if isinstance(w, (tk.Frame, tk.Label, tk.Button))])
-            widget.bind("<Leave>",
-                lambda e, r=row, b=bg:
-                    [w.configure(bg=b) for w in [r] + r.winfo_children()
-                     if isinstance(w, (tk.Frame, tk.Label, tk.Button))])
+        self._row_widgets.append(row_info)
+        row_info["_row_frame"] = row  # 하이라이트용 frame 참조
+
+        # ── 행 클릭: 행 선택 + content Entry 외 클릭 시 포커스 해제 ──
+        def _row_click(e, i=idx):
+            self._select_row(i)
+            self._blur_content_entry()
+        row.bind("<Button-1>", _row_click)
+        num_lbl.bind("<Button-1>", lambda e, i=idx: _row_click(e, i))
+        spk_frame.bind("<Button-1>", lambda e, i=idx: _row_click(e, i))
+
+    def _on_global_click(self, event):
+        """어디든 클릭 시, 클릭 대상이 content Entry가 아니면 포커스 해제."""
+        clicked = event.widget
+        # 클릭한 위젯이 content Entry 본인이면 그냥 둠
+        for ri in self._row_widgets:
+            if ri.get("content") is clicked:
+                return
+        self._blur_content_entry()
+
+    def _blur_content_entry(self):
+        """현재 포커스가 content Entry이면 포커스를 루트로 이동해 하이라이트 해제."""
+        cur = self.focus_get()
+        if not isinstance(cur, tk.Entry):
+            return
+        for ri in self._row_widgets:
+            if ri.get("content") is cur:
+                cur.event_generate("<FocusOut>")
+                self.focus_set()
+                return
+
+    def _select_row(self, idx):
+        """자막 행 선택: 이전 선택 해제 → 새 행 하이라이트 → seek"""
+        prev = getattr(self, "_selected_row_idx", None)
+        self._selected_row_idx = idx
+        self._last_focused_idx = idx
+
+        # 이전 행 하이라이트 해제
+        if prev is not None and prev != idx and prev < len(self._row_widgets):
+            self._set_row_highlight(prev, False)
+
+        # 새 행 하이라이트
+        if idx < len(self._row_widgets):
+            self._set_row_highlight(idx, True)
+
+        self._seek_to_subtitle(idx)
+
+    def _set_row_highlight(self, idx, selected: bool):
+        """행 배경색을 선택/해제 상태로 변경."""
+        if idx >= len(self._row_widgets):
+            return
+        row_info = self._row_widgets[idx]
+        base_bg = ROW_ODD if idx % 2 == 0 else ROW_EVEN
+        bg = ROW_HL if selected else base_bg
+        row_frame = row_info.get("_row_frame")
+        if row_frame:
+            try:
+                row_frame.configure(bg=bg)
+            except Exception:
+                pass
+        for cid, widget in row_info.items():
+            if cid.startswith("_"):
+                continue
+            if cid in ("ts_s", "ts_e", "content"):
+                continue  # Entry 배경은 BG3 고정
+            try:
+                widget.configure(bg=bg)
+            except Exception:
+                pass
+        # spk_frame 자식(pill label)도 미선택 상태 배경 갱신
+        spk_frame = row_info.get("speaker")
+        if spk_frame:
+            sub = self.subtitles[idx] if idx < len(self.subtitles) else {}
+            current = sub.get("speaker", "")
+            for child in spk_frame.winfo_children():
+                try:
+                    child_text = child.cget("text")
+                    # 선택된 pill은 자체 sel_bg 유지, 비선택 pill만 행 배경으로
+                    is_pill_selected = (child_text == current) or \
+                                       (child_text == "(없음)" and current == "")
+                    if not is_pill_selected:
+                        child.configure(bg=bg)
+                except Exception:
+                    pass
+
+    # ── 화자 pill 버튼 상시 나열 ────────────
+    def _build_speaker_pills(self, parent, idx, sub, row_bg):
+        """없음 + 화자 목록을 가변폭 pill 버튼으로 상시 표시"""
+        current = sub.get("speaker", "")
+        choices = [("", "(없음)")] + [(sp, sp) for sp in self.speakers]
+
+        for val, label in choices:
+            is_sel = (val == current)
+            if val == "":
+                color = FG_DIM
+                sel_bg = "#2A2A2A"
+            else:
+                sp_i  = self.speakers.index(val)
+                color = SPEAKER_COLORS[sp_i % len(SPEAKER_COLORS)]
+                sel_bg = "#2D2040"
+
+            btn = tk.Label(parent, text=label,
+                           bg=sel_bg if is_sel else row_bg,
+                           fg=color if is_sel else "#444455",
+                           font=(FONT_FAMILY, 9, "bold" if is_sel else "normal"),
+                           padx=7, pady=2, cursor="hand2",
+                           relief="flat",
+                           highlightthickness=1,
+                           highlightbackground=color if is_sel else "#2A2A2A")
+            btn.pack(side="left", padx=2)
+            btn.bind("<Button-1>",
+                lambda e, v=val, i=idx: self._pill_select(i, v))
+
+    def _auto_resize_speaker_col(self):
+        """화자 pill 전체를 표시하는 데 필요한 최소 너비로 speaker 컬럼 자동 조정."""
+        # 각 pill의 추정 너비 계산 (폰트 기준 대략 글자당 8px + padx*2 + border)
+        char_w = 8
+        pad = 7 * 2 + 4 + 2  # padx*2 + highlightthickness*2 + pack padx*2
+        choices_count = 1 + len(self.speakers)  # (없음) + 화자들
+        # 가장 긴 화자명 길이
+        max_label_len = max(
+            (len(sp) for sp in self.speakers), default=0
+        )
+        none_len = len("(없음)")
+        pill_w_none = none_len * char_w + pad
+        pill_w_spk  = max_label_len * char_w + pad
+        needed = pill_w_none + pill_w_spk * len(self.speakers) + 8
+        needed = max(needed, 80)
+
+        if self._col_w["speaker"] != needed:
+            self._col_w["speaker"] = needed
+            self._layout_header()
+            self._apply_col_layout_to_rows()
 
     def _seek_to_subtitle(self, idx):
         """해당 자막의 시작 시간으로 미디어 seek"""
@@ -1005,8 +1438,32 @@ class SRTEditor(tk.Tk):
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
 
+    def _pill_select(self, sub_idx, val):
+        """pill 클릭 시 화자 지정 + 해당 행만 재렌더"""
+        self.subtitles[sub_idx]["speaker"] = val
+        self._unsaved = True
+        self._refresh_row(sub_idx)
+        self._render_speakers()
+
+    def _refresh_row(self, idx):
+        """해당 인덱스 행의 speaker pill만 갱신 (전체 재렌더 없음)."""
+        if idx >= len(self._row_widgets):
+            return
+        row_info = self._row_widgets[idx]
+        spk_frame = row_info.get("speaker")
+        if spk_frame is None:
+            return
+        sub = self.subtitles[idx]
+        is_selected = getattr(self, "_selected_row_idx", None) == idx
+        bg = ROW_HL if is_selected else (ROW_ODD if idx % 2 == 0 else ROW_EVEN)
+        for child in spk_frame.winfo_children():
+            child.destroy()
+        self._build_speaker_pills(spk_frame, idx, sub, bg)
+        self._update_count()
+
     def _build_speaker_selector(self, parent, idx, sub, row_bg):
-        """화자를 박스 버튼 형태로 선택 (드롭다운 대신)"""
+        """(구버전 호환용 — _build_speaker_pills 로 대체됨)"""
+        self._build_speaker_pills(parent, idx, sub, row_bg)
         current = sub.get("speaker", "")
         display = current if current else "(없음)"
 
@@ -1079,6 +1536,7 @@ class SRTEditor(tk.Tk):
     def _select_speaker(self, choice, sub_idx, popup):
         val = "" if choice == "(없음)" else choice
         self.subtitles[sub_idx]["speaker"] = val
+        self._unsaved = True
 
         # 버튼 텍스트/색 갱신
         if "_btn" in self.subtitles[sub_idx]:
@@ -1107,9 +1565,11 @@ class SRTEditor(tk.Tk):
     # ── 데이터 저장 콜백 ──────────────────────
     def _save_ts(self, idx, var):
         self.subtitles[idx]["timestamp"] = var.get()
+        self._unsaved = True
 
     def _save_text(self, idx, var):
         self.subtitles[idx]["text"] = var.get()
+        self._unsaved = True
 
     # ── 화자 관리 ─────────────────────────────
     def add_speaker(self):
@@ -1188,6 +1648,7 @@ class SRTEditor(tk.Tk):
                 self.speakers.append(sp)
 
         self._hide_overlay()
+        self._unsaved = False
         self._render_speakers()
         self._render_rows()
 
@@ -1228,18 +1689,46 @@ class SRTEditor(tk.Tk):
             return
 
         self.player.stop()
-        dur = self.player.load(path)
+        self.player._filepath = path
+        self.player._position = 0.0
+        self.player._duration = 0.0
         self.media_path = path
 
         name = os.path.basename(path)
         self.lbl_media.configure(text=f"🎵  {name}", fg=FG)
         self.media_progress_var.set(0)
-        self.lbl_dur.configure(text=self._fmt_time(dur))
+        self.lbl_dur.configure(text="…")   # 조회 중 표시
         self.lbl_pos.configure(text="0:00:00")
         self.btn_play.configure(text="▶")
-        self.after(50, self._pb_redraw)
+        self.after(100, self._pb_redraw)
+
+        # duration 조회를 백그라운드에서 수행 → UI 블로킹 없음
+        def _fetch():
+            dur = self.player._get_duration(path)
+            # 여전히 같은 파일이 로드된 경우에만 반영
+            def _apply():
+                if self.media_path == path:
+                    self.player._duration = dur
+                    self.lbl_dur.configure(text=self._fmt_time(dur))
+                    self._pb_redraw()
+            self.after(0, _apply)
+
+        threading.Thread(target=_fetch, daemon=True).start()
 
     # ── 미디어 컨트롤 ────────────────────────
+    def _on_space_key(self, event):
+        """스페이스바: 자막 내용 Entry에 포커스가 있으면 무시, 그 외에는 재생/정지."""
+        focused = self.focus_get()
+        # 자막 내용(content) Entry인지 확인
+        if isinstance(focused, tk.Entry):
+            # row_widgets 에서 content Entry 목록 추출
+            for row_info in self._row_widgets:
+                if row_info.get("content") is focused:
+                    return  # 자막 내용 편집 중 → 스페이스 통과
+            # content가 아닌 다른 Entry(타임스탬프 등)도 포커스 해제 후 재생
+            self.focus_set()
+        self._media_play_pause()
+
     def _media_play_pause(self):
         if not self.media_path:
             return
@@ -1301,8 +1790,11 @@ class SRTEditor(tk.Tk):
             pos = self.player.position
             self.media_progress_var.set(pos)
             self.lbl_pos.configure(text=self._fmt_time(pos))
+            dur = self.player.duration
+            if dur > 0:
+                self.lbl_dur.configure(text=self._fmt_time(dur))
             self._pb_redraw()
-            self._seek_job = self.after(300, self._poll_progress)
+            self._seek_job = self.after(100, self._poll_progress)  # 300→100ms
         else:
             self.btn_play.configure(text="▶")
             self._seek_job = None
@@ -1330,6 +1822,7 @@ class SRTEditor(tk.Tk):
             return
         try:
             write_srt_tagged(self.subtitles, self.save_path)
+            self._unsaved = False
             self.lbl_file.configure(text=f"{os.path.basename(self.save_path)}  ✓")
             self.after(800, lambda: self.lbl_file.configure(
                 text=os.path.basename(self.save_path)))
@@ -1355,6 +1848,7 @@ class SRTEditor(tk.Tk):
             return
         try:
             write_srt_tagged(self.subtitles, path)
+            self._unsaved = False
             self.save_path = path
             self.lbl_file.configure(text=f"{os.path.basename(path)}  ✓")
             self.after(800, lambda: self.lbl_file.configure(
@@ -1373,7 +1867,10 @@ class SRTEditor(tk.Tk):
         if not self.subtitles:
             messagebox.showwarning("내보내기", "자막이 없습니다.", parent=self)
             return
-        out_dir = filedialog.askdirectory(title="저장할 폴더 선택", parent=self)
+        init_dir = os.path.dirname(self.filepath) if self.filepath else ""
+        out_dir = filedialog.askdirectory(title="저장할 폴더 선택",
+                                          initialdir=init_dir,
+                                          parent=self)
         if not out_dir:
             return
 
@@ -1407,6 +1904,20 @@ class SRTEditor(tk.Tk):
             messagebox.showwarning("내보내기", "저장할 자막이 없습니다.", parent=self)
 
     # ── 종료 처리 ─────────────────────────────
+    def _on_close(self):
+        if self._unsaved and self.subtitles:
+            ans = messagebox.askyesnocancel(
+                "저장되지 않은 변경사항",
+                "저장되지 않은 변경사항이 있습니다.\n저장하고 종료하시겠습니까?",
+                parent=self)
+            if ans is None:    # 취소
+                return
+            if ans:            # 예 → 저장 후 종료
+                self.save_file()
+        self._stop_progress_poll()
+        self.player.stop()
+        self.destroy()
+
     def destroy(self):
         self._stop_progress_poll()
         self.player.stop()
@@ -1447,9 +1958,10 @@ def main():
                 self.bind("<Control-s>", lambda e: self.save_file())
                 self.bind("<Control-S>", lambda e: self.save_file_as())
                 self.bind("<Control-o>", lambda e: self.open_file())
-                self.bind("<space>",     lambda e: self._media_play_pause())
+                self.bind("<space>",     self._on_space_key)
                 self.bind("<Left>",      lambda e: self._media_seek(-5))
                 self.bind("<Right>",     lambda e: self._media_seek(+5))
+                self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # TkinterDnD.Tk 를 상속해야 drop_target_register 사용 가능
         class _Root(TkinterDnD.Tk):
