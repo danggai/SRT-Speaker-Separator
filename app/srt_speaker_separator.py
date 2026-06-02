@@ -182,16 +182,20 @@ def write_srt(subtitles, filepath):
 
 
 def write_srt_tagged(subtitles, filepath, meta: dict = None):
+    global g_display_pattern
     lines = []
     for i, sub in enumerate(subtitles, start=1):
         lines.append(str(i))
         lines.append(sub["timestamp"])
-        if sub.get("speaker"):
-            lines.append(f"[{sub['speaker']}] {sub['text']}")
+        spk  = sub.get("speaker", "")
+        text = sub.get("text", "")
+        if spk:
+            # 표시 패턴 적용: % → 화자명, & → 내용
+            tagged = g_display_pattern.replace("%", spk).replace("&", text)
         else:
-            lines.append(sub["text"])
+            tagged = text
+        lines.append(tagged)
         lines.append("")
-    # ── 파일 끝에 ; 주석으로 메타 저장 ──
     if meta:
         lines.append(f"; SRT_META {json.dumps(meta, ensure_ascii=False)}")
     with open(filepath, "w", encoding="utf-8") as f:
@@ -398,6 +402,290 @@ class MediaPlayer:
 
     def __del__(self):
         self._kill_proc()
+
+
+# ─────────────────────────────────────────────
+#  툴팁
+# ─────────────────────────────────────────────
+class Tooltip:
+    """위젯에 마우스오버 힌트를 표시하는 경량 툴팁."""
+    _instance = None   # 동시에 하나만 표시
+
+    def __init__(self, widget, text, delay=500):
+        self._widget  = widget
+        self._text    = text
+        self._delay   = delay
+        self._job     = None
+        self._tip_win = None
+        widget.bind("<Enter>",  self._on_enter, add=True)
+        widget.bind("<Leave>",  self._on_leave, add=True)
+        widget.bind("<Button>", self._on_leave, add=True)
+
+    def _on_enter(self, e):
+        self._cancel()
+        self._job = self._widget.after(self._delay, self._show)
+
+    def _on_leave(self, e):
+        self._cancel()
+        self._hide()
+
+    def _cancel(self):
+        if self._job:
+            try:
+                self._widget.after_cancel(self._job)
+            except Exception:
+                pass
+            self._job = None
+
+    def _show(self):
+        if Tooltip._instance and Tooltip._instance is not self:
+            Tooltip._instance._hide()
+        Tooltip._instance = self
+        x = self._widget.winfo_rootx() + 10
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+        self._tip_win = tw = tk.Toplevel(self._widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tw.attributes("-topmost", True)
+        outer = tk.Frame(tw, bg=BORDER, bd=0)
+        outer.pack()
+        tk.Label(outer, text=self._text,
+                 bg="#252535", fg="#CCCCDD",
+                 font=(FONT_FAMILY, 9),
+                 padx=8, pady=5,
+                 justify="left",
+                 relief="flat").pack()
+
+    def _hide(self):
+        if self._tip_win:
+            try:
+                self._tip_win.destroy()
+            except Exception:
+                pass
+            self._tip_win = None
+        if Tooltip._instance is self:
+            Tooltip._instance = None
+
+
+# ─────────────────────────────────────────────
+#  커스텀 컬러피커
+# ─────────────────────────────────────────────
+class _ColorPickerDialog:
+    """HSV 팔레트 + 밝기 슬라이더 + Hex 입력으로 구성된 커스텀 컬러피커."""
+
+    SZ   = 200   # 팔레트 크기
+    BH   = 20    # 밝기 슬라이더 높이
+
+    def __init__(self, parent, initial_color="#9B7FD4", title="색상 선택"):
+        self._parent  = parent
+        self._result  = None
+        self._title   = title
+        self._h, self._s, self._v = self._hex_to_hsv(initial_color)
+
+    # ── 공개 API ─────────────────────────────
+    def show(self):
+        self._build()
+        self._parent.wait_window(self._win)
+        return self._result
+
+    # ── UI 빌드 ──────────────────────────────
+    def _build(self):
+        win = tk.Toplevel(self._parent)
+        self._win = win
+        win.title(self._title)
+        win.resizable(False, False)
+        win.configure(bg=BG2)
+        win.grab_set()
+        win.transient(self._parent)
+
+        pad = tk.Frame(win, bg=BG2)
+        pad.pack(padx=16, pady=14)
+
+        # HSV 팔레트 캔버스
+        sz = self.SZ
+        self._pal = tk.Canvas(pad, width=sz, height=sz,
+                              highlightthickness=1, highlightbackground=BORDER,
+                              cursor="crosshair")
+        self._pal.pack()
+        self._draw_palette()
+
+        # 팔레트 클릭/드래그
+        self._pal.bind("<ButtonPress-1>",  self._pal_click)
+        self._pal.bind("<B1-Motion>",       self._pal_click)
+
+        # 밝기(V) 슬라이더
+        bh = self.BH
+        self._bsl = tk.Canvas(pad, width=sz, height=bh,
+                              highlightthickness=1, highlightbackground=BORDER,
+                              cursor="sb_h_double_arrow")
+        self._bsl.pack(pady=(6, 0))
+        self._draw_brightness()
+        self._bsl.bind("<ButtonPress-1>",  self._bsl_click)
+        self._bsl.bind("<B1-Motion>",       self._bsl_click)
+
+        # 미리보기 + Hex 입력
+        bot = tk.Frame(pad, bg=BG2)
+        bot.pack(fill="x", pady=(10, 0))
+
+        self._preview = tk.Canvas(bot, width=44, height=30,
+                                  highlightthickness=1, highlightbackground=BORDER)
+        self._preview.pack(side="left", padx=(0, 10))
+
+        tk.Label(bot, text="#", bg=BG2, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(side="left")
+        self._hex_var = tk.StringVar()
+        self._hex_entry = tk.Entry(bot, textvariable=self._hex_var,
+                                   width=7, bg=BG3, fg=FG,
+                                   insertbackground=FG,
+                                   font=(FONT_MONO, 11),
+                                   relief="flat",
+                                   highlightthickness=1,
+                                   highlightbackground=BORDER,
+                                   highlightcolor=ACCENT)
+        self._hex_entry.pack(side="left")
+        self._hex_var.trace_add("write", self._on_hex_type)
+        self._hex_entry.bind("<Return>", lambda e: self._on_hex_commit())
+
+        # 버튼
+        btn_row = tk.Frame(pad, bg=BG2)
+        btn_row.pack(fill="x", pady=(12, 0))
+        tk.Button(btn_row, text="확인",
+                  bg=ACCENT, fg="white", relief="flat", bd=0,
+                  font=(FONT_FAMILY, 10, "bold"), padx=18, pady=6,
+                  cursor="hand2", activebackground="#7B5FB4",
+                  command=self._ok).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text="취소",
+                  bg=BG3, fg=FG_DIM, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 10), padx=14, pady=6,
+                  cursor="hand2", activebackground=BORDER,
+                  command=win.destroy).pack(side="right")
+
+        self._refresh()
+
+        # 화면 중앙 배치
+        win.update_idletasks()
+        pw = self._parent.winfo_rootx() + self._parent.winfo_width() // 2
+        ph = self._parent.winfo_rooty() + self._parent.winfo_height() // 2
+        ww, wh = win.winfo_width(), win.winfo_height()
+        win.geometry(f"+{pw - ww//2}+{ph - wh//2}")
+
+    # ── 팔레트 그리기 (H=x, S=y, V=고정) ────
+    def _draw_palette(self):
+        sz  = self.SZ
+        img_data = []
+        for row in range(sz):
+            s = 1.0 - row / (sz - 1)
+            row_pixels = []
+            for col in range(sz):
+                h = col / (sz - 1)
+                r, g, b = self._hsv2rgb(h, s, self._v)
+                row_pixels.append(f"#{r:02x}{g:02x}{b:02x}")
+            img_data.append("{" + " ".join(row_pixels) + "}")
+        self._pal_img = tk.PhotoImage(width=sz, height=sz)
+        self._pal_img.put(" ".join(img_data))
+        self._pal.delete("all")
+        self._pal.create_image(0, 0, anchor="nw", image=self._pal_img)
+
+    def _draw_brightness(self):
+        sz = self.SZ; bh = self.BH
+        self._bsl.delete("all")
+        for x in range(sz):
+            v   = x / (sz - 1)
+            r, g, b = self._hsv2rgb(self._h, self._s, v)
+            self._bsl.create_line(x, 0, x, bh, fill=f"#{r:02x}{g:02x}{b:02x}")
+
+    def _draw_cursor(self):
+        sz = self.SZ; bh = self.BH
+        self._pal.delete("cursor")
+        cx = int(self._h * (sz - 1))
+        cy = int((1.0 - self._s) * (sz - 1))
+        r  = 6
+        self._pal.create_oval(cx-r, cy-r, cx+r, cy+r,
+                              outline="white", width=2, tags="cursor")
+        self._pal.create_oval(cx-r+1, cy-r+1, cx+r-1, cy+r-1,
+                              outline="black", width=1, tags="cursor")
+        # 밝기 슬라이더 핸들
+        self._bsl.delete("handle")
+        bx = int(self._v * (sz - 1))
+        self._bsl.create_line(bx, 0, bx, bh,
+                              fill="white", width=2, tags="handle")
+
+    # ── 이벤트 ───────────────────────────────
+    def _pal_click(self, e):
+        sz = self.SZ
+        self._h = max(0.0, min(1.0, e.x / (sz - 1)))
+        self._s = max(0.0, min(1.0, 1.0 - e.y / (sz - 1)))
+        self._refresh()
+
+    def _bsl_click(self, e):
+        self._v = max(0.0, min(1.0, e.x / (self.SZ - 1)))
+        self._draw_palette()
+        self._refresh()
+
+    def _on_hex_type(self, *_):
+        val = self._hex_var.get().strip().lstrip("#")
+        if len(val) == 6:
+            try:
+                r = int(val[0:2], 16)
+                g = int(val[2:4], 16)
+                b = int(val[4:6], 16)
+                self._h, self._s, self._v = self._rgb2hsv(r, g, b)
+                self._draw_palette()
+                self._draw_brightness()
+                self._draw_cursor()
+                self._update_preview()
+            except ValueError:
+                pass
+
+    def _on_hex_commit(self):
+        self._on_hex_type()
+
+    def _ok(self):
+        r, g, b = self._hsv2rgb(self._h, self._s, self._v)
+        self._result = f"#{r:02x}{g:02x}{b:02x}"
+        self._win.destroy()
+
+    # ── 통합 갱신 ────────────────────────────
+    def _refresh(self):
+        self._draw_brightness()
+        self._draw_cursor()
+        self._update_preview()
+        r, g, b = self._hsv2rgb(self._h, self._s, self._v)
+        self._hex_var.trace_remove("write",
+            self._hex_var.trace_info()[0][1] if self._hex_var.trace_info() else "")
+        self._hex_var.set(f"{r:02x}{g:02x}{b:02x}")
+        self._hex_var.trace_add("write", self._on_hex_type)
+
+    def _update_preview(self):
+        r, g, b = self._hsv2rgb(self._h, self._s, self._v)
+        color = f"#{r:02x}{g:02x}{b:02x}"
+        self._preview.delete("all")
+        self._preview.configure(bg=color)
+        self._preview.create_rectangle(0, 0, 44, 30, fill=color, outline="")
+
+    # ── 색상 변환 헬퍼 ───────────────────────
+    @staticmethod
+    def _hsv2rgb(h, s, v):
+        import colorsys
+        r, g, b = colorsys.hsv_to_rgb(h, s, v)
+        return int(r*255), int(g*255), int(b*255)
+
+    @staticmethod
+    def _rgb2hsv(r, g, b):
+        import colorsys
+        return colorsys.rgb_to_hsv(r/255, g/255, b/255)
+
+    @staticmethod
+    def _hex_to_hsv(hex_color):
+        hex_color = hex_color.lstrip("#")
+        try:
+            r = int(hex_color[0:2], 16)
+            g = int(hex_color[2:4], 16)
+            b = int(hex_color[4:6], 16)
+        except (ValueError, IndexError):
+            return 0.6, 0.5, 0.8
+        import colorsys
+        return colorsys.rgb_to_hsv(r/255, g/255, b/255)
 
 
 # ─────────────────────────────────────────────
@@ -629,6 +917,7 @@ class SRTEditor(tk.Tk):
 
         self._build_table(right_col)
         self._build_media_panel(right_col)
+        self.after(200, self._attach_tooltips)
 
         # 파일 없을 때 드롭 오버레이
         self._build_drop_overlay()
@@ -674,6 +963,26 @@ class SRTEditor(tk.Tk):
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
 
     # ── 드래그 앤 드롭 설정 ──────────────────
+    def _attach_tooltips(self):
+        """주요 위젯에 마우스오버 툴팁을 붙임."""
+        T = Tooltip
+
+        # ── 재생 컨트롤 ──────────────────────
+        T(self.btn_stop, "처음으로 이동  [⏮]")
+        T(self.btn_prev, "재생 중: 이전 자막으로  [←]\n정지 중: -5초 이동  [←]")
+        T(self.btn_play, "재생 / 일시정지  [Space]")
+        T(self.btn_next, "재생 중: 다음 자막으로  [→]\n정지 중: +5초 이동  [→]")
+        T(self._vol_icon,   "음소거 토글  (클릭)")
+        T(self._vol_canvas, "볼륨 조절  (드래그)\n현재: " + str(self._vol_var) + "%")
+        T(self._pb_canvas,  "재생 위치 이동  (클릭/드래그)")
+        T(self.lbl_pos, "현재 재생 위치")
+        T(self.lbl_dur, "총 재생 시간")
+        T(self.lbl_media, "미디어 파일 드래그 또는 버튼으로 불러오기\n지원: mp3, mp4, wav, m4a 등")
+
+        # ── 헤더 / 카운터 ─────────────────────
+        T(self._hdr_canvas, "컬럼 경계를 좌우로 드래그해 너비 조절")
+        T(self.lbl_count,   "미배정 자막 수\n클릭 → 다음 미배정 자막으로 이동")
+
     def _setup_dnd(self):
         """tkinterdnd2가 있으면 DnD, 없으면 조용히 무시"""
         try:
@@ -831,10 +1140,12 @@ class SRTEditor(tk.Tk):
                        activebackground="#3A3A3A", activeforeground=FG,
                        font=(FONT_FAMILY, 12), width=3)
 
-        tk.Button(btn_group, text="⏮", **btn_cfg,
-                  command=self._media_stop).pack(side="left", padx=4)
-        tk.Button(btn_group, text="◀◀", **btn_cfg,
-                  command=lambda: self._media_seek(-5)).pack(side="left", padx=4)
+        self.btn_stop = tk.Button(btn_group, text="⏮", **btn_cfg,
+                  command=self._media_stop)
+        self.btn_stop.pack(side="left", padx=4)
+        self.btn_prev = tk.Button(btn_group, text="◀◀", **btn_cfg,
+                  command=lambda: self._media_seek(-5))
+        self.btn_prev.pack(side="left", padx=4)
 
         self.btn_play = tk.Button(btn_group, text="▶",
                                   bg=ACCENT, fg="white",
@@ -844,8 +1155,9 @@ class SRTEditor(tk.Tk):
                                   width=3, command=self._media_play_pause)
         self.btn_play.pack(side="left", padx=6)
 
-        tk.Button(btn_group, text="▶▶", **btn_cfg,
-                  command=lambda: self._media_seek(+5)).pack(side="left", padx=4)
+        self.btn_next = tk.Button(btn_group, text="▶▶", **btn_cfg,
+                  command=lambda: self._media_seek(+5))
+        self.btn_next.pack(side="left", padx=4)
 
         self.lbl_dur = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
                                 font=(FONT_FAMILY, 9))
@@ -1179,14 +1491,14 @@ class SRTEditor(tk.Tk):
         idx = self.speakers.index(name) if name in self.speakers else 0
         return SPEAKER_COLORS[idx % len(SPEAKER_COLORS)]
 
+    # ── 커스텀 컬러피커 ──────────────────────
     def _pick_speaker_color(self, name, dot_canvas, row_frame):
         current_color = self._speaker_color(name)
-        result = colorchooser.askcolor(
-            color=current_color, title=f"'{name}' 색상 선택", parent=self)
-        if result and result[1]:
-            self.speaker_colors[name] = result[1]
+        result = _ColorPickerDialog(self, current_color, title=f"{name} 색상 선택").show()
+        if result:
+            self.speaker_colors[name] = result
             self._render_speakers()
-            self._fill_slots(self._vscroll_top)   # 가상 스크롤: 뷰포트 전체 재렌더
+            self._fill_slots(self._vscroll_top)
 
     # ── 화자 사이드바 렌더 ───────────────────
     def _render_speakers(self):
@@ -1250,6 +1562,8 @@ class SRTEditor(tk.Tk):
                              highlightcolor=color)
 
             def _start_edit(e, lbl=lbl, entry=entry, var=name_var):
+                if e.widget is not lbl:
+                    return
                 lbl.pack_forget()
                 entry.pack(fill="x", expand=True, ipady=2)
                 entry.focus_set(); entry.select_range(0, "end")
@@ -1292,6 +1606,17 @@ class SRTEditor(tk.Tk):
             drag_lbl.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_drag_start(e, r))
             drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
             drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
+
+            # 툴팁 — 위젯별 개별 힌트
+            key_hint = f"  단축키: {i+1}" if i < 9 else ""
+            Tooltip(row,      f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}", delay=600)
+            Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
+            Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
+            # 삭제 버튼 툴팁 (✕ 버튼)
+            for child in row.winfo_children():
+                if isinstance(child, tk.Button) and child.cget("text") == "✕":
+                    Tooltip(child, f"'{name}' 화자 삭제", delay=400)
+                    break
 
     # ── 화자 드래그 순서 변경 ─────────────────
     def _spk_drag_start(self, event, row):
@@ -1633,6 +1958,7 @@ class SRTEditor(tk.Tk):
         del_btn.bind("<ButtonRelease-1>", _del_click)
         del_btn.bind("<Enter>",  lambda e, b=del_btn: b.configure(fg=ACCENT))
         del_btn.bind("<Leave>",  lambda e, b=del_btn: b.configure(fg="#FF6B8A"))
+        Tooltip(del_btn, "자막 행 삭제  [Ctrl+X로 잘라내기]", delay=600)
         wi["del"] = del_btn
         wi["_row_frame"] = row
 
@@ -2357,21 +2683,6 @@ class SRTEditor(tk.Tk):
         self._render_speakers()
         self._unsaved = True
 
-    
-        name = simpledialog.askstring("화자 추가", "화자 이름을 입력하세요:", parent=self)
-        if not name or not name.strip():
-            return
-        name = name.strip()
-        if name in self.speakers:
-            messagebox.showwarning("중복", f"'{name}' 화자가 이미 있습니다.", parent=self)
-            return
-        self._push_undo()
-        self.speakers.append(name)
-        self._auto_resize_speaker_col()
-        self._fill_slots(self._vscroll_top)
-        self._render_speakers()
-        self._update_count()
-
     def add_speaker(self):
         name = simpledialog.askstring("화자 추가", "화자 이름을 입력하세요:", parent=self)
         if not name or not name.strip():
@@ -2461,6 +2772,13 @@ class SRTEditor(tk.Tk):
         meta = read_srt_meta(path)
         if "speaker_colors" in meta:
             self.speaker_colors = meta["speaker_colors"]
+        if "display_pattern" in meta:
+            global g_speaker_pattern, g_display_pattern
+            g_display_pattern = meta["display_pattern"]
+            try:
+                g_speaker_pattern = display_to_regex(g_display_pattern)
+            except Exception:
+                pass
 
         self._hide_overlay()
         self._unsaved = False
@@ -2828,6 +3146,8 @@ class SRTEditor(tk.Tk):
             meta = {}
             if self.speaker_colors:
                 meta["speaker_colors"] = self.speaker_colors
+            if g_display_pattern != DEFAULT_DISPLAY_PATTERN:
+                meta["display_pattern"] = g_display_pattern
             write_srt_tagged(self.subtitles, self.save_path, meta or None)
             self._unsaved = False
             self.lbl_file.configure(text=f"{os.path.basename(self.save_path)}  ✓")
@@ -2857,6 +3177,8 @@ class SRTEditor(tk.Tk):
             meta = {}
             if self.speaker_colors:
                 meta["speaker_colors"] = self.speaker_colors
+            if g_display_pattern != DEFAULT_DISPLAY_PATTERN:
+                meta["display_pattern"] = g_display_pattern
             write_srt_tagged(self.subtitles, path, meta or None)
             self._unsaved = False
             self.save_path = path
@@ -2925,7 +3247,7 @@ class SRTEditor(tk.Tk):
         saved = []
         for speaker, subs in sorted(speaker_subs.items()):
             path = os.path.join(out_dir, f"{speaker}.srt")
-            write_srt(subs, path)
+            write_srt(subs, path)   # 내보내기는 태그 없는 순수 자막
             saved.append(f"{speaker}.srt  ({len(subs)}개)")
 
         if untagged_subs:
