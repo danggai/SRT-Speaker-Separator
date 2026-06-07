@@ -721,9 +721,11 @@ class SRTEditor(tk.Tk):
         self.player      = MediaPlayer()
         self.media_path  = None
         self._seek_job   = None   # after job for progress polling
-        self._playing_rows: set = set()   # 재생 위치에 해당하는 자막 행 인덱스
-        self._ts_cache: list = []          # 타임스탬프 float 캐시 [(start, end), ...]
-        self._last_polled_pos: float = -1.0  # 폴링 중복 갱신 방지용
+        self._playing_rows: set = set()
+        self._ts_cache: list = []
+        self._last_polled_pos: float = -1.0
+        self._wf_zoom:   float = 1.0
+        self._wf_offset: float = 0.0
 
         self._build_styles()
         self._build_ui()
@@ -1091,46 +1093,67 @@ class SRTEditor(tk.Tk):
             pass
 
     def _build_media_panel(self, parent):
-        panel = tk.Frame(parent, bg=MEDIA_BG, height=130)
+        panel = tk.Frame(parent, bg=MEDIA_BG)
         panel.pack(fill="x", side="bottom")
-        panel.pack_propagate(False)
         self.media_panel = panel
 
         tk.Frame(panel, bg=ACCENT, height=2).pack(fill="x")
 
         inner = tk.Frame(panel, bg=MEDIA_BG)
-        inner.pack(fill="both", expand=True, padx=16, pady=8)
+        inner.pack(fill="x", padx=14, pady=(6, 6))
 
+        # ── 상단: 파일명 + 열기 버튼 ──────────
         top_row = tk.Frame(inner, bg=MEDIA_BG)
-        top_row.pack(fill="x")
+        top_row.pack(fill="x", pady=(0, 4))
 
         self.lbl_media = tk.Label(top_row,
             text="🎵  음성/영상 파일을 여기에 드래그하거나 버튼으로 여세요",
             bg=MEDIA_BG, fg=FG_DIM, font=(FONT_FAMILY, 9), anchor="w")
         self.lbl_media.pack(side="left", fill="x", expand=True)
-
         ttk.Button(top_row, text="📁  미디어 열기",
                    style="Media.TButton",
                    command=self.open_media).pack(side="right", padx=(8, 0))
 
+        # ── 파형 Canvas (100px) ────────────────
         self.media_progress_var = tk.DoubleVar(value=0)
-        pb_frame = tk.Frame(inner, bg=MEDIA_BG)
-        pb_frame.pack(fill="x", pady=(6, 2))
+        self._pb_canvas = tk.Canvas(inner, height=100, bg="#0D0D14",
+                                    highlightthickness=1,
+                                    highlightbackground="#252535",
+                                    cursor="hand2")
+        self._pb_canvas.pack(fill="x", pady=(0, 0))
+        self._pb_dragging  = False
+        self._waveform_pts = []
+        self._wf_loading   = False
 
-        self._pb_canvas = tk.Canvas(pb_frame, height=18, bg=MEDIA_BG,
-                                    highlightthickness=0, cursor="hand2")
-        self._pb_canvas.pack(fill="x")
-        self._pb_dragging = False
+        # 줌/스크롤 상태: _wf_zoom=1.0~10.0, _wf_offset=0.0~1.0 (좌측 비율)
+        self._wf_zoom   = 1.0
+        self._wf_offset = 0.0   # 보이는 구간의 시작 비율
+
         self._pb_canvas.bind("<ButtonPress-1>",   self._pb_press)
         self._pb_canvas.bind("<B1-Motion>",        self._pb_drag)
         self._pb_canvas.bind("<ButtonRelease-1>", self._pb_release)
-        self._pb_canvas.bind("<Configure>",       self._pb_redraw)
+        self._pb_canvas.bind("<Configure>",       self._pb_configure)
+        self._pb_canvas.bind("<MouseWheel>",      self._wf_mousewheel)
+        self._pb_canvas.bind("<Control-MouseWheel>", self._wf_zoom_wheel)
+        self._pb_configure_job = None
 
+        # ── 파형 스크롤바 ─────────────────────
+        self._wf_hsb = tk.Canvas(inner, height=10, bg="#1A1A2A",
+                                  highlightthickness=0, cursor="sb_h_double_arrow")
+        self._wf_hsb.pack(fill="x", pady=(1, 0))
+        self._wf_hsb.bind("<ButtonPress-1>",   self._wf_hsb_press)
+        self._wf_hsb.bind("<B1-Motion>",        self._wf_hsb_drag)
+        self._wf_hsb.bind("<ButtonRelease-1>", self._wf_hsb_release)
+        self._wf_hsb_dragging = False
+        self._wf_hsb_drag_x0  = 0
+        self._wf_hsb_off0     = 0.0
+
+        # ── 컨트롤 행 (버튼 + 볼륨) ───────────
         ctrl = tk.Frame(inner, bg=MEDIA_BG)
-        ctrl.pack(fill="x")
+        ctrl.pack(fill="x", pady=(5, 0))
 
         self.lbl_pos = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=ACCENT,
-                                font=(FONT_FAMILY, 9, "bold"))
+                                font=(FONT_FAMILY, 9, "bold"), width=8, anchor="w")
         self.lbl_pos.pack(side="left")
 
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
@@ -1138,37 +1161,52 @@ class SRTEditor(tk.Tk):
 
         btn_cfg = dict(bg="#2A2A2A", fg=FG, relief="flat", bd=0, cursor="hand2",
                        activebackground="#3A3A3A", activeforeground=FG,
-                       font=(FONT_FAMILY, 12), width=3)
+                       font=(FONT_FAMILY, 12), width=3, pady=4)
 
         self.btn_stop = tk.Button(btn_group, text="⏮", **btn_cfg,
                   command=self._media_stop)
-        self.btn_stop.pack(side="left", padx=4)
+        self.btn_stop.pack(side="left", padx=3)
         self.btn_prev = tk.Button(btn_group, text="◀◀", **btn_cfg,
                   command=lambda: self._media_seek(-5))
-        self.btn_prev.pack(side="left", padx=4)
+        self.btn_prev.pack(side="left", padx=3)
 
         self.btn_play = tk.Button(btn_group, text="▶",
                                   bg=ACCENT, fg="white",
                                   font=(FONT_FAMILY, 14, "bold"),
                                   relief="flat", bd=0, cursor="hand2",
                                   activebackground="#7B5FB4", activeforeground="white",
-                                  width=3, command=self._media_play_pause)
-        self.btn_play.pack(side="left", padx=6)
+                                  width=3, pady=4, command=self._media_play_pause)
+        self.btn_play.pack(side="left", padx=5)
 
         self.btn_next = tk.Button(btn_group, text="▶▶", **btn_cfg,
                   command=lambda: self._media_seek(+5))
-        self.btn_next.pack(side="left", padx=4)
+        self.btn_next.pack(side="left", padx=3)
+
+        # 줌 컨트롤
+        zoom_frame = tk.Frame(ctrl, bg=MEDIA_BG)
+        zoom_frame.pack(side="left", padx=(10, 0))
+        tk.Button(zoom_frame, text="−", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 11), width=2, pady=2, cursor="hand2",
+                  activebackground="#3A3A3A",
+                  command=self._wf_zoom_out).pack(side="left")
+        self.lbl_zoom = tk.Label(zoom_frame, text="1×", bg=MEDIA_BG, fg=FG_DIM,
+                                 font=(FONT_FAMILY, 9), width=4)
+        self.lbl_zoom.pack(side="left", padx=2)
+        tk.Button(zoom_frame, text="+", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 11), width=2, pady=2, cursor="hand2",
+                  activebackground="#3A3A3A",
+                  command=self._wf_zoom_in).pack(side="left")
 
         self.lbl_dur = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
-                                font=(FONT_FAMILY, 9))
+                                font=(FONT_FAMILY, 9), width=8, anchor="e")
         self.lbl_dur.pack(side="right")
 
         vol_frame = tk.Frame(ctrl, bg=MEDIA_BG)
-        vol_frame.pack(side="right", padx=(0, 16))
+        vol_frame.pack(side="right", padx=(0, 12))
 
         self._vol_icon = tk.Label(vol_frame, text="🔊", bg=MEDIA_BG, fg=FG,
                                   font=(FONT_FAMILY, 11), cursor="hand2")
-        self._vol_icon.pack(side="left", padx=(0, 5))
+        self._vol_icon.pack(side="left", padx=(0, 4))
         self._vol_icon.bind("<Button-1>", self._toggle_mute)
 
         self._vol_canvas = tk.Canvas(vol_frame, width=80, height=18,
@@ -1178,7 +1216,7 @@ class SRTEditor(tk.Tk):
 
         self._vol_pct = tk.Label(vol_frame, text="100%", bg=MEDIA_BG, fg=FG,
                                  font=(FONT_FAMILY, 9, "bold"), width=4, anchor="w")
-        self._vol_pct.pack(side="left", padx=(5, 0))
+        self._vol_pct.pack(side="left", padx=(4, 0))
 
         self._vol_var = 100
         self._vol_before_mute = 100
@@ -1193,47 +1231,427 @@ class SRTEditor(tk.Tk):
         for w in [panel, inner, top_row, self.lbl_media, ctrl, btn_group]:
             w.bind("<Enter>", lambda e: None)
 
+    # ── 파형 Canvas 헬퍼 ─────────────────────
+    def _wf_view_range(self):
+        """현재 줌/오프셋 기준 보이는 구간 (start_ratio, end_ratio) 반환."""
+        zoom = max(1.0, getattr(self, "_wf_zoom", 1.0))
+        off  = getattr(self, "_wf_offset", 0.0)
+        span = 1.0 / zoom
+        start = max(0.0, min(off, 1.0 - span))
+        end   = start + span
+        # offset을 clamp된 값으로 동기화
+        self._wf_offset = start
+        return start, end
+
+    def _wf_ratio_to_x(self, ratio, cw):
+        """전체 비율 → 현재 뷰 내 x픽셀."""
+        start, end = self._wf_view_range()
+        span = end - start
+        if span <= 0:
+            return 0
+        return int((ratio - start) / span * cw)
+
+    def _wf_x_to_ratio(self, x, cw):
+        """현재 뷰 내 x픽셀 → 전체 비율."""
+        start, end = self._wf_view_range()
+        span = end - start
+        return max(0.0, min(start + (x / cw) * span, 1.0))
+
+    def _pb_configure(self, event=None):
+        """창 크기 변경 시 디바운싱 — 100ms 내 추가 이벤트 없을 때만 redraw."""
+        if self._pb_configure_job:
+            try:
+                self.after_cancel(self._pb_configure_job)
+            except Exception:
+                pass
+        self._pb_configure_job = self.after(100, self._pb_invalidate)
+
+    def _pb_invalidate(self):
+        """파형 이미지 캐시를 무효화하고 전체 redraw."""
+        self._wf_img_cache = None
+        self._pb_redraw()
+
     def _pb_redraw(self, event=None):
-        c = self._pb_canvas
-        w = c.winfo_width()
-        h = c.winfo_height()
-        if w <= 1:
-            # Canvas가 아직 배치되지 않은 경우 짧게 대기 후 재시도
+        c  = self._pb_canvas
+        cw = c.winfo_width()
+        ch = c.winfo_height()
+        if cw <= 1:
             self.after(50, self._pb_redraw)
             return
+
+        from PIL import Image, ImageDraw, ImageTk
+
+        dur    = self.player.duration if self.player.duration > 0 else 0
+        pos    = self.media_progress_var.get()
+        start_r, end_r = self._wf_view_range()
+
+        # ── 레이아웃 상수 ──────────────────────
+        SUB_H  = 26          # 자막 행 높이
+        GAP    = 1           # 자막/파형 구분선
+        TICK_H = 16          # 하단 시간 눈금 영역
+        sub_top = 0
+        sub_bot = SUB_H
+        wf_top  = SUB_H + GAP
+        wf_bot  = ch - TICK_H
+        wf_h    = wf_bot - wf_top
+        wf_mid  = wf_top + wf_h // 2   # 파형 중앙 (두 채널 경계)
+
+        # dur=0이면 캐시에서 산출
+        cache = getattr(self, "_ts_cache", [])
+        if dur > 0:
+            dur_ = dur
+        else:
+            ends = [t_e for _, t_e in cache if t_e is not None]
+            dur_ = max(ends) if ends else 1.0
+
+        head_x = self._wf_ratio_to_x(pos / dur if dur > 0 else 0, cw)
+
+        # ── 캐시 키 ───────────────────────────
+        cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
+                     id(self._waveform_pts),
+                     tuple((s.get("speaker",""), s.get("timestamp",""))
+                            for s in (self.subtitles or [])),
+                     round(dur_, 2))
+
+        cached = getattr(self, "_wf_img_cache", None)
+        if cached and cached[0] == cache_key:
+            img_tk = cached[1]
+        else:
+            img    = Image.new("RGB", (cw, ch), "#0D0D0F")
+            draw   = ImageDraw.Draw(img)
+            pixels = img.load()
+
+            # ── A. 자막 타임라인 행 ───────────
+            # 배경
+            draw.rectangle([0, sub_top, cw, sub_bot], fill="#131318")
+            # 구분선
+            draw.line([0, sub_bot, cw, sub_bot], fill="#2A2A3A", width=1)
+
+            # 자막 블록 — 한글 지원 폰트 로드
+            try:
+                from PIL import ImageFont
+                import sys as _sys, os as _os
+                _candidates = (
+                    ["C:/Windows/Fonts/malgun.ttf",
+                     "C:/Windows/Fonts/NanumGothic.ttf",
+                     "C:/Windows/Fonts/gulim.ttc"]
+                    if _sys.platform == "win32" else
+                    ["/System/Library/Fonts/AppleSDGothicNeo.ttc",
+                     "/Library/Fonts/NanumGothic.ttf"]
+                    if _sys.platform == "darwin" else
+                    ["/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+                     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+                )
+                font = None
+                for _fp in _candidates:
+                    if _os.path.exists(_fp):
+                        font = ImageFont.truetype(_fp, 10)
+                        break
+            except Exception:
+                font = None
+
+            if cache and self.subtitles:
+                drag = getattr(self, "_wf_sub_drag", None)
+                for i, (t_s, t_e) in enumerate(cache):
+                    if t_s is None or t_e is None:
+                        continue
+                    if drag and drag["idx"] == i:
+                        t_s = drag.get("t_s", t_s)
+                        t_e = drag.get("t_e", t_e)
+                    r_s, r_e = t_s / dur_, t_e / dur_
+                    if r_e < start_r or r_s > end_r:
+                        continue
+                    x1 = int(self._wf_ratio_to_x(max(r_s, start_r), cw))
+                    x2 = int(self._wf_ratio_to_x(min(r_e, end_r), cw))
+                    x2 = max(x1 + 2, x2)
+                    spk   = self.subtitles[i].get("speaker", "")
+                    raw   = self._speaker_color(spk) if spk else "#404055"
+                    h_hex = raw.lstrip("#")
+                    fr, fg_, fb = int(h_hex[0:2],16), int(h_hex[2:4],16), int(h_hex[4:6],16)
+                    # 어둡게 (화자 색 30% + 배경 70%)
+                    BG_R, BG_G, BG_B = 0x13, 0x13, 0x18
+                    fill_rgb = (int(fr*0.30+BG_R*0.70),
+                                int(fg_*0.30+BG_G*0.70),
+                                int(fb*0.30+BG_B*0.70))
+                    fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
+                    # 블록 채우기 (1px 위아래 여백)
+                    draw.rectangle([x1, sub_top+2, x2, sub_bot-2], fill=fill_hex)
+                    # 좌측 색상 강조선
+                    draw.rectangle([x1, sub_top+2, x1+2, sub_bot-2], fill=raw)
+
+                    # 텍스트 (폭이 허용되는 만큼)
+                    box_w = x2 - x1 - 6
+                    if box_w >= 14:
+                        text = self.subtitles[i].get("text", "").replace("\n", " ").strip()
+                        if text:
+                            CHAR_W = 6
+                            max_ch = max(1, box_w // CHAR_W)
+                            if len(text) > max_ch:
+                                text = text[:max_ch - 1] + "…"
+                            ty = sub_top + (SUB_H - 12) // 2
+                            text_col = f"#{min(255,fr+80):02x}{min(255,fg_+80):02x}{min(255,fb+80):02x}"
+                            if font:
+                                draw.text((x1 + 5, ty), text, fill=text_col, font=font)
+                            else:
+                                draw.text((x1 + 5, ty), text, fill=text_col)
+
+            # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
+            draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
+            # 중앙 분리선
+            draw.line([0, wf_mid, cw, wf_mid], fill="#1A1A28", width=1)
+
+            wf = getattr(self, "_waveform_pts", [])
+            if wf:
+                margin  = (end_r - start_r) / max(cw, 1)
+                pts_vis = [(rx, amp) for rx, amp in wf
+                           if start_r - margin <= rx <= end_r + margin]
+                if not pts_vis:
+                    pts_vis = wf
+
+                x_amp = {}
+                for rx, amp in pts_vis:
+                    x = int(self._wf_ratio_to_x(rx, cw))
+                    if 0 <= x < cw:
+                        x_amp[x] = max(x_amp.get(x, 0.0), amp)
+
+                half_h  = wf_h // 2 - 2   # 채널 하나의 최대 높이
+                WF_BASE = (0x1E, 0x1E, 0x3A)
+                WF_PLAY = (0x3A, 0x2A, 0x5A)
+
+                for x in range(cw):
+                    amp = x_amp.get(x)
+                    if amp is None:
+                        amp = (x_amp.get(x-1, 0.0) + x_amp.get(x+1, 0.0)) * 0.5
+                    px = int(amp * half_h)
+                    col = WF_PLAY if x <= head_x else WF_BASE
+
+                    # 상단 채널 (wf_mid 기준 위쪽으로)
+                    y0_top = max(wf_top,  wf_mid - px)
+                    y1_top = wf_mid
+                    for y in range(y0_top, y1_top):
+                        pixels[x, y] = col
+
+                    # 하단 채널 (wf_mid 기준 아래쪽으로)
+                    y0_bot = wf_mid + 1
+                    y1_bot = min(wf_bot, wf_mid + px + 1)
+                    for y in range(y0_bot, y1_bot):
+                        pixels[x, y] = col
+
+                    # 엣지선 (상단 채널 꼭대기)
+                    ey = wf_mid - px
+                    if wf_top <= ey < wf_mid:
+                        edge = (0x9B,0x7F,0xD4) if x <= head_x else (0x44,0x40,0x6A)
+                        pixels[x, ey] = edge
+
+            elif dur_ > 0:
+                draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
+                if head_x > 0:
+                    draw.rectangle([0, wf_mid-1, head_x, wf_mid+1], fill=ACCENT)
+
+            # ── C. 시간 눈금 ─────────────────────
+            if dur > 0:
+                span_sec = (end_r - start_r) * dur
+                for tick in [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]:
+                    if span_sec / tick <= 24:
+                        tick_step = tick; break
+                else:
+                    tick_step = 600
+                t = (int(start_r * dur / tick_step)) * tick_step
+                while t <= end_r * dur:
+                    if t > dur: break
+                    x = self._wf_ratio_to_x(t / dur, cw)
+                    if 0 <= x <= cw:
+                        draw.line([x, wf_bot, x, wf_bot+4], fill="#444466")
+                        h_ = int(t//3600); m_ = int((t%3600)//60); s_ = int(t%60)
+                        ms = int((t*10)%10)
+                        lbl = (f"{m_}:{s_:02d}.{ms}" if tick_step < 1
+                               else f"{h_}:{m_:02d}:{s_:02d}" if h_
+                               else f"{m_}:{s_:02d}")
+                        draw.text((x+3, wf_bot+2), lbl, fill="#555577")
+                    t += tick_step
+
+            img_tk = ImageTk.PhotoImage(img)
+            self._wf_img_cache = (cache_key, img_tk)
+
+        # ── Canvas 오버레이 ───────────────────
         c.delete("all")
-        dur = self.player.duration if self.player.duration > 0 else 0
-        pos = self.media_progress_var.get()
-        ratio = min(pos / dur, 1.0) if dur > 0 else 0.0
-        filled = int(w * ratio)
+        c.create_image(0, 0, anchor="nw", image=img_tk)
 
-        # 트랙 배경
-        track_y = h // 2
-        c.create_rectangle(0, track_y - 3, w, track_y + 3,
-                            fill="#333333", outline="", tags="track")
-        # 채워진 부분
-        if filled > 0:
-            c.create_rectangle(0, track_y - 3, filled, track_y + 3,
-                                fill=ACCENT, outline="", tags="fill")
-        # 핸들 (동그라미)
-        hx = max(7, min(filled, w - 7))
-        c.create_oval(hx - 7, track_y - 7, hx + 7, track_y + 7,
-                      fill=ACCENT, outline="white", width=2, tags="handle")
+        # 재생 헤드
+        if dur > 0:
+            c.create_line(head_x, 0, head_x, ch, fill="white", width=1, tags="head")
+            c.create_polygon(head_x-5, sub_top, head_x+5, sub_top, head_x, sub_top+7,
+                             fill="white", outline="", tags="head")
 
-    def _pb_pos_from_x(self, x):
-        w = self._pb_canvas.winfo_width()
-        dur = self.player.duration if self.player.duration > 0 else 1
-        ratio = max(0.0, min(x / w, 1.0))
-        return ratio * dur
+        # 드래그 핸들 (파형 영역 기준)
+        if cache and self.subtitles:
+            drag = getattr(self, "_wf_sub_drag", None)
+            HW   = self._WF_HANDLE_W
+            for i, (t_s, t_e) in enumerate(cache):
+                if t_s is None or t_e is None:
+                    continue
+                ts = t_s; te = t_e
+                if drag and drag["idx"] == i:
+                    ts = drag.get("t_s", ts)
+                    te = drag.get("t_e", te)
+                r_s, r_e = ts / dur_, te / dur_
+                if r_e < start_r or r_s > end_r:
+                    continue
+                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+                x2 = max(x1+2, self._wf_ratio_to_x(min(r_e, end_r), cw))
+                spk   = self.subtitles[i].get("speaker", "")
+                color = self._speaker_color(spk) if spk else "#404055"
+                snapped_s = drag and drag["idx"]==i and drag["mode"]=="head_start"
+                snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
+                # 핸들은 자막 행 전체 높이에
+                c.create_rectangle(x1,    sub_top, x1+HW, sub_bot,
+                                   fill="#FFFFFF" if snapped_s else color, outline="")
+                c.create_rectangle(x2-HW, sub_top, x2,    sub_bot,
+                                   fill="#FFFFFF" if snapped_e else color, outline="")
+
+        if getattr(self, "_wf_loading", False):
+            c.create_text(cw//2, wf_top + (wf_bot-wf_top)//2,
+                         text="파형 분석 중...", fill="#555577", font=(FONT_FAMILY, 9))
+
+        self._wf_hsb_redraw()
+
+    @staticmethod
+    def _blend_color(fg_hex, bg_hex, alpha):
+        def parse(h):
+            h = h.lstrip("#")
+            return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
+        try:
+            fr,fg_,fb = parse(fg_hex); br,bg_,bb = parse(bg_hex)
+            return f"#{int(fr*alpha+br*(1-alpha)):02x}{int(fg_*alpha+bg_*(1-alpha)):02x}{int(fb*alpha+bb*(1-alpha)):02x}"
+        except Exception:
+            return fg_hex
+
+    _WF_HANDLE_W = 3
+
+    def _wf_hit_test(self, x, y):
+        dur = self.player.duration
+        cache = getattr(self, "_ts_cache", [])
+        if not self.subtitles or not cache:
+            return None
+        if dur <= 0:
+            ends = [t_e for _, t_e in cache if t_e is not None]
+            dur  = max(ends) if ends else 0
+        if dur <= 0:
+            return None
+        cw      = self._pb_canvas.winfo_width()
+        SUB_H   = 26
+        start_r, end_r = self._wf_view_range()
+        HW = self._WF_HANDLE_W + 2
+        for i in range(len(cache)-1, -1, -1):
+            t_s, t_e = cache[i]
+            if t_s is None or t_e is None:
+                continue
+            r_s, r_e = t_s/dur, t_e/dur
+            if r_e < start_r or r_s > end_r:
+                continue
+            x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+            x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+            # 핸들은 자막 행(상단) 영역에서만 감지
+            if y <= SUB_H:
+                if x1 <= x <= x1+HW:
+                    return ("head_start", i)
+                if x2-HW <= x <= x2:
+                    return ("head_end", i)
+            if x1 < x < x2:
+                return ("sub_body", i)
+        return None
 
     def _pb_press(self, event):
+        x, y  = event.x, event.y
+        SUB_H = 26   # 자막 행 높이 (_pb_redraw와 동일)
+        hit   = self._wf_hit_test(x, y)
+
+        # ── 핸들 드래그 (자막 행 영역) ──────────
+        if hit and hit[0] in ("head_start", "head_end"):
+            self._wf_sub_drag = {
+                "mode": hit[0], "idx": hit[1],
+                "t_s": self._ts_cache[hit[1]][0],
+                "t_e": self._ts_cache[hit[1]][1],
+            }
+            self._pb_dragging = False
+            self._pb_canvas.configure(cursor="sb_h_double_arrow")
+            return
+
+        # ── 자막 행 클릭 → 자막 시작점으로 seek ─
+        if y <= SUB_H and hit and hit[0] == "sub_body":
+            cache = getattr(self, "_ts_cache", [])
+            t_s = cache[hit[1]][0] if hit[1] < len(cache) else None
+            if t_s is not None:
+                self._wf_sub_drag       = None
+                self._pb_dragging       = False
+                self._pb_click_consumed = True
+                self._do_seek(t_s)
+            return
+
+        # ── 파형 영역 클릭 → 클릭 위치로 seek ──
+        self._wf_sub_drag = None
         self._pb_dragging = True
-        pos = self._pb_pos_from_x(event.x)
+        self._pb_canvas.configure(cursor="hand2")
+        pos = self._pb_pos_from_x(x)
         self.media_progress_var.set(pos)
         self.lbl_pos.configure(text=self._fmt_time(pos))
         self._pb_redraw()
 
+    def _do_seek(self, pos):
+        """지정 위치로 seek + 하이라이트/폴링 처리."""
+        was_playing = self.player.is_playing
+        self.player.seek_to(pos)
+        self.media_progress_var.set(pos)
+        self.lbl_pos.configure(text=self._fmt_time(pos))
+        new_rows = self._get_rows_at(pos)
+        if new_rows:
+            changed = self._playing_rows.symmetric_difference(new_rows)
+            self._playing_rows = new_rows
+            for idx in changed:
+                self._redraw_slot_for(idx)
+            self._scroll_to_row(min(new_rows))
+        self._pb_redraw()
+        if was_playing:
+            self.btn_play.configure(text="⏸")
+            self._start_progress_poll()
+
     def _pb_drag(self, event):
+        drag = getattr(self, "_wf_sub_drag", None)
+        if drag:
+            dur = self.player.duration
+            if dur <= 0: return
+            cw = self._pb_canvas.winfo_width()
+            t  = max(0.0, self._wf_x_to_ratio(event.x, cw) * dur)
+
+            idx   = drag["idx"]
+            cache = self._ts_cache
+            # 스냅 임계값: 현재 뷰에서 8px에 해당하는 초
+            span_sec = (1.0 / max(1.0, self._wf_zoom)) * dur
+            snap_sec = span_sec * 8 / max(cw, 1)
+
+            if drag["mode"] == "head_start":
+                t = min(t, drag["t_e"] - 0.05)
+                # 앞 자막 종료점에 스냅
+                best = None
+                for j, (js, je) in enumerate(cache):
+                    if j == idx or je is None: continue
+                    if abs(je - t) < snap_sec:
+                        if best is None or abs(je - t) < abs(best - t):
+                            best = je
+                drag["t_s"] = best if best is not None else t
+            else:
+                t = max(t, drag["t_s"] + 0.05)
+                # 뒤 자막 시작점에 스냅
+                best = None
+                for j, (js, je) in enumerate(cache):
+                    if j == idx or js is None: continue
+                    if abs(js - t) < snap_sec:
+                        if best is None or abs(js - t) < abs(best - t):
+                            best = js
+                drag["t_e"] = best if best is not None else t
+
+            self._pb_redraw()
+            return
         if not self._pb_dragging:
             return
         pos = self._pb_pos_from_x(event.x)
@@ -1242,25 +1660,117 @@ class SRTEditor(tk.Tk):
         self._pb_redraw()
 
     def _pb_release(self, event):
+        drag = getattr(self, "_wf_sub_drag", None)
+        self._pb_canvas.configure(cursor="hand2")
+        if drag:
+            idx = drag["idx"]
+            if 0 <= idx < len(self.subtitles):
+                self._push_undo()
+                t_s = drag.get("t_s", self._ts_cache[idx][0])
+                t_e = drag.get("t_e", self._ts_cache[idx][1])
+                def _fmt_ts(sec):
+                    h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
+                    ms=int(round((sec%1)*1000))
+                    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+                self.subtitles[idx]["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
+                self._ts_cache[idx] = (t_s, t_e)
+                self._unsaved = True
+                self._redraw_slot_for(idx)
+            self._wf_sub_drag = None
+            self._pb_redraw()
+            return
         self._pb_dragging = False
+        if getattr(self, "_pb_click_consumed", False):
+            self._pb_click_consumed = False
+            return
         if not self.media_path:
             return
-        pos = self._pb_pos_from_x(event.x)
-        self.media_progress_var.set(pos)
-        was_playing = self.player.is_playing
-        self.player.seek_to(pos)
-        # 하이라이트 즉시 갱신
-        new_rows = self._get_rows_at(pos)
-        if new_rows:
-            changed = self._playing_rows.symmetric_difference(new_rows)
-            self._playing_rows = new_rows
-            for idx in changed:
-                self._redraw_slot_for(idx)
-            self._scroll_to_row(min(new_rows))
-        if was_playing:
-            self.btn_play.configure(text="⏸")
-            self._start_progress_poll()
+        self._do_seek(self._pb_pos_from_x(event.x))
+
+    def _wf_hsb_redraw(self):
+        c = getattr(self, "_wf_hsb", None)
+        if c is None: return
+        cw = c.winfo_width(); ch = c.winfo_height()
+        if cw <= 1: return
+        c.delete("all")
+        c.create_rectangle(0, 0, cw, ch, fill="#1A1A2A", outline="")
+        if self._wf_zoom <= 1.0: return
+        start, end = self._wf_view_range()
+        x1 = int(start * cw)
+        x2 = max(x1+12, int(end * cw))
+        c.create_rectangle(x1, 1, x2, ch-1, fill="#3A3A5A", outline="#555577")
+
+    def _wf_hsb_press(self, e):
+        self._wf_hsb_dragging = True
+        self._wf_hsb_drag_x0  = e.x
+        self._wf_hsb_off0     = self._wf_offset
+
+    def _wf_hsb_drag(self, e):
+        if not self._wf_hsb_dragging: return
+        cw = self._wf_hsb.winfo_width()
+        if cw <= 1: return
+        span = 1.0 / max(1.0, self._wf_zoom)
+        self._wf_offset = max(0.0, min(self._wf_hsb_off0 + (e.x - self._wf_hsb_drag_x0) / cw, 1.0 - span))
         self._pb_redraw()
+
+    def _wf_hsb_release(self, e):
+        self._wf_hsb_dragging = False
+
+    def _wf_mousewheel(self, e):
+        if e.state & 0x1:
+            span  = 1.0 / max(1.0, self._wf_zoom)
+            delta = span * 0.1 * (1 if e.delta < 0 else -1)
+            self._wf_offset = max(0.0, min(self._wf_offset + delta, 1.0 - span))
+            self._pb_redraw()
+        return "break"
+
+    def _wf_zoom_wheel(self, e):
+        cw = self._pb_canvas.winfo_width()
+        # 마우스 위치를 pivot으로
+        pivot = self._wf_x_to_ratio(e.x, cw) if cw > 1 else None
+        if e.delta > 0: self._wf_zoom_in(pivot=pivot)
+        else:           self._wf_zoom_out(pivot=pivot)
+        return "break"
+
+    def _wf_zoom_in(self, pivot=None):
+        old_zoom = self._wf_zoom
+        self._wf_zoom = min(128.0, self._wf_zoom * 1.5)
+        self._wf_adjust_offset(old_zoom, pivot)
+        self._update_zoom_label()
+        self._pb_redraw()
+
+    def _wf_zoom_out(self, pivot=None):
+        old_zoom = self._wf_zoom
+        self._wf_zoom = max(1.0, self._wf_zoom / 1.5)
+        self._wf_adjust_offset(old_zoom, pivot)
+        self._update_zoom_label()
+        self._pb_redraw()
+
+    def _wf_adjust_offset(self, old_zoom, pivot=None):
+        """줌 변경 후 pivot 비율이 같은 화면 위치에 유지되도록 offset 조정.
+        pivot=None 이면 현재 재생 헤드 위치를 pivot으로 사용."""
+        if pivot is None:
+            dur = self.player.duration
+            pivot = (self.media_progress_var.get() / dur) if dur > 0 else 0.5
+        span = 1.0 / self._wf_zoom
+        # pivot이 뷰에서 차지하던 상대 위치(0~1) 유지
+        old_span  = 1.0 / max(1.0, old_zoom)
+        rel = (pivot - self._wf_offset) / old_span if old_span > 0 else 0.5
+        rel = max(0.0, min(rel, 1.0))
+        new_offset = pivot - rel * span
+        self._wf_offset = max(0.0, min(new_offset, 1.0 - span))
+
+    def _update_zoom_label(self):
+        z = self._wf_zoom
+        try:
+            self.lbl_zoom.configure(text=f"{z:.0f}×" if z == int(z) else f"{z:.1f}×")
+        except Exception:
+            pass
+
+    def _pb_pos_from_x(self, x):
+        cw  = self._pb_canvas.winfo_width()
+        dur = self.player.duration if self.player.duration > 0 else 1
+        return self._wf_x_to_ratio(x, cw) * dur
 
     # ── 볼륨 제어 (커스텀 Canvas 바) ──────────
     def _vol_redraw(self, event=None):
@@ -2427,6 +2937,30 @@ class SRTEditor(tk.Tk):
             self._redraw_slot_for(prev)
         self._redraw_slot_for(idx)
         self._seek_to_subtitle(idx)
+        self._wf_reveal_subtitle(idx)
+
+    def _wf_reveal_subtitle(self, idx):
+        """선택한 자막이 현재 파형 뷰포트 밖에 있으면 해당 구간이 보이도록 오프셋 이동."""
+        dur = getattr(self.player, "duration", 0)
+        if dur <= 0 or self._wf_zoom <= 1.0:
+            return
+        cache = getattr(self, "_ts_cache", [])
+        if idx >= len(cache):
+            return
+        t_s, t_e = cache[idx]
+        if t_s is None or t_e is None:
+            return
+        r_s = t_s / dur
+        r_e = t_e / dur
+        start, end = self._wf_view_range()
+        # 이미 뷰 안에 있으면 이동 안 함
+        if start <= r_s and r_e <= end:
+            return
+        # 자막 시작점이 뷰 좌측 20% 지점에 오도록
+        span = end - start
+        new_offset = max(0.0, min(r_s - span * 0.2, 1.0 - span))
+        self._wf_offset = new_offset
+        self._pb_redraw()
 
     def _set_row_highlight(self, idx, selected: bool):
         """재생/선택 하이라이트 — 슬롯 재렌더로 처리."""
@@ -2852,6 +3386,109 @@ class SRTEditor(tk.Tk):
 
         threading.Thread(target=_fetch, daemon=True).start()
 
+        # 파형 추출 시작
+        self._waveform_pts = []
+        self._pb_redraw()
+        self._extract_waveform(path)
+
+    def _extract_waveform(self, path):
+        """ffmpeg 스트리밍으로 파형 추출 — UI 블로킹 없음."""
+        self._wf_loading = True
+        self._waveform_pts = []
+        self._pb_redraw()
+
+        cw    = max(self._pb_canvas.winfo_width(), 800)
+        N_PTS = max(4000, min(cw * 128, 32000))
+
+        def _worker():
+            import subprocess, array, math
+            try:
+                cmd = [
+                    "ffmpeg", "-y", "-i", path,
+                    "-ac", "1", "-ar", "22050",
+                    "-f", "f32le", "-",
+                ]
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                )
+
+                # 먼저 전체 길이를 ffprobe로 얻어 chunk 크기 결정
+                try:
+                    probe = subprocess.run(
+                        ["ffprobe", "-v", "error", "-show_entries",
+                         "format=duration", "-of", "default=nw=1:nk=1", path],
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    total_dur = float(probe.stdout.strip())
+                    total_samples = int(total_dur * 22050)
+                except Exception:
+                    total_samples = 22050 * 3600  # 최대 1시간 가정
+
+                chunk_samples = max(1, total_samples // N_PTS)
+                BYTES_PER_SAMPLE = 4
+                CHUNK_BYTES = chunk_samples * BYTES_PER_SAMPLE
+
+                # 중간 결과 전송 간격 (매 500포인트마다 UI 갱신)
+                UPDATE_EVERY = 500
+
+                pts      = []
+                buf      = b""
+                pt_idx   = 0
+                samples_acc = array.array("f")
+
+                while True:
+                    chunk = proc.stdout.read(CHUNK_BYTES * 4)  # 작게 읽어 GIL 자주 해제
+                    if not chunk:
+                        break
+                    buf += chunk
+                    while len(buf) >= CHUNK_BYTES:
+                        seg_raw = buf[:CHUNK_BYTES]
+                        buf     = buf[CHUNK_BYTES:]
+                        seg = array.array("f")
+                        seg.frombytes(seg_raw)
+                        peak = max(abs(v) for v in seg)
+                        rms  = math.sqrt(sum(v*v for v in seg) / len(seg))
+                        amp  = min(peak * 0.6 + rms * 2.5, 1.0)
+                        pts.append((pt_idx / N_PTS, amp))
+                        pt_idx += 1
+                        # 중간 갱신
+                        if len(pts) % UPDATE_EVERY == 0:
+                            snapshot = list(pts)
+                            def _partial(s=snapshot):
+                                if self.media_path == path:
+                                    self._waveform_pts = s
+                                    self._pb_redraw()
+                            self.after(0, _partial)
+
+                proc.wait()
+
+                # 나머지 버퍼 처리
+                if len(buf) >= BYTES_PER_SAMPLE:
+                    n = (len(buf) // BYTES_PER_SAMPLE)
+                    seg = array.array("f")
+                    seg.frombytes(buf[:n * BYTES_PER_SAMPLE])
+                    peak = max(abs(v) for v in seg)
+                    rms  = math.sqrt(sum(v*v for v in seg) / len(seg))
+                    amp  = min(peak * 0.6 + rms * 2.5, 1.0)
+                    pts.append((pt_idx / N_PTS, amp))
+
+                def _apply():
+                    if self.media_path == path:
+                        self._waveform_pts = pts
+                        self._wf_loading   = False
+                        self._pb_redraw()
+                self.after(0, _apply)
+
+            except Exception:
+                def _done():
+                    self._wf_loading = False
+                    self._pb_redraw()
+                self.after(0, _done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     # ── 미디어 컨트롤 ────────────────────────
     def _on_space_key(self, event):
         """스페이스바: 자막 내용 Entry에 포커스가 있으면 무시, 그 외에는 재생/정지."""
@@ -3104,13 +3741,14 @@ class SRTEditor(tk.Tk):
             prev_pos = getattr(self, "_last_polled_pos", -1.0)
             self._last_polled_pos = pos
 
-            # 위치가 바뀐 경우에만 진행바/레이블 갱신
             if abs(pos - prev_pos) >= 0.05:
                 self.media_progress_var.set(pos)
                 self.lbl_pos.configure(text=self._fmt_time(pos))
                 dur = self.player.duration
                 if dur > 0:
                     self.lbl_dur.configure(text=self._fmt_time(dur))
+                # 줌 상태에서 재생헤드가 뷰 밖으로 나가면 뷰 이동
+                self._wf_follow_playhead(pos)
                 self._pb_redraw()
 
             self._update_playback_highlight(pos)
@@ -3118,8 +3756,19 @@ class SRTEditor(tk.Tk):
         else:
             self._last_polled_pos = -1.0
             self.btn_play.configure(text="▶")
-            # 자연 종료 시에도 마지막 위치 하이라이트 유지 (_playing_rows 보존)
             self._seek_job = None
+
+    def _wf_follow_playhead(self, pos):
+        """재생 중 헤드가 뷰 오른쪽 80% 초과 시 한 페이지 앞으로 이동."""
+        dur = self.player.duration
+        if dur <= 0 or self._wf_zoom <= 1.0:
+            return
+        pos_r = pos / dur
+        start, end = self._wf_view_range()
+        span = end - start
+        # 헤드가 뷰 오른쪽 끝 근처면 앞으로
+        if pos_r > start + span * 0.85:
+            self._wf_offset = max(0.0, min(pos_r - span * 0.1, 1.0 - span))
 
     def _stop_progress_poll(self):
         if self._seek_job:
@@ -3318,6 +3967,8 @@ def main():
                 self._playing_rows: set = set()
                 self._ts_cache: list = []
                 self._last_polled_pos: float = -1.0
+                self._wf_zoom:   float = 1.0
+                self._wf_offset: float = 0.0
                 self._undo_stack = []
                 self._redo_stack = []
                 self._clipboard  = None
