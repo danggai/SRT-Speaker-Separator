@@ -1133,6 +1133,7 @@ class SRTEditor(tk.Tk):
         self._pb_canvas.bind("<B1-Motion>",        self._pb_drag)
         self._pb_canvas.bind("<ButtonRelease-1>", self._pb_release)
         self._pb_canvas.bind("<Configure>",       self._pb_configure)
+        self._pb_canvas.bind("<Motion>",          self._wf_on_motion)
         self._pb_canvas.bind("<MouseWheel>",      self._wf_mousewheel)
         self._pb_canvas.bind("<Control-MouseWheel>", self._wf_zoom_wheel)
         self._pb_configure_job = None
@@ -1541,7 +1542,53 @@ class SRTEditor(tk.Tk):
         cw      = self._pb_canvas.winfo_width()
         SUB_H   = 26
         start_r, end_r = self._wf_view_range()
-        HW = self._WF_HANDLE_W + 2
+        HW = max(self._WF_HANDLE_W + 3, 7)
+
+        # ── Pass 1: 핸들 우선 ────────────────────
+        if y <= SUB_H:
+            # 모든 자막의 핸들 후보를 수집
+            candidates = []   # (dist, side, i, x_handle)
+            for i in range(len(cache)):
+                t_s, t_e = cache[i]
+                if t_s is None or t_e is None:
+                    continue
+                r_s, r_e = t_s/dur, t_e/dur
+                if r_e < start_r or r_s > end_r:
+                    continue
+                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+                d_start = abs(x - x1)
+                d_end   = abs(x - x2)
+                if d_start <= HW:
+                    candidates.append((d_start, "head_start", i, x1))
+                if d_end <= HW:
+                    candidates.append((d_end, "head_end", i, x2))
+
+            if candidates:
+                # 거리 동률 시: x 기준으로 경계선 좌/우 판별
+                # 같은 거리의 head_end vs head_start가 공존하면
+                # 클릭 x가 경계선보다 왼쪽 → head_end 우선
+                # 클릭 x가 경계선보다 오른쪽 → head_start 우선
+                min_dist = min(c[0] for c in candidates)
+                tied = [c for c in candidates if c[0] <= min_dist + 1]
+
+                if len(tied) == 1:
+                    return (tied[0][1], tied[0][2])
+
+                # 동률 다수: 클릭 x 기준으로 좌/우 판별
+                # x 기준 왼쪽 → head_end(왼쪽 클립 끝) 우선
+                # x 기준 오른쪽 → head_start(오른쪽 클립 시작) 우선
+                for dist, side, i, xh in tied:
+                    if side == "head_start" and xh >= x:
+                        return (side, i)
+                for dist, side, i, xh in tied:
+                    if side == "head_end" and xh <= x:
+                        return (side, i)
+                # fallback: 그냥 가장 가까운 것
+                tied.sort(key=lambda c: c[0])
+                return (tied[0][1], tied[0][2])
+
+        # ── Pass 2: body ─────────────────────────
         for i in range(len(cache)-1, -1, -1):
             t_s, t_e = cache[i]
             if t_s is None or t_e is None:
@@ -1551,44 +1598,118 @@ class SRTEditor(tk.Tk):
                 continue
             x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
             x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-            # 핸들은 자막 행(상단) 영역에서만 감지
-            if y <= SUB_H:
-                if x1 <= x <= x1+HW:
-                    return ("head_start", i)
-                if x2-HW <= x <= x2:
-                    return ("head_end", i)
-            if x1 < x < x2:
+            if x1 <= x <= x2:
                 return ("sub_body", i)
         return None
 
+    def _wf_on_motion(self, event):
+        """마우스 위치에 따라 커서 변경 + hover 자막 추적."""
+        x, y  = event.x, event.y
+        SUB_H = 26
+        dur   = self.player.duration
+        cache = getattr(self, "_ts_cache", [])
+
+        if dur <= 0:
+            ends = [t_e for _, t_e in cache if t_e is not None]
+            dur = max(ends) if ends else 0
+
+        self._wf_hovered_idx = None
+
+        if y <= SUB_H and dur > 0 and cache and self.subtitles:
+            cw = self._pb_canvas.winfo_width()
+            start_r, end_r = self._wf_view_range()
+            HW = max(self._WF_HANDLE_W + 3, 7)
+
+            # 핸들 위인지 먼저 확인 (모든 자막 대상)
+            for i in range(len(cache)):
+                t_s, t_e = cache[i]
+                if t_s is None or t_e is None:
+                    continue
+                r_s, r_e = t_s/dur, t_e/dur
+                if r_e < start_r or r_s > end_r:
+                    continue
+                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+                if abs(x - x1) <= HW or abs(x - x2) <= HW:
+                    self._pb_canvas.configure(cursor="sb_h_double_arrow")
+                    return
+
+            # body 위인지 확인 — 뒤에서부터 (위에 그려진 자막 우선)
+            for i in range(len(cache)-1, -1, -1):
+                t_s, t_e = cache[i]
+                if t_s is None or t_e is None:
+                    continue
+                r_s, r_e = t_s/dur, t_e/dur
+                if r_e < start_r or r_s > end_r:
+                    continue
+                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+                if x1 <= x <= x2:
+                    self._wf_hovered_idx = i
+                    self._pb_canvas.configure(cursor="hand2")
+                    return
+
+            self._pb_canvas.configure(cursor="tcross")
+        else:
+            self._pb_canvas.configure(cursor="hand2")
+
     def _pb_press(self, event):
         x, y  = event.x, event.y
-        SUB_H = 26   # 자막 행 높이 (_pb_redraw와 동일)
-        hit   = self._wf_hit_test(x, y)
+        SUB_H = 26
+        self._pb_press_x = x
 
-        # ── 핸들 드래그 (자막 행 영역) ──────────
-        if hit and hit[0] in ("head_start", "head_end"):
-            self._wf_sub_drag = {
-                "mode": hit[0], "idx": hit[1],
-                "t_s": self._ts_cache[hit[1]][0],
-                "t_e": self._ts_cache[hit[1]][1],
-            }
-            self._pb_dragging = False
-            self._pb_canvas.configure(cursor="sb_h_double_arrow")
-            return
-
-        # ── 자막 행 클릭 → 자막 시작점으로 seek ─
-        if y <= SUB_H and hit and hit[0] == "sub_body":
+        if y <= SUB_H:
+            dur   = self.player.duration
             cache = getattr(self, "_ts_cache", [])
-            t_s = cache[hit[1]][0] if hit[1] < len(cache) else None
-            if t_s is not None:
-                self._wf_sub_drag       = None
-                self._pb_dragging       = False
-                self._pb_click_consumed = True
-                self._do_seek(t_s)
+            if dur <= 0:
+                ends = [t_e for _, t_e in cache if t_e is not None]
+                dur  = max(ends) if ends else 1.0
+            cw = self._pb_canvas.winfo_width()
+            start_r, end_r = self._wf_view_range()
+            HW = max(self._WF_HANDLE_W + 3, 7)
+
+            # ── 1순위: 핸들 감지 (모든 자막, 가장 가까운 것) ──
+            best_dist = float("inf")
+            best_mode = None
+            best_idx  = None
+            for i, (t_s, t_e) in enumerate(cache):
+                if t_s is None or t_e is None:
+                    continue
+                r_s, r_e = t_s/dur, t_e/dur
+                if r_e < start_r or r_s > end_r:
+                    continue
+                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+                for mode_, xh in [("head_start", x1), ("head_end", x2)]:
+                    d = abs(x - xh)
+                    if d <= HW and d < best_dist:
+                        best_dist = d
+                        best_mode = mode_
+                        best_idx  = i
+
+            if best_idx is not None:
+                self._start_handle_drag(best_mode, best_idx)
+                return
+
+            # ── 2순위: hover 자막 body → 절반으로 핸들 결정 ──
+            hovered = getattr(self, "_wf_hovered_idx", None)
+            if hovered is not None and hovered < len(cache):
+                t_s, t_e = cache[hovered]
+                if t_s is not None and t_e is not None:
+                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
+                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
+                    # hover된 자막 기준 왼쪽 절반 → head_start, 오른쪽 → head_end
+                    mode = "head_start" if x <= (x1 + x2) / 2 else "head_end"
+                    self._start_handle_drag(mode, hovered)
+                    self._pb_sub_click_idx = hovered
+                    return
+
+            # ── 3순위: 빈 공간 → 파형처럼 seek ──
+            self._wf_sub_drag = None
+            self._pb_dragging = True
             return
 
-        # ── 파형 영역 클릭 → 클릭 위치로 seek ──
+        # ── 파형 영역 ────────────────────────────
         self._wf_sub_drag = None
         self._pb_dragging = True
         self._pb_canvas.configure(cursor="hand2")
@@ -1597,23 +1718,18 @@ class SRTEditor(tk.Tk):
         self.lbl_pos.configure(text=self._fmt_time(pos))
         self._pb_redraw()
 
-    def _do_seek(self, pos):
-        """지정 위치로 seek + 하이라이트/폴링 처리."""
-        was_playing = self.player.is_playing
-        self.player.seek_to(pos)
-        self.media_progress_var.set(pos)
-        self.lbl_pos.configure(text=self._fmt_time(pos))
-        new_rows = self._get_rows_at(pos)
-        if new_rows:
-            changed = self._playing_rows.symmetric_difference(new_rows)
-            self._playing_rows = new_rows
-            for idx in changed:
-                self._redraw_slot_for(idx)
-            self._scroll_to_row(min(new_rows))
-        self._pb_redraw()
-        if was_playing:
-            self.btn_play.configure(text="⏸")
-            self._start_progress_poll()
+    def _start_handle_drag(self, mode, idx):
+        """핸들 드래그 상태 초기화. undo 스냅샷을 드래그 시작 시점에 찍음."""
+        cache = getattr(self, "_ts_cache", [])
+        self._push_undo()   # 변경 전 상태를 여기서 snapshot
+        self._wf_sub_drag = {
+            "mode": mode, "idx": idx,
+            "t_s": cache[idx][0],
+            "t_e": cache[idx][1],
+        }
+        self._pb_dragging = False
+        self._pb_sub_click_idx = None
+        self._pb_canvas.configure(cursor="sb_h_double_arrow")
 
     def _pb_drag(self, event):
         drag = getattr(self, "_wf_sub_drag", None)
@@ -1660,12 +1776,32 @@ class SRTEditor(tk.Tk):
         self._pb_redraw()
 
     def _pb_release(self, event):
-        drag = getattr(self, "_wf_sub_drag", None)
+        drag      = getattr(self, "_wf_sub_drag", None)
+        press_x   = getattr(self, "_pb_press_x", event.x)
+        moved     = abs(event.x - press_x)
+        CLICK_THR = 5   # 이 픽셀 이하 이동이면 클릭으로 판정
+
         self._pb_canvas.configure(cursor="hand2")
+
         if drag:
             idx = drag["idx"]
+
+            # 거의 안 움직였으면 → 클릭으로 판정, 자막 시작점 seek
+            if moved <= CLICK_THR:
+                self._wf_sub_drag = None
+                # 드래그 시작 시 찍은 undo 스냅샷 취소 (변경 없으므로)
+                if self._undo_stack:
+                    self._undo_stack.pop()
+                cache = getattr(self, "_ts_cache", [])
+                t_s = cache[idx][0] if idx < len(cache) else None
+                if t_s is not None:
+                    self._do_seek(t_s)
+                else:
+                    self._pb_redraw()
+                return
+
+            # 실제 드래그 → 타임스탬프 적용 (undo는 _start_handle_drag에서 이미 찍음)
             if 0 <= idx < len(self.subtitles):
-                self._push_undo()
                 t_s = drag.get("t_s", self._ts_cache[idx][0])
                 t_e = drag.get("t_e", self._ts_cache[idx][1])
                 def _fmt_ts(sec):
@@ -1677,15 +1813,32 @@ class SRTEditor(tk.Tk):
                 self._unsaved = True
                 self._redraw_slot_for(idx)
             self._wf_sub_drag = None
+            self._wf_img_cache = None   # 이미지 캐시 무효화
             self._pb_redraw()
             return
+
         self._pb_dragging = False
-        if getattr(self, "_pb_click_consumed", False):
-            self._pb_click_consumed = False
-            return
         if not self.media_path:
             return
         self._do_seek(self._pb_pos_from_x(event.x))
+
+    def _do_seek(self, pos):
+        """지정 위치로 seek + 하이라이트/폴링 처리."""
+        was_playing = self.player.is_playing
+        self.player.seek_to(pos)
+        self.media_progress_var.set(pos)
+        self.lbl_pos.configure(text=self._fmt_time(pos))
+        new_rows = self._get_rows_at(pos)
+        if new_rows:
+            changed = self._playing_rows.symmetric_difference(new_rows)
+            self._playing_rows = new_rows
+            for idx in changed:
+                self._redraw_slot_for(idx)
+            self._scroll_to_row(min(new_rows))
+        self._pb_redraw()
+        if was_playing:
+            self.btn_play.configure(text="⏸")
+            self._start_progress_poll()
 
     def _wf_hsb_redraw(self):
         c = getattr(self, "_wf_hsb", None)
@@ -2914,20 +3067,31 @@ class SRTEditor(tk.Tk):
     # ── 행 선택 / 하이라이트 ─────────────────
     def _on_global_click(self, event):
         clicked = event.widget
-        for wi in self._slot_widgets:
-            if wi.get("content") is clicked:
-                return
-        self._blur_content_entry()
+        # 클릭한 위젯이 어떤 Entry든 포커스 이동만 허용, 나머지는 blur
+        if isinstance(clicked, tk.Entry):
+            return
+        self._blur_all_entries()
 
-    def _blur_content_entry(self):
+    def _blur_all_entries(self):
+        """모든 슬롯의 Entry에서 포커스를 제거하고 selection을 즉시 지움."""
         cur = self.focus_get()
         if not isinstance(cur, tk.Entry):
             return
-        for wi in self._slot_widgets:
-            if wi.get("content") is cur:
-                cur.event_generate("<FocusOut>")
-                self.focus_set()
-                return
+        # selection 즉시 제거
+        try:
+            cur.selection_clear()
+        except Exception:
+            pass
+        # FocusOut 발생시켜 변경사항 저장
+        try:
+            cur.event_generate("<FocusOut>")
+        except Exception:
+            pass
+        self.focus_set()
+
+    # 하위호환
+    def _blur_content_entry(self):
+        self._blur_all_entries()
 
     def _select_row(self, idx):
         prev = getattr(self, "_selected_row_idx", None)
@@ -3132,6 +3296,9 @@ class SRTEditor(tk.Tk):
         self._fill_slots(min(self._vscroll_top, max(0, len(new_subs) - 1)))
         self._render_speakers()
         self._update_count()
+        # 파형 타임라인 갱신
+        self._wf_img_cache = None
+        self._pb_redraw()
 
     # ── 클립보드 (자막 행 단위) ───────────────
     def _focused_idx(self):
