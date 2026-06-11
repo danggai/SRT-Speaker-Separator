@@ -1620,21 +1620,8 @@ class SRTEditor(tk.Tk):
             start_r, end_r = self._wf_view_range()
             HW = max(self._WF_HANDLE_W + 3, 7)
 
-            # 핸들 위인지 먼저 확인 (모든 자막 대상)
-            for i in range(len(cache)):
-                t_s, t_e = cache[i]
-                if t_s is None or t_e is None:
-                    continue
-                r_s, r_e = t_s/dur, t_e/dur
-                if r_e < start_r or r_s > end_r:
-                    continue
-                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-                if abs(x - x1) <= HW or abs(x - x2) <= HW:
-                    self._pb_canvas.configure(cursor="sb_h_double_arrow")
-                    return
-
-            # body 위인지 확인 — 뒤에서부터 (위에 그려진 자막 우선)
+            # body 위인지 먼저 확인 — 뒤에서부터 (위에 그려진 자막 우선)
+            # → hovered_idx를 항상 body 기준으로 설정
             for i in range(len(cache)-1, -1, -1):
                 t_s, t_e = cache[i]
                 if t_s is None or t_e is None:
@@ -1646,10 +1633,20 @@ class SRTEditor(tk.Tk):
                 x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
                 if x1 <= x <= x2:
                     self._wf_hovered_idx = i
-                    self._pb_canvas.configure(cursor="hand2")
-                    return
+                    break   # 가장 위에 있는 자막으로 확정
 
-            self._pb_canvas.configure(cursor="tcross")
+            # 커서: 핸들 범위면 ←→, 아니면 hand2
+            if self._wf_hovered_idx is not None:
+                t_s, t_e = cache[self._wf_hovered_idx]
+                if t_s is not None and t_e is not None:
+                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
+                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
+                    if abs(x - x1) <= HW or abs(x - x2) <= HW:
+                        self._pb_canvas.configure(cursor="sb_h_double_arrow")
+                        return
+                self._pb_canvas.configure(cursor="hand2")
+            else:
+                self._pb_canvas.configure(cursor="tcross")
         else:
             self._pb_canvas.configure(cursor="hand2")
 
@@ -1667,8 +1664,22 @@ class SRTEditor(tk.Tk):
             cw = self._pb_canvas.winfo_width()
             start_r, end_r = self._wf_view_range()
             HW = max(self._WF_HANDLE_W + 3, 7)
+            hovered = getattr(self, "_wf_hovered_idx", None)
 
-            # ── 1순위: 핸들 감지 (모든 자막, 가장 가까운 것) ──
+            # ── 1순위: hover 자막의 핸들 (같은 거리 문제 회피) ──
+            if hovered is not None and hovered < len(cache):
+                t_s, t_e = cache[hovered]
+                if t_s is not None and t_e is not None:
+                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
+                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
+                    mid_x = (x1 + x2) / 2
+                    # hover 자막 내 절반 기준으로 시작/끝 결정
+                    mode = "head_start" if x <= mid_x else "head_end"
+                    self._start_handle_drag(mode, hovered)
+                    self._pb_sub_click_idx = hovered
+                    return
+
+            # ── 2순위: hover 없을 때 가장 가까운 핸들 ──
             best_dist = float("inf")
             best_mode = None
             best_idx  = None
@@ -1691,20 +1702,7 @@ class SRTEditor(tk.Tk):
                 self._start_handle_drag(best_mode, best_idx)
                 return
 
-            # ── 2순위: hover 자막 body → 절반으로 핸들 결정 ──
-            hovered = getattr(self, "_wf_hovered_idx", None)
-            if hovered is not None and hovered < len(cache):
-                t_s, t_e = cache[hovered]
-                if t_s is not None and t_e is not None:
-                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
-                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
-                    # hover된 자막 기준 왼쪽 절반 → head_start, 오른쪽 → head_end
-                    mode = "head_start" if x <= (x1 + x2) / 2 else "head_end"
-                    self._start_handle_drag(mode, hovered)
-                    self._pb_sub_click_idx = hovered
-                    return
-
-            # ── 3순위: 빈 공간 → 파형처럼 seek ──
+            # ── 3순위: 빈 공간 ──
             self._wf_sub_drag = None
             self._pb_dragging = True
             return
@@ -1747,24 +1745,34 @@ class SRTEditor(tk.Tk):
 
             if drag["mode"] == "head_start":
                 t = min(t, drag["t_e"] - 0.05)
-                # 앞 자막 종료점에 스냅
-                best = None
+                # 스냅 후보: 앞 자막 종료점 + 재생 헤드
+                snap_candidates = []
                 for j, (js, je) in enumerate(cache):
                     if j == idx or je is None: continue
                     if abs(je - t) < snap_sec:
-                        if best is None or abs(je - t) < abs(best - t):
-                            best = je
-                drag["t_s"] = best if best is not None else t
+                        snap_candidates.append(je)
+                pos = self.media_progress_var.get()
+                if abs(pos - t) < snap_sec:
+                    snap_candidates.append(pos)
+                if snap_candidates:
+                    drag["t_s"] = min(snap_candidates, key=lambda v: abs(v - t))
+                else:
+                    drag["t_s"] = t
             else:
                 t = max(t, drag["t_s"] + 0.05)
-                # 뒤 자막 시작점에 스냅
-                best = None
+                # 스냅 후보: 뒤 자막 시작점 + 재생 헤드
+                snap_candidates = []
                 for j, (js, je) in enumerate(cache):
                     if j == idx or js is None: continue
                     if abs(js - t) < snap_sec:
-                        if best is None or abs(js - t) < abs(best - t):
-                            best = js
-                drag["t_e"] = best if best is not None else t
+                        snap_candidates.append(js)
+                pos = self.media_progress_var.get()
+                if abs(pos - t) < snap_sec:
+                    snap_candidates.append(pos)
+                if snap_candidates:
+                    drag["t_e"] = min(snap_candidates, key=lambda v: abs(v - t))
+                else:
+                    drag["t_e"] = t
 
             self._pb_redraw()
             return
@@ -3691,30 +3699,31 @@ class SRTEditor(tk.Tk):
         return "break"
 
     def _seek_to_adjacent_subtitle(self, direction):
-        """direction=-1: 이전 자막 시작, +1: 다음 자막 시작.
-        현재 재생 중인 자막이 여럿 중복될 때는 시작점 기준으로 그룹을 묶어
-        같은 그룹을 반복 방문하지 않도록 처리."""
+        """direction=-1: 이전 자막 시작, +1: 다음 자막 시작."""
         cache = getattr(self, "_ts_cache", [])
         if not cache:
             self._media_seek(5 * direction)
             return
 
         pos = self.player.position
-        playing = self._playing_rows
 
-        # 현재 그룹의 대표 시작 시각 (재생 중인 자막들 중 가장 이른 시작)
-        if playing:
+        # 현재 pos에서 실제로 재생 중인 자막의 시작점을 직접 계산
+        # (_playing_rows는 폴링 지연으로 부정확할 수 있음)
+        current_rows = self._get_rows_at(pos)
+        if current_rows:
             group_start = min(
-                cache[i][0] for i in playing
+                cache[i][0] for i in current_rows
                 if i < len(cache) and cache[i][0] is not None
             )
         else:
-            group_start = pos
+            # 자막 없는 구간: pos 기준으로 직전 자막 시작을 group_start로
+            before = [t_s for t_s, t_e in cache
+                      if t_s is not None and t_s <= pos]
+            group_start = max(before) if before else pos
 
         if direction == +1:
-            # group_start보다 뒤에 시작하는 자막 중 가장 이른 것
             candidates = [
-                t_s for i, (t_s, t_e) in enumerate(cache)
+                t_s for t_s, t_e in cache
                 if t_s is not None and t_s > group_start + 0.01
             ]
             if not candidates:
@@ -3722,13 +3731,11 @@ class SRTEditor(tk.Tk):
             target_sec = min(candidates)
 
         else:  # direction == -1
-            # group_start보다 앞에 시작하는 자막 중 가장 늦은 것
             candidates = [
-                t_s for i, (t_s, t_e) in enumerate(cache)
+                t_s for t_s, t_e in cache
                 if t_s is not None and t_s < group_start - 0.01
             ]
             if not candidates:
-                # 맨 앞이면 현재 그룹 시작으로
                 target_sec = group_start
             else:
                 target_sec = max(candidates)
@@ -3753,14 +3760,12 @@ class SRTEditor(tk.Tk):
             self.after(150, self._start_progress_poll)
 
     def _on_arrow_up(self, event):
-        """위 방향키: Entry 포커스 중이면 통과, 그 외엔 윗 행 선택."""
         if isinstance(self.focus_get(), tk.Entry):
             return
-        idx = getattr(self, "_selected_row_idx", None)
-        if idx is None:
-            idx = getattr(self, "_last_focused_idx", None)
-        if idx is None or not self.subtitles:
+        if not self.subtitles:
             return "break"
+        # 재생 중이면 현재 재생 위치 기준, 아니면 선택 행 기준
+        idx = self._current_nav_idx()
         new_idx = max(0, idx - 1)
         if new_idx != idx:
             self._select_row(new_idx)
@@ -3768,29 +3773,35 @@ class SRTEditor(tk.Tk):
         return "break"
 
     def _on_arrow_down(self, event):
-        """아래 방향키: Entry 포커스 중이면 통과, 그 외엔 아랫 행 선택."""
         if isinstance(self.focus_get(), tk.Entry):
             return
-        idx = getattr(self, "_selected_row_idx", None)
-        if idx is None:
-            idx = getattr(self, "_last_focused_idx", None)
-        if idx is None or not self.subtitles:
+        if not self.subtitles:
             return "break"
+        idx = self._current_nav_idx()
         new_idx = min(len(self.subtitles) - 1, idx + 1)
         if new_idx != idx:
             self._select_row(new_idx)
             self._scroll_to_row(new_idx)
         return "break"
-        if not self.media_path:
-            return
-        if self.player.is_playing:
-            self.player.pause()
-            self.btn_play.configure(text="▶")
-            self._stop_progress_poll()
-        else:
-            self.player.play()
-            self.btn_play.configure(text="⏸")
-            self._start_progress_poll()
+
+    def _current_nav_idx(self):
+        """위아래 이동의 기준 인덱스.
+        재생 중이면 현재 재생 위치의 자막(가장 이른 것), 아니면 선택/포커스 행."""
+        if getattr(self, "player", None) and self.player.is_playing:
+            pos = self.player.position
+            rows = self._get_rows_at(pos)
+            if rows:
+                return min(rows)
+            # 자막 없는 구간: pos 직전 자막
+            cache = getattr(self, "_ts_cache", [])
+            before = [(t_s, i) for i, (t_s, t_e) in enumerate(cache)
+                      if t_s is not None and t_s <= pos]
+            if before:
+                return max(before, key=lambda x: x[0])[1]
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is None:
+            idx = getattr(self, "_last_focused_idx", None)
+        return idx if idx is not None else 0
 
     def _media_play_pause(self):
         if not self.media_path:
