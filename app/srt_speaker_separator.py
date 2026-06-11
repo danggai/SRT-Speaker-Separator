@@ -726,6 +726,7 @@ class SRTEditor(tk.Tk):
         self._last_polled_pos: float = -1.0
         self._wf_zoom:   float = 1.0
         self._wf_offset: float = 0.0
+        self._selected_rows: set = set()   # 다중 선택 인덱스 집합
 
         self._build_styles()
         self._build_ui()
@@ -1042,8 +1043,11 @@ class SRTEditor(tk.Tk):
         self.speaker_inner = tk.Frame(canvas, bg=BG2)
         self.speaker_inner.bind("<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
+        _spk_win = canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        # speaker_inner 너비를 canvas 너비에 고정 — 내용물이 사이드바를 밀어내지 않도록
+        canvas.bind("<Configure>",
+            lambda e, w=_spk_win: canvas.itemconfigure(w, width=e.width))
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -1070,8 +1074,11 @@ class SRTEditor(tk.Tk):
         self.speaker_inner = tk.Frame(canvas, bg=BG2)
         self.speaker_inner.bind("<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
+        _spk_win = canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
         canvas.configure(yscrollcommand=scrollbar.set)
+        # speaker_inner 너비를 canvas 너비에 고정 — 내용물이 사이드바를 밀어내지 않도록
+        canvas.bind("<Configure>",
+            lambda e, w=_spk_win: canvas.itemconfigure(w, width=e.width))
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
@@ -1830,19 +1837,35 @@ class SRTEditor(tk.Tk):
             return
         self._do_seek(self._pb_pos_from_x(event.x))
 
-    def _do_seek(self, pos):
-        """지정 위치로 seek + 하이라이트/폴링 처리."""
+    def _do_seek(self, pos, update_selection=True):
+        """지정 위치로 seek.
+        update_selection=True(기본): 재생바 직접 이동 시, 해당 위치 자막을 선택으로 설정.
+        update_selection=False: 내부 seek(재생/정지, 좌우키 등)에서 호출 시 현재 선택 자막을 변경하지 않음."""
         was_playing = self.player.is_playing
         self.player.seek_to(pos)
         self.media_progress_var.set(pos)
         self.lbl_pos.configure(text=self._fmt_time(pos))
+
         new_rows = self._get_rows_at(pos)
-        if new_rows:
+
+        # 하이라이트 갱신
+        if new_rows != self._playing_rows:
             changed = self._playing_rows.symmetric_difference(new_rows)
             self._playing_rows = new_rows
             for idx in changed:
                 self._redraw_slot_for(idx)
-            self._scroll_to_row(min(new_rows))
+
+        # 재생바 직접 이동 시에만 해당 자막을 선택으로 설정
+        if update_selection and new_rows:
+            anchor = min(new_rows)
+            old_sel = set(self._selected_rows) | ({self._selected_row_idx} if self._selected_row_idx is not None else set())
+            self._selected_rows = set(new_rows)
+            self._selected_row_idx = anchor
+            self._last_focused_idx = anchor
+            for idx in old_sel.symmetric_difference(self._selected_rows):
+                self._redraw_slot_for(idx)
+            self._scroll_to_row(anchor)
+
         self._pb_redraw()
         if was_playing:
             self.btn_play.configure(text="⏸")
@@ -2176,10 +2199,17 @@ class SRTEditor(tk.Tk):
         for w in self.speaker_inner.winfo_children():
             w.destroy()
 
+        # 화자 해제 단축키 힌트
+        tk.Label(self.speaker_inner,
+                 text="` = 화자 없음",
+                 bg=BG2, fg="#3A3A4A",
+                 font=(FONT_FAMILY, 7),
+                 anchor="w").pack(fill="x", padx=10, pady=(4, 1))
+
         if not self.speakers:
             tk.Label(self.speaker_inner, text="화자가 없습니다",
                      bg=BG2, fg=FG_DIM,
-                     font=(FONT_FAMILY, 9)).pack(padx=10, pady=8)
+                     font=(FONT_FAMILY, 9)).pack(padx=10, pady=4)
             return
 
         # 드래그 상태
@@ -2218,56 +2248,94 @@ class SRTEditor(tk.Tk):
             dot_c.bind("<Enter>", lambda e, dc=dot_c: dc.configure(bg="#3A3A3A"))
             dot_c.bind("<Leave>", lambda e, dc=dot_c: dc.configure(bg=BG3))
 
+            name_var = tk.StringVar(value=name)
+
+            # 삭제 버튼·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
+            del_btn = tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
+                      font=(FONT_FAMILY, 10), bd=0, cursor="hand2",
+                      activebackground=BG3, activeforeground="#FF6B8A",
+                      command=lambda n=name: self.delete_speaker(n))
+            del_btn.pack(side="right", padx=(1, 4))
+
+            cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
+            cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
+                     font=(FONT_FAMILY, 9))
+            cnt_lbl.pack(side="right", padx=2)
+
+            # name_frame: 버튼들 배치 후 마지막에 pack → 남은 공간만 차지
             name_frame = tk.Frame(row, bg=BG3)
             name_frame.pack(side="left", fill="x", expand=True, padx=2)
 
-            name_var = tk.StringVar(value=name)
-            lbl = tk.Label(name_frame, text=name, bg=BG3, fg=color,
-                           font=(FONT_FAMILY, 10, "bold"), anchor="w",
-                           cursor="xterm")
-            lbl.pack(fill="x", expand=True)
+            # Canvas 기반 말줄임 Label — 실제 너비에 맞게 텍스트를 잘라 표시
+            name_canvas = tk.Canvas(name_frame, bg=BG3, highlightthickness=0,
+                                    height=22, cursor="xterm")
+            name_canvas.pack(fill="x", expand=True)
+            _name_text_id = name_canvas.create_text(
+                4, 11, text=name, fill=color,
+                font=(FONT_FAMILY, 10, "bold"), anchor="w")
+
+            def _trim_name(canvas=name_canvas, text_id=_name_text_id,
+                           full=name, c=color):
+                """캔버스 너비에 맞게 이름을 잘라 … 로 표시."""
+                w = canvas.winfo_width()
+                if w <= 4:
+                    return
+                avail = max(10, w - 8)
+                try:
+                    import tkinter.font as tkfont
+                    f = tkfont.Font(font=(FONT_FAMILY, 10, "bold"))
+                    if f.measure(full) <= avail:
+                        canvas.itemconfigure(text_id, text=full)
+                        return
+                    lo, hi = 0, len(full)
+                    while lo < hi:
+                        mid = (lo + hi + 1) // 2
+                        if f.measure(full[:mid] + "…") <= avail:
+                            lo = mid
+                        else:
+                            hi = mid - 1
+                    canvas.itemconfigure(text_id, text=full[:lo] + "…" if lo < len(full) else full)
+                except Exception:
+                    canvas.itemconfigure(text_id, text=full)
+
+            name_canvas.bind("<Configure>", lambda e, fn=_trim_name: fn())
+
             entry = tk.Entry(name_frame, textvariable=name_var,
                              bg="#2A2A2A", fg=color, insertbackground=color,
                              font=(FONT_FAMILY, 10, "bold"), relief="flat",
                              highlightthickness=1, highlightbackground=color,
                              highlightcolor=color)
 
-            def _start_edit(e, lbl=lbl, entry=entry, var=name_var):
-                if e.widget is not lbl:
+            def _start_edit(e, canvas=name_canvas, entry=entry, var=name_var):
+                if e.widget is not canvas:
                     return
-                lbl.pack_forget()
+                canvas.pack_forget()
+                var.set(name)
                 entry.pack(fill="x", expand=True, ipady=2)
                 entry.focus_set(); entry.select_range(0, "end")
 
-            def _commit_edit(e, old=name, var=name_var, lbl=lbl, entry=entry):
+            def _commit_edit(e, old=name, var=name_var,
+                             canvas=name_canvas, entry=entry, trim=_trim_name):
                 new = var.get().strip()
                 entry.pack_forget()
                 if new and new != old and new not in self.speakers:
                     self.rename_speaker(old, new); return
-                var.set(old); lbl.configure(text=old)
-                lbl.pack(fill="x", expand=True)
+                var.set(old)
+                canvas.pack(fill="x", expand=True)
+                self.after(10, trim)
 
-            def _on_entry_key(e, old=name, var=name_var, lbl=lbl, entry=entry):
+            def _on_entry_key(e, old=name, var=name_var,
+                              canvas=name_canvas, entry=entry, trim=_trim_name):
                 if e.keysym == "Return":
-                    _commit_edit(e, old, var, lbl, entry)
+                    _commit_edit(e, old, var, canvas, entry, trim)
                 elif e.keysym == "Escape":
                     var.set(old); entry.pack_forget()
-                    lbl.pack(fill="x", expand=True)
+                    canvas.pack(fill="x", expand=True)
+                    self.after(10, trim)
 
-            lbl.bind("<Button-1>", _start_edit)
+            name_canvas.bind("<Button-1>", _start_edit)
             entry.bind("<FocusOut>", _commit_edit)
             entry.bind("<KeyPress>", _on_entry_key)
-
-            cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
-            cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
-                     font=(FONT_FAMILY, 9))
-            cnt_lbl.pack(side="left", padx=2)
-
-            tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
-                      font=(FONT_FAMILY, 10), bd=0, cursor="hand2",
-                      activebackground=BG3, activeforeground="#FF6B8A",
-                      command=lambda n=name: self.delete_speaker(n)
-                      ).pack(side="left", padx=(1, 4))
 
             for widget in [row, cnt_lbl]:
                 widget.bind("<Button-1>",
@@ -2283,11 +2351,7 @@ class SRTEditor(tk.Tk):
             Tooltip(row,      f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}", delay=600)
             Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
             Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
-            # 삭제 버튼 툴팁 (✕ 버튼)
-            for child in row.winfo_children():
-                if isinstance(child, tk.Button) and child.cget("text") == "✕":
-                    Tooltip(child, f"'{name}' 화자 삭제", delay=400)
-                    break
+            Tooltip(del_btn, f"'{name}' 화자 삭제", delay=400)
 
     # ── 화자 드래그 순서 변경 ─────────────────
     def _spk_drag_start(self, event, row):
@@ -2345,11 +2409,7 @@ class SRTEditor(tk.Tk):
 
     def _on_speaker_key(self, event):
         """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자.
-        우선순위:
-          1. 재생 중 → _playing_rows (재생 헤더 위치 자막)
-          2. 정지 중 + 클릭 선택 행 존재 → _last_focused_idx
-          3. 정지 중 + 선택 없음 → _playing_rows (마지막 재생 위치 자막)
-        """
+        항상 현재 선택된 행(_selected_rows)에 적용."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         key = event.keysym
@@ -2363,19 +2423,12 @@ class SRTEditor(tk.Tk):
         else:
             return
 
-        is_playing = getattr(self, "player", None) and self.player.is_playing
-        playing    = getattr(self, "_playing_rows", set())
-        focused    = getattr(self, "_last_focused_idx", None)
-
-        if is_playing:
-            # 1. 재생 중 — 재생 헤더 자막
-            targets = sorted(playing) if playing else []
+        selected = getattr(self, "_selected_rows", set())
+        focused  = getattr(self, "_last_focused_idx", None)
+        if selected:
+            targets = sorted(selected)
         elif focused is not None and focused < len(self.subtitles):
-            # 2. 정지 중 + 클릭 선택 행
             targets = [focused]
-        elif playing:
-            # 3. 정지 중 + 선택 없음 — 마지막 재생 위치
-            targets = sorted(playing)
         else:
             return
 
@@ -2611,7 +2664,7 @@ class SRTEditor(tk.Tk):
                            padx=7, pady=2, cursor="hand2",
                            relief="flat", highlightthickness=1,
                            highlightbackground="#2A2A2A")
-            lbl.pack(side="left", padx=2)
+            lbl.pack_forget()   # 초기엔 숨김, _update_slot_pills에서 필요한 것만 pack
             lbl.bind("<Button-1>", lambda e, s=slot_idx, p=pi: self._slot_pill_click(s, p))
             pill_labels.append(lbl)
         wi["pills"] = pill_labels
@@ -2634,9 +2687,14 @@ class SRTEditor(tk.Tk):
         wi["_row_frame"] = row
 
         # 이벤트: 슬롯 인덱스 기준 → _slot_data로 실제 인덱스 조회
-        row.bind("<Button-1>",    lambda e, s=slot_idx: self._slot_click(s))
-        num_lbl.bind("<Button-1>",lambda e, s=slot_idx: self._slot_click(s))
-        spk_frame.bind("<Button-1>", lambda e, s=slot_idx: self._slot_click(s))
+        row.bind("<Button-1>",         lambda e, s=slot_idx: self._slot_click(s, e))
+        row.bind("<Shift-Button-1>",   lambda e, s=slot_idx: self._slot_shift_click(s))
+        row.bind("<B1-Motion>",        lambda e, s=slot_idx: self._slot_drag(s, e))
+        num_lbl.bind("<Button-1>",     lambda e, s=slot_idx: self._slot_click(s, e))
+        num_lbl.bind("<Shift-Button-1>",lambda e, s=slot_idx: self._slot_shift_click(s))
+        num_lbl.bind("<B1-Motion>",    lambda e, s=slot_idx: self._slot_drag(s, e))
+        spk_frame.bind("<Button-1>",   lambda e, s=slot_idx: self._slot_click(s, e))
+        spk_frame.bind("<Shift-Button-1>", lambda e, s=slot_idx: self._slot_shift_click(s))
 
         def _ts_commit(s=slot_idx):
             di = self._slot_data[s] if s < len(self._slot_data) else -1
@@ -2683,12 +2741,64 @@ class SRTEditor(tk.Tk):
             return self._slot_data[slot_idx]
         return -1
 
-    def _slot_click(self, slot_idx):
+    def _slot_click(self, slot_idx, event=None):
         di = self._slot_data_idx(slot_idx)
         if di < 0:
             return
-        self._select_row(di)
-        self._blur_content_entry()
+        # Ctrl+클릭: 토글 추가/제거
+        if event and (event.state & 0x4):
+            self._toggle_select(di)
+        else:
+            self._select_row(di)
+        self._blur_all_entries()
+
+    def _slot_shift_click(self, slot_idx):
+        """Shift+클릭: anchor부터 현재까지 범위 선택."""
+        di = self._slot_data_idx(slot_idx)
+        if di < 0:
+            return
+        anchor = getattr(self, "_selected_row_idx", None)
+        if anchor is None:
+            self._select_row(di)
+            return
+        lo, hi = min(anchor, di), max(anchor, di)
+        old = set(self._selected_rows) | {anchor}
+        self._selected_rows = set(range(lo, hi + 1))
+        self._selected_row_idx = anchor
+        self._last_focused_idx = di
+        # 변경된 슬롯만 재렌더
+        for idx in old.symmetric_difference(self._selected_rows):
+            self._redraw_slot_for(idx)
+
+    def _slot_drag(self, slot_idx, event):
+        """드래그 중: 시작 행부터 현재 행까지 범위 선택."""
+        di = self._slot_data_idx(slot_idx)
+        if di < 0:
+            return
+        anchor = getattr(self, "_selected_row_idx", None)
+        if anchor is None:
+            return
+        lo, hi = min(anchor, di), max(anchor, di)
+        new_sel = set(range(lo, hi + 1))
+        if new_sel == self._selected_rows:
+            return
+        old = set(self._selected_rows)
+        self._selected_rows = new_sel
+        self._last_focused_idx = di
+        for idx in old.symmetric_difference(new_sel):
+            self._redraw_slot_for(idx)
+
+    def _toggle_select(self, idx):
+        """Ctrl+클릭: 해당 행 선택/해제 토글."""
+        if idx in self._selected_rows:
+            self._selected_rows.discard(idx)
+            if self._selected_row_idx == idx:
+                self._selected_row_idx = next(iter(self._selected_rows), None)
+        else:
+            self._selected_rows.add(idx)
+            self._selected_row_idx = idx
+            self._last_focused_idx = idx
+        self._redraw_slot_for(idx)
 
     def _slot_save_text(self, slot_idx):
         di = self._slot_data_idx(slot_idx)
@@ -2746,7 +2856,7 @@ class SRTEditor(tk.Tk):
             self.canvas.coords(win_id, 0, y_screen)
 
             sub     = self.subtitles[di]
-            is_sel  = (getattr(self, "_selected_row_idx", None) == di)
+            is_sel  = (di == getattr(self, "_selected_row_idx", None) or di in getattr(self, "_selected_rows", set()))
             is_play = (di in getattr(self, "_playing_rows", set()))
             bg = ROW_HL if is_sel else (self.ROW_PLAYING if is_play else
                  (ROW_ODD if di % 2 == 0 else ROW_EVEN))
@@ -2763,7 +2873,10 @@ class SRTEditor(tk.Tk):
             self._ts_style(wi["ts_s"], ts_start)
             self._ts_style(wi["ts_e"], ts_end)
 
-            wi["txt_var"].set(sub.get("text", ""))
+            # 편집 중인 Entry는 덮어쓰지 않음
+            txt_entry = wi.get("content")
+            if txt_entry is None or self.focus_get() is not txt_entry:
+                wi["txt_var"].set(sub.get("text", ""))
             self._update_slot_pills(slot_idx, sub, bg)
 
             row.configure(bg=bg)
@@ -2782,7 +2895,7 @@ class SRTEditor(tk.Tk):
             if di < 0 or di >= len(self.subtitles):
                 continue
             sub     = self.subtitles[di]
-            is_sel  = (getattr(self, "_selected_row_idx", None) == di)
+            is_sel  = (di == getattr(self, "_selected_row_idx", None) or di in getattr(self, "_selected_rows", set()))
             is_play = (di in getattr(self, "_playing_rows", set()))
             bg = ROW_HL if is_sel else (self.ROW_PLAYING if is_play else
                  (ROW_ODD if di % 2 == 0 else ROW_EVEN))
@@ -3010,7 +3123,7 @@ class SRTEditor(tk.Tk):
             return
         wi  = self._slot_widgets[slot]
         sub = self.subtitles[idx]
-        is_sel  = (getattr(self, "_selected_row_idx", None) == idx)
+        is_sel  = (idx == getattr(self, "_selected_row_idx", None) or idx in getattr(self, "_selected_rows", set()))
         is_play = (idx in getattr(self, "_playing_rows", set()))
         if is_sel:
             bg = ROW_HL
@@ -3042,7 +3155,7 @@ class SRTEditor(tk.Tk):
         row = self._slot_frames[slot]
         sub = self.subtitles[data_idx]
 
-        is_sel  = (getattr(self, "_selected_row_idx", None) == data_idx)
+        is_sel  = (data_idx == getattr(self, "_selected_row_idx", None) or data_idx in getattr(self, "_selected_rows", set()))
         is_play = (data_idx in getattr(self, "_playing_rows", set()))
         if is_sel:
             bg = ROW_HL
@@ -3062,7 +3175,9 @@ class SRTEditor(tk.Tk):
         self._ts_style(wi["ts_s"], ts_start)
         self._ts_style(wi["ts_e"], ts_end)
 
-        wi["txt_var"].set(sub.get("text", ""))
+        txt_entry = wi.get("content")
+        if txt_entry is None or self.focus_get() is not txt_entry:
+            wi["txt_var"].set(sub.get("text", ""))
 
         self._update_slot_pills(slot, sub, bg)
 
@@ -3102,10 +3217,17 @@ class SRTEditor(tk.Tk):
         self._blur_all_entries()
 
     def _select_row(self, idx):
-        prev = getattr(self, "_selected_row_idx", None)
+        """단독 선택 — 다중 선택 해제 후 idx만 선택."""
+        prev       = getattr(self, "_selected_row_idx", None)
+        old_multi  = set(getattr(self, "_selected_rows", set()))
         self._selected_row_idx = idx
         self._last_focused_idx = idx
-        if prev is not None and prev != idx:
+        self._selected_rows    = {idx}
+        # 이전 선택들 재렌더
+        for old_idx in old_multi:
+            if old_idx != idx:
+                self._redraw_slot_for(old_idx)
+        if prev is not None and prev != idx and prev not in old_multi:
             self._redraw_slot_for(prev)
         self._redraw_slot_for(idx)
         self._seek_to_subtitle(idx)
@@ -3162,11 +3284,12 @@ class SRTEditor(tk.Tk):
     def _auto_resize_speaker_col(self):
         char_w = 8
         pad = 7 * 2 + 4 + 2
+        RIGHT_MARGIN = 70   # 마지막 pill 오른쪽 여유 공간 (spk_frame 배경으로 표현)
         max_label_len = max((len(sp) for sp in self.speakers), default=0)
         none_len = len("(없음)")
         pill_w_none = none_len * char_w + pad
         pill_w_spk  = max_label_len * char_w + pad
-        needed = pill_w_none + pill_w_spk * len(self.speakers) + 8
+        needed = pill_w_none + pill_w_spk * len(self.speakers) + 8 + RIGHT_MARGIN
         needed = max(needed, 80)
         if self._col_w["speaker"] != needed:
             self._col_w["speaker"] = needed
@@ -3268,8 +3391,9 @@ class SRTEditor(tk.Tk):
     _UNDO_MAX = 50
 
     def _snapshot(self):
+        # _col_w도 함께 저장해 undo/redo 시 컬럼 너비가 되돌아가지 않도록 함
         return (copy.deepcopy(self.subtitles), list(self.speakers),
-                dict(self.speaker_colors))
+                dict(self.speaker_colors), dict(self._col_w))
 
     def _push_undo(self):
         self._undo_stack.append(self._snapshot())
@@ -3281,26 +3405,31 @@ class SRTEditor(tk.Tk):
         if not self._undo_stack:
             return
         self._redo_stack.append(self._snapshot())
-        subs, spks, colors = self._undo_stack.pop()
-        self._apply_snapshot(subs, spks, colors)
+        subs, spks, colors, col_w = self._undo_stack.pop()
+        self._apply_snapshot(subs, spks, colors, col_w)
 
     def _redo(self):
         if not self._redo_stack:
             return
         self._undo_stack.append(self._snapshot())
-        subs, spks, colors = self._redo_stack.pop()
-        self._apply_snapshot(subs, spks, colors)
+        subs, spks, colors, col_w = self._redo_stack.pop()
+        self._apply_snapshot(subs, spks, colors, col_w)
 
-    def _apply_snapshot(self, new_subs, new_spks, new_colors=None):
+    def _apply_snapshot(self, new_subs, new_spks, new_colors=None, new_col_w=None):
         """스냅샷 복원: 가상 스크롤에서는 데이터 교체 후 전체 재렌더."""
         self.subtitles      = new_subs
         self.speakers       = new_spks
         if new_colors is not None:
             self.speaker_colors = new_colors
+        # 컬럼 너비 복원 — 저장된 값이 있으면 그대로, 없으면 speaker 컬럼만 재계산
+        if new_col_w is not None:
+            self._col_w.update(new_col_w)
+        else:
+            self._auto_resize_speaker_col()
         self._unsaved = True
         self._rebuild_ts_cache()
         self._update_scrollregion()
-        self._auto_resize_speaker_col()
+        self._layout_header()
         self._fill_slots(min(self._vscroll_top, max(0, len(new_subs) - 1)))
         self._render_speakers()
         self._update_count()
@@ -3740,21 +3869,10 @@ class SRTEditor(tk.Tk):
             else:
                 target_sec = max(candidates)
 
-        # seek
+        # seek — 좌/우 키 이동은 현재 선택 자막을 변경하지 않음
         was_playing = self.player.is_playing
         self._stop_progress_poll()
-        self.player.seek_to(target_sec)
-        self.media_progress_var.set(target_sec)
-        self.lbl_pos.configure(text=self._fmt_time(target_sec))
-        self._pb_redraw()
-        # seek 후 하이라이트 즉시 갱신
-        new_rows = self._get_rows_at(target_sec)
-        if new_rows:
-            changed = self._playing_rows.symmetric_difference(new_rows)
-            self._playing_rows = new_rows
-            for idx in changed:
-                self._redraw_slot_for(idx)
-            self._scroll_to_row(min(new_rows))
+        self._do_seek(target_sec, update_selection=False)
         if was_playing:
             self.btn_play.configure(text="⏸")
             self.after(150, self._start_progress_poll)
@@ -3786,18 +3904,7 @@ class SRTEditor(tk.Tk):
 
     def _current_nav_idx(self):
         """위아래 이동의 기준 인덱스.
-        재생 중이면 현재 재생 위치의 자막(가장 이른 것), 아니면 선택/포커스 행."""
-        if getattr(self, "player", None) and self.player.is_playing:
-            pos = self.player.position
-            rows = self._get_rows_at(pos)
-            if rows:
-                return min(rows)
-            # 자막 없는 구간: pos 직전 자막
-            cache = getattr(self, "_ts_cache", [])
-            before = [(t_s, i) for i, (t_s, t_e) in enumerate(cache)
-                      if t_s is not None and t_s <= pos]
-            if before:
-                return max(before, key=lambda x: x[0])[1]
+        재생 중이든 아니든 항상 현재 선택/포커스 행 기준으로 동작."""
         idx = getattr(self, "_selected_row_idx", None)
         if idx is None:
             idx = getattr(self, "_last_focused_idx", None)
@@ -3849,7 +3956,7 @@ class SRTEditor(tk.Tk):
         self.lbl_pos.configure(text=self._fmt_time(float(val)))
 
     def _on_seek_release(self, event):
-        """진행바 놓았을 때 해당 위치로 seek (호환용)"""
+        """진행바 놓았을 때 해당 위치로 seek (호환용) — 선택 자막은 변경하지 않음"""
         if not self.media_path:
             return
         pos = self.media_progress_var.get()
@@ -3892,26 +3999,22 @@ class SRTEditor(tk.Tk):
 
     def _set_playing_highlight(self, idx, on: bool):
         """재생 위치 하이라이트를 켜거나 끔 — 슬롯 재렌더로 처리."""
-        is_selected = getattr(self, "_selected_row_idx", None) == idx
+        is_selected = (idx == getattr(self, "_selected_row_idx", None) or idx in getattr(self, "_selected_rows", set()))
         if is_selected:
             return
         self._redraw_slot_for(idx)
 
     def _update_playback_highlight(self, pos_sec):
-        """현재 재생 위치에 맞게 하이라이트 행 갱신.
-        자막 없는 구간에선 이전 하이라이트 유지."""
+        """재생 위치 하이라이트만 갱신 — 선택(_selected_rows)은 건드리지 않음."""
         new_rows = self._get_rows_at(pos_sec)
         if new_rows == self._playing_rows:
             return
-        # 자막 없는 구간 → 이전 하이라이트 유지 (clear 안 함)
         if not new_rows:
             return
         changed = self._playing_rows.symmetric_difference(new_rows)
         self._playing_rows = new_rows
         for idx in changed:
             self._redraw_slot_for(idx)
-        if new_rows:
-            self._scroll_to_row_paged(min(new_rows))
 
     def _poll_progress(self):
         if self.player.is_playing:
@@ -4147,6 +4250,7 @@ def main():
                 self._last_polled_pos: float = -1.0
                 self._wf_zoom:   float = 1.0
                 self._wf_offset: float = 0.0
+                self._selected_rows: set = set()
                 self._undo_stack = []
                 self._redo_stack = []
                 self._clipboard  = None
