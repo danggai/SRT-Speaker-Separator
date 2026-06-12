@@ -2529,8 +2529,15 @@ class SRTEditor(tk.Tk):
         self._pill_defer_job = None   # 스크롤 중 pill 갱신 지연 job
         self._pill_slot_count = 0   # 슬롯 생성 시 pill을 몇 개 만들었는지
 
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
+        self.canvas.bind("<Configure>",      self._on_canvas_configure)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        # 캔버스 레벨 드래그 선택 (슬롯 경계를 넘어도 동작)
+        self.canvas.bind("<ButtonPress-1>",   self._canvas_drag_start)
+        self.canvas.bind("<B1-Motion>",       self._canvas_drag_motion)
+        self.canvas.bind("<ButtonRelease-1>", self._canvas_drag_end)
+        self._drag_sel_active  = False   # 드래그 범위선택 진행 중
+        self._drag_sel_anchor  = None    # 드래그 시작 자막 인덱스
+        self._drag_autoscroll_job = None
 
         # 가상 스크롤용 더미 프레임 (scrollregion 설정 목적)
         # 실제 내용은 canvas window로 절대좌표 배치
@@ -2572,7 +2579,7 @@ class SRTEditor(tk.Tk):
         if n == 0:
             return
         first_idx = max(0, min(first_idx, n - 1))
-        if first_idx == self._vscroll_top and not scrolling:
+        if first_idx == self._vscroll_top:
             return
         self._vscroll_top = first_idx
         self._ensure_slots()
@@ -2687,14 +2694,35 @@ class SRTEditor(tk.Tk):
         wi["_row_frame"] = row
 
         # 이벤트: 슬롯 인덱스 기준 → _slot_data로 실제 인덱스 조회
-        row.bind("<Button-1>",         lambda e, s=slot_idx: self._slot_click(s, e))
+        # B1-Motion은 캔버스 좌표로 변환해 _canvas_drag_motion에 위임
+        def _relay_press(e, s=slot_idx):
+            self._slot_click(s, e)
+            # 드래그 앵커를 현재 자막으로 설정
+            di = self._slot_data_idx(s)
+            if di >= 0:
+                self._drag_sel_anchor = di
+                self._drag_sel_active = False
+        def _relay_motion(e):
+            # 위젯 좌표 → 캔버스 절대 좌표로 변환
+            cy = e.widget.winfo_rooty() + e.y - self.canvas.winfo_rooty()
+            class _FakeEvent: pass
+            fe = _FakeEvent(); fe.y = cy
+            self._canvas_drag_motion(fe)
+        def _relay_release(e):
+            self._canvas_drag_end(e)
+
+        row.bind("<Button-1>",         _relay_press)
         row.bind("<Shift-Button-1>",   lambda e, s=slot_idx: self._slot_shift_click(s))
-        row.bind("<B1-Motion>",        lambda e, s=slot_idx: self._slot_drag(s, e))
-        num_lbl.bind("<Button-1>",     lambda e, s=slot_idx: self._slot_click(s, e))
+        row.bind("<B1-Motion>",        _relay_motion)
+        row.bind("<ButtonRelease-1>",  _relay_release)
+        num_lbl.bind("<Button-1>",     _relay_press)
         num_lbl.bind("<Shift-Button-1>",lambda e, s=slot_idx: self._slot_shift_click(s))
-        num_lbl.bind("<B1-Motion>",    lambda e, s=slot_idx: self._slot_drag(s, e))
+        num_lbl.bind("<B1-Motion>",    _relay_motion)
+        num_lbl.bind("<ButtonRelease-1>", _relay_release)
         spk_frame.bind("<Button-1>",   lambda e, s=slot_idx: self._slot_click(s, e))
         spk_frame.bind("<Shift-Button-1>", lambda e, s=slot_idx: self._slot_shift_click(s))
+        spk_frame.bind("<B1-Motion>",  _relay_motion)
+        spk_frame.bind("<ButtonRelease-1>", _relay_release)
 
         def _ts_commit(s=slot_idx):
             di = self._slot_data[s] if s < len(self._slot_data) else -1
@@ -2787,6 +2815,69 @@ class SRTEditor(tk.Tk):
         self._last_focused_idx = di
         for idx in old.symmetric_difference(new_sel):
             self._redraw_slot_for(idx)
+
+    # ── Canvas 레벨 드래그 범위 선택 ───────────
+    def _canvas_y_to_idx(self, y):
+        """캔버스 Y 좌표 → 자막 인덱스. 범위 밖이면 클램프."""
+        idx = self._vscroll_top + int(y // self.ROW_H)
+        return max(0, min(idx, len(self.subtitles) - 1))
+
+    def _canvas_drag_start(self, event):
+        """캔버스 빈 공간 클릭 시 드래그 선택 시작 준비."""
+        # 슬롯 위젯 위 클릭이면 슬롯 핸들러가 처리 — 여기서는 anchor만 기억
+        if not self.subtitles:
+            return
+        self._drag_sel_anchor = self._canvas_y_to_idx(event.y)
+        self._drag_sel_active = False   # motion 이 일어날 때 활성화
+
+    def _canvas_drag_motion(self, event):
+        """드래그 중 Y 좌표로 범위 선택 갱신 + 경계 자동 스크롤."""
+        if self._drag_sel_anchor is None or not self.subtitles:
+            return
+        self._drag_sel_active = True
+        anchor = self._drag_sel_anchor
+        cur    = self._canvas_y_to_idx(event.y)
+        lo, hi = min(anchor, cur), max(anchor, cur)
+        new_sel = set(range(lo, hi + 1))
+
+        if new_sel != self._selected_rows or self._selected_row_idx != anchor:
+            old = set(self._selected_rows)
+            self._selected_rows    = new_sel
+            self._selected_row_idx = anchor
+            self._last_focused_idx = cur
+            for idx in old.symmetric_difference(new_sel):
+                self._redraw_slot_for(idx)
+
+        # 경계 자동 스크롤
+        ch = self.canvas.winfo_height()
+        margin = self.ROW_H
+        if event.y < margin and self._vscroll_top > 0:
+            self._vscroll_to(self._vscroll_top - 1)
+            self._schedule_autoscroll(-1)
+        elif event.y > ch - margin:
+            self._vscroll_to(self._vscroll_top + 1)
+            self._schedule_autoscroll(+1)
+        else:
+            self._cancel_autoscroll()
+
+    def _canvas_drag_end(self, event):
+        self._drag_sel_active = False
+        self._drag_sel_anchor = None
+        self._cancel_autoscroll()
+
+    def _schedule_autoscroll(self, direction):
+        """드래그 중 경계에서 100ms마다 한 행씩 자동 스크롤."""
+        self._cancel_autoscroll()
+        def _tick():
+            if self._drag_sel_active:
+                self._vscroll_to(self._vscroll_top + direction)
+                self._drag_autoscroll_job = self.after(100, _tick)
+        self._drag_autoscroll_job = self.after(100, _tick)
+
+    def _cancel_autoscroll(self):
+        if self._drag_autoscroll_job:
+            self.after_cancel(self._drag_autoscroll_job)
+            self._drag_autoscroll_job = None
 
     def _toggle_select(self, idx):
         """Ctrl+클릭: 해당 행 선택/해제 토글."""
