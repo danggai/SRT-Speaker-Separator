@@ -1,8 +1,9 @@
-name: Build Release
+name: Build EXE
 
 on:
-  release:
-    types: [published]
+  push:
+    branches:
+      - main
 
 jobs:
   build:
@@ -28,7 +29,8 @@ jobs:
             --name SRTSpeakerEditor ^
             srt_speaker_separator.py
 
-      - name: Upload
-        uses: softprops/action-gh-release@v2
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: dist/SRTSpeakerEditor.exe
+          name: SRTSpeakerEditor
+          path: dist/SRTSpeakerEditor.exe
