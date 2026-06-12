@@ -22,12 +22,7 @@ jobs:
           pip install pyinstaller
 
       - name: Build
-        run: |
-          pyinstaller ^
-            --onefile ^
-            --windowed ^
-            --name SRTSpeakerEditor ^
-            srt_speaker_separator.py
+        run: pyinstaller --onefile --windowed --name SRTSpeakerEditor srt_speaker_separator.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
