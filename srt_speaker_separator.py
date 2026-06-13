@@ -744,6 +744,8 @@ class SRTEditor(tk.Tk):
         self.bind("<Control-x>", self._on_cut)
         self.bind("<Control-c>", self._on_copy)
         self.bind("<Control-v>", self._on_paste)
+        self.bind("<Delete>",    self._on_delete)
+        self.bind("<Control-d>", self._on_delete)
         self.bind("<Up>",        self._on_arrow_up)
         self.bind("<Down>",      self._on_arrow_down)
         self.bind("<grave>",     self._on_speaker_key)
@@ -2715,14 +2717,17 @@ class SRTEditor(tk.Tk):
         row.bind("<Shift-Button-1>",   lambda e, s=slot_idx: self._slot_shift_click(s))
         row.bind("<B1-Motion>",        _relay_motion)
         row.bind("<ButtonRelease-1>",  _relay_release)
+        row.bind("<Button-3>",         lambda e, s=slot_idx: self._slot_right_click(s, e))
         num_lbl.bind("<Button-1>",     _relay_press)
         num_lbl.bind("<Shift-Button-1>",lambda e, s=slot_idx: self._slot_shift_click(s))
         num_lbl.bind("<B1-Motion>",    _relay_motion)
         num_lbl.bind("<ButtonRelease-1>", _relay_release)
+        num_lbl.bind("<Button-3>",     lambda e, s=slot_idx: self._slot_right_click(s, e))
         spk_frame.bind("<Button-1>",   lambda e, s=slot_idx: self._slot_click(s, e))
         spk_frame.bind("<Shift-Button-1>", lambda e, s=slot_idx: self._slot_shift_click(s))
         spk_frame.bind("<B1-Motion>",  _relay_motion)
         spk_frame.bind("<ButtonRelease-1>", _relay_release)
+        spk_frame.bind("<Button-3>",   lambda e, s=slot_idx: self._slot_right_click(s, e))
 
         def _ts_commit(s=slot_idx):
             di = self._slot_data[s] if s < len(self._slot_data) else -1
@@ -2769,7 +2774,152 @@ class SRTEditor(tk.Tk):
             return self._slot_data[slot_idx]
         return -1
 
-    def _slot_click(self, slot_idx, event=None):
+    def _slot_right_click(self, slot_idx, event):
+        """우클릭: 해당 행 선택 후 컨텍스트 메뉴 표시."""
+        di = self._slot_data_idx(slot_idx)
+        if di < 0:
+            return
+        # 선택 안 된 행이면 단독 선택, 이미 선택된 행이면 다중 선택 유지
+        if di not in getattr(self, "_selected_rows", set()):
+            self._select_row(di)
+        self._show_context_menu(event, di)
+
+    def _show_context_menu(self, event, anchor_idx):
+        """자막 행 컨텍스트 메뉴."""
+        MENU_BG     = "#2A2A2A"
+        MENU_FG     = "#CCCCCC"
+        MENU_ACT_BG = "#3A3A3A"
+        MENU_DIM    = "#666666"
+
+        def make_menu(parent=None):
+            return tk.Menu(
+                parent or self, tearoff=0,
+                bg=MENU_BG, fg=MENU_FG,
+                activebackground=MENU_ACT_BG, activeforeground=MENU_FG,
+                disabledforeground=MENU_DIM,
+                relief="flat", bd=1,
+                font=(FONT_FAMILY, 10),
+                activeborderwidth=0,
+            )
+
+        menu = make_menu()
+
+        sel = sorted(getattr(self, "_selected_rows", set()) or {anchor_idx})
+        n   = len(sel)
+        s   = f" ({n}개)" if n > 1 else ""
+
+        # ── 편집 ──────────────────────────────
+        menu.add_command(label=f"잘라내기{s}",
+                         accelerator="Ctrl+X",
+                         command=lambda: self._on_cut(None))
+        menu.add_command(label=f"복사{s}",
+                         accelerator="Ctrl+C",
+                         command=lambda: self._on_copy(None))
+        clips = self._clipboard if isinstance(self._clipboard, list) else (
+                [self._clipboard] if self._clipboard else [])
+        menu.add_command(
+            label=f"붙여넣기" + (f" ({len(clips)}개)" if clips else ""),
+            accelerator="Ctrl+V",
+            state="normal" if clips else "disabled",
+            command=lambda: self._on_paste(None))
+        menu.add_separator()
+
+        # ── 행 추가/삭제 ──────────────────────
+        menu.add_command(label="위에 행 추가",
+                         command=lambda: self.add_row(after_idx=anchor_idx - 1))
+        menu.add_command(label="아래에 행 추가",
+                         command=lambda: self.add_row(after_idx=anchor_idx))
+        menu.add_separator()
+        menu.add_command(label=f"삭제{s}",
+                         accelerator="Del",
+                         command=lambda: self._on_delete())
+        menu.add_separator()
+
+        # ── 화자 변경 ─────────────────────────
+        if self.speakers:
+            spk_menu = make_menu(menu)
+            spk_menu.add_command(label="(없음)",
+                                 accelerator="`",
+                                 command=lambda: self._ctx_set_speaker(""))
+            spk_menu.add_separator()
+            for i, spk in enumerate(self.speakers):
+                spk_menu.add_command(
+                    label=spk,
+                    accelerator=str(i+1) if i < 9 else "",
+                    foreground=self._speaker_color(spk),
+                    activeforeground=self._speaker_color(spk),
+                    command=lambda s=spk: self._ctx_set_speaker(s))
+            menu.add_cascade(label=f"화자 변경{s}", menu=spk_menu)
+            menu.add_separator()
+
+        # ── 타임스탬프 ────────────────────────
+        has_media = bool(self.media_path)
+        menu.add_command(label="재생 위치 → 시작점",
+                         state="normal" if has_media else "disabled",
+                         command=lambda: self._ctx_set_timestamp_start(anchor_idx))
+        menu.add_command(label="재생 위치 → 종료점",
+                         state="normal" if has_media else "disabled",
+                         command=lambda: self._ctx_set_timestamp_end(anchor_idx))
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _ctx_set_speaker(self, val):
+        """컨텍스트 메뉴에서 화자 설정 — 다중 선택 일괄 적용."""
+        targets = self._selected_targets()
+        if not targets:
+            return
+        self._push_undo()
+        for idx in targets:
+            if idx < len(self.subtitles):
+                self.subtitles[idx]["speaker"] = val
+                self._redraw_slot_for(idx)
+        self._unsaved = True
+        self._render_speakers()
+
+    def _ctx_set_timestamp_start(self, idx):
+        """재생 위치를 해당 자막의 시작 타임스탬프로 설정."""
+        if not self.media_path or idx >= len(self.subtitles):
+            return
+        pos = self.media_progress_var.get()
+        ts  = self.subtitles[idx]["timestamp"]
+        parts = ts.split("-->")
+        if len(parts) != 2:
+            return
+        def _fmt(sec):
+            h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
+            ms=int(round((sec%1)*1000))
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        self._push_undo()
+        self.subtitles[idx]["timestamp"] = f"{_fmt(pos)} --> {parts[1].strip()}"
+        self._ts_cache[idx] = (pos, self._ts_cache[idx][1])
+        self._unsaved = True
+        self._redraw_slot_for(idx)
+        self._wf_img_cache = None
+        self._pb_redraw()
+
+    def _ctx_set_timestamp_end(self, idx):
+        """재생 위치를 해당 자막의 종료 타임스탬프로 설정."""
+        if not self.media_path or idx >= len(self.subtitles):
+            return
+        pos = self.media_progress_var.get()
+        ts  = self.subtitles[idx]["timestamp"]
+        parts = ts.split("-->")
+        if len(parts) != 2:
+            return
+        def _fmt(sec):
+            h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
+            ms=int(round((sec%1)*1000))
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        self._push_undo()
+        self.subtitles[idx]["timestamp"] = f"{parts[0].strip()} --> {_fmt(pos)}"
+        self._ts_cache[idx] = (self._ts_cache[idx][0], pos)
+        self._unsaved = True
+        self._redraw_slot_for(idx)
+        self._wf_img_cache = None
+        self._pb_redraw()
         di = self._slot_data_idx(slot_idx)
         if di < 0:
             return
@@ -3535,48 +3685,96 @@ class SRTEditor(tk.Tk):
             return idx
         return None
 
-    def _on_cut(self, event):
+    def _selected_targets(self):
+        """현재 선택된 인덱스 목록 (정렬). 없으면 _last_focused_idx 단독."""
+        sel = getattr(self, "_selected_rows", set())
+        if sel:
+            return sorted(sel)
+        focused = self._focused_idx()
+        return [focused] if focused is not None else []
+
+    def _on_delete(self, event=None):
+        """Del / Ctrl+D: 선택된 행 일괄 삭제."""
         if isinstance(self.focus_get(), tk.Entry):
             return
-        idx = self._focused_idx()
-        if idx is None:
+        targets = self._selected_targets()
+        if not targets:
             return
-        self._clipboard = copy.deepcopy(self.subtitles[idx])
         self._push_undo()
-        self.subtitles.pop(idx)
+        # 뒤에서부터 삭제해야 인덱스 안 밀림
+        for idx in sorted(targets, reverse=True):
+            if 0 <= idx < len(self.subtitles):
+                self.subtitles.pop(idx)
+        self._selected_rows.clear()
+        self._selected_row_idx = None
         self._rebuild_ts_cache()
-        self._renumber_rows(idx)
+        self._renumber_rows(0)
         self._update_count()
         self._render_speakers()
         self._unsaved = True
+        self._wf_img_cache = None
+        self._pb_redraw()
+        return "break"
+
+    def _on_cut(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        targets = self._selected_targets()
+        if not targets:
+            return
+        self._clipboard = [copy.deepcopy(self.subtitles[i])
+                           for i in targets if i < len(self.subtitles)]
+        self._push_undo()
+        for idx in sorted(targets, reverse=True):
+            if 0 <= idx < len(self.subtitles):
+                self.subtitles.pop(idx)
+        self._selected_rows.clear()
+        self._selected_row_idx = None
+        self._rebuild_ts_cache()
+        self._renumber_rows(0)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        self._wf_img_cache = None
+        self._pb_redraw()
         return "break"
 
     def _on_copy(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        idx = self._focused_idx()
-        if idx is None:
+        targets = self._selected_targets()
+        if not targets:
             return
-        self._clipboard = copy.deepcopy(self.subtitles[idx])
+        self._clipboard = [copy.deepcopy(self.subtitles[i])
+                           for i in targets if i < len(self.subtitles)]
         return "break"
 
     def _on_paste(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        if self._clipboard is None:
+        if not self._clipboard:
             return
-        idx = self._focused_idx()
-        insert_at = (idx + 1) if idx is not None else len(self.subtitles)
+        # clipboard가 단일 dict(구버전)이면 리스트로 감쌈
+        clips = self._clipboard if isinstance(self._clipboard, list) else [self._clipboard]
+        focused = self._focused_idx()
+        insert_at = (focused + 1) if focused is not None else len(self.subtitles)
         self._push_undo()
-        new_sub = copy.deepcopy(self._clipboard)
-        self.subtitles.insert(insert_at, new_sub)
+        for i, sub in enumerate(clips):
+            self.subtitles.insert(insert_at + i, copy.deepcopy(sub))
         self._rebuild_ts_cache()
         self._renumber_rows(insert_at)
         self._update_count()
         self._render_speakers()
         self._unsaved = True
-        self._select_row(insert_at)
+        # 붙여넣은 범위 선택
+        new_range = set(range(insert_at, insert_at + len(clips)))
+        self._selected_rows = new_range
+        self._selected_row_idx = insert_at
+        for idx in new_range:
+            self._redraw_slot_for(idx)
         self.after(50, lambda: self._scroll_to_row(insert_at))
+        self._wf_img_cache = None
+        self._pb_redraw()
         return "break"
 
     # ── 자막 추가 ─────────────────────────────
@@ -4361,6 +4559,8 @@ def main():
                 self.bind("<Control-x>", self._on_cut)
                 self.bind("<Control-c>", self._on_copy)
                 self.bind("<Control-v>", self._on_paste)
+                self.bind("<Delete>",    self._on_delete)
+                self.bind("<Control-d>", self._on_delete)
                 self.bind("<Up>",        self._on_arrow_up)
                 self.bind("<Down>",      self._on_arrow_down)
                 self.bind("<grave>",     self._on_speaker_key)
