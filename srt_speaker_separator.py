@@ -912,6 +912,10 @@ class SRTEditor(tk.Tk):
                       style="Ghost.TButton", command=self.export
                       ).pack(side="right", padx=(0, 4), pady=8)
 
+        _no_focus_btn(top, text="🎙  화자 자동 분석",
+                      style="Ghost.TButton", command=self._open_diarize_dialog
+                      ).pack(side="right", padx=(0, 4), pady=8)
+
         # 본문 영역 (사이드바 + 테이블)
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
@@ -2032,47 +2036,46 @@ class SRTEditor(tk.Tk):
 
 
     def _open_settings(self):
-        """설정 창: 화자 구분 패턴 변경 + 앱 정보"""
+        """설정 창 (탭: 패턴 / 화자 분석)"""
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("520x380")
+        win.geometry("560x460")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
 
-        tk.Label(win, text="설정", bg=BG, fg=FG,
-                 font=(FONT_FAMILY, 14, "bold")).pack(anchor="w", padx=20, pady=(18, 4))
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=20)
+        nb = ttk.Notebook(win)
+        nb.pack(fill="both", expand=True, padx=0, pady=0)
 
-        sec = tk.Frame(win, bg=BG)
-        sec.pack(fill="x", padx=20, pady=14)
+        # ── 탭 1: 화자 구분 패턴 ──────────────────
+        tab1 = tk.Frame(nb, bg=BG)
+        nb.add(tab1, text="  화자 구분 패턴  ")
 
-        tk.Label(sec, text="화자 구분 패턴", bg=BG, fg=FG,
-                 font=(FONT_FAMILY, 10, "bold")).pack(anchor="w")
-        tk.Label(sec,
+        tk.Label(tab1, text="화자 구분 패턴", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        tk.Label(tab1,
                  text="% = 현재 화자명,  & = 자막 내용\n"
-                      "예시:  [%] &  →  [Alice] 안녕하세요  (화자=Alice)\n"
-                      "예시:  (%): &  →  (Bob): 반갑습니다  (화자=Bob)",
+                      "예시:  [%] &  →  [Alice] 안녕하세요\n"
+                      "예시:  (%): &  →  (Bob): 반갑습니다",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9),
-                 justify="left").pack(anchor="w", pady=(2, 6))
+                 justify="left").pack(anchor="w", padx=20, pady=(0, 6))
 
         pat_var = tk.StringVar(value=g_display_pattern)
-        pat_entry = tk.Entry(sec, textvariable=pat_var, width=52,
+        pat_entry = tk.Entry(tab1, textvariable=pat_var, width=52,
                              bg=BG3, fg=ACCENT, insertbackground=FG,
                              font=(FONT_MONO, 10), relief="flat",
                              highlightthickness=1, highlightbackground=BORDER,
                              highlightcolor=ACCENT)
-        pat_entry.pack(fill="x", ipady=4)
+        pat_entry.pack(fill="x", padx=20, ipady=4)
 
-        preview_lbl = tk.Label(sec, text="", bg=BG, fg=FG_DIM,
-                               font=(FONT_MONO, 8), wraplength=460, justify="left")
-        preview_lbl.pack(anchor="w", pady=(3, 0))
-
-        info_lbl = tk.Label(sec, text="", bg=BG, fg="#FF6B8A",
+        preview_lbl = tk.Label(tab1, text="", bg=BG, fg=FG_DIM,
+                               font=(FONT_MONO, 8), wraplength=500, justify="left")
+        preview_lbl.pack(anchor="w", padx=20, pady=(3, 0))
+        info_lbl = tk.Label(tab1, text="", bg=BG, fg="#FF6B8A",
                             font=(FONT_FAMILY, 9))
-        info_lbl.pack(anchor="w", pady=(2, 0))
+        info_lbl.pack(anchor="w", padx=20, pady=(2, 0))
 
         def update_preview(*_):
             dp = pat_var.get().strip()
@@ -2102,81 +2105,297 @@ class SRTEditor(tk.Tk):
             info_lbl.configure(text="✔ 적용되었습니다.", fg=ACCENT)
             win.after(1200, win.destroy)
 
-        def on_reset():
-            pat_var.set(DEFAULT_DISPLAY_PATTERN)
-            info_lbl.configure(text="기본값으로 초기화했습니다. '적용'을 눌러 저장하세요.",
-                               fg=FG_DIM)
-
-        btn_row = tk.Frame(win, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(0, 10))
-
-        tk.Button(btn_row, text="[기본값]",
+        btn_row = tk.Frame(tab1, bg=BG)
+        btn_row.pack(fill="x", padx=20, pady=(14, 10))
+        tk.Button(btn_row, text="기본값",
                   bg="#2A2A2A", fg=FG_DIM, relief="flat", bd=0, cursor="hand2",
                   font=(FONT_FAMILY, 10), padx=10, pady=5,
-                  activebackground="#333333", activeforeground=FG,
-                  command=on_reset).pack(side="left", padx=(0, 8))
-
+                  activebackground="#333333",
+                  command=lambda: pat_var.set(DEFAULT_DISPLAY_PATTERN)
+                  ).pack(side="left")
         tk.Button(btn_row, text="적용",
                   bg=ACCENT, fg="white", relief="flat", bd=0, cursor="hand2",
                   font=(FONT_FAMILY, 10, "bold"), padx=18, pady=5,
-                  activebackground="#7B5FB4", activeforeground="white",
-                  command=on_apply).pack(side="right")
-
+                  activebackground="#7B5FB4", command=on_apply).pack(side="right")
         tk.Button(btn_row, text="취소",
                   bg="#2A2A2A", fg=FG, relief="flat", bd=0, cursor="hand2",
                   font=(FONT_FAMILY, 10), padx=12, pady=5,
                   activebackground="#333333",
                   command=win.destroy).pack(side="right", padx=(0, 8))
 
-        # ── 앱 정보 섹션 ──────────────────────
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(4, 0))
+        # ── 탭 2: 화자 자동 분석 ──────────────────
+        tab2 = tk.Frame(nb, bg=BG)
+        nb.add(tab2, text="  🎙 화자 자동 분석  ")
+        self._build_diarize_tab(tab2)
 
-        about = tk.Frame(win, bg=BG)
-        about.pack(fill="x", padx=20, pady=12)
+    def _build_diarize_tab(self, parent):
+        """설정창 내 화자 자동 분석 탭."""
+        # WhisperX 섹션
+        tk.Label(parent, text="WhisperX 화자 분리", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        tk.Label(parent,
+                 text="WhisperX + pyannote를 사용해 오디오에서 화자를 자동 분리합니다.\n"
+                      "HuggingFace 토큰이 필요하며 처음 실행 시 모델을 다운로드합니다.",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9), justify="left"
+                 ).pack(anchor="w", padx=20, pady=(0, 10))
 
-        # 버전
-        ver_row = tk.Frame(about, bg=BG)
-        ver_row.pack(fill="x", pady=(0, 6))
-        tk.Label(ver_row, text="버전", bg=BG, fg=FG_DIM,
-                 font=(FONT_FAMILY, 9)).pack(side="left")
-        tk.Label(ver_row, text="0.1.0", bg=BG, fg=FG,
-                 font=(FONT_FAMILY, 9, "bold")).pack(side="left", padx=(8, 0))
+        # HuggingFace 토큰
+        hf_frame = tk.Frame(parent, bg=BG)
+        hf_frame.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(hf_frame, text="HuggingFace 토큰", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        self._hf_token_var = tk.StringVar(
+            value=getattr(self, "_hf_token", ""))
+        tk.Entry(hf_frame, textvariable=self._hf_token_var, show="*",
+                 bg=BG3, fg=FG, insertbackground=FG,
+                 font=(FONT_MONO, 9), relief="flat",
+                 highlightthickness=1, highlightbackground=BORDER,
+                 highlightcolor=ACCENT).pack(side="left", fill="x", expand=True, ipady=3)
 
-        # GitHub 링크 버튼
-        GH_URL = "https://github.com/danggai/SRT-Speaker-Separator"
+        # 화자 수
+        spk_frame = tk.Frame(parent, bg=BG)
+        spk_frame.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(spk_frame, text="최대 화자 수 (0=자동)", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
+        tk.Spinbox(spk_frame, from_=0, to=20, width=5,
+                   textvariable=self._diarize_num_spk,
+                   bg=BG3, fg=FG, insertbackground=FG,
+                   buttonbackground=BG3, relief="flat",
+                   font=(FONT_FAMILY, 10)).pack(side="left", padx=(0, 8))
+        tk.Label(spk_frame, text="(0이면 pyannote가 자동 감지)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left")
 
-        def _open_github(e=None):
-            import webbrowser
-            webbrowser.open(GH_URL)
+        # 구분선
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=10)
 
-        gh_row = tk.Frame(about, bg=BG)
-        gh_row.pack(fill="x")
+        # SpeechBrain 섹션 (UI만, 미구현)
+        tk.Label(parent, text="SpeechBrain 화자 분리 (준비 중)", bg=BG, fg="#444455",
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(0, 2))
+        tk.Label(parent,
+                 text="토큰 없이 로컬에서 실행 가능한 방식입니다. (추후 지원 예정)",
+                 bg=BG, fg="#444455", font=(FONT_FAMILY, 9), justify="left"
+                 ).pack(anchor="w", padx=20, pady=(0, 10))
 
-        # GitHub SVG 아이콘을 Canvas로 표현
-        icon_c = tk.Canvas(gh_row, width=16, height=16, bg=BG,
-                           highlightthickness=0, cursor="hand2")
-        icon_c.pack(side="left")
-        # 원형 배경
-        icon_c.create_oval(1, 1, 15, 15, fill=FG_DIM, outline="")
-        # 고양이 실루엣 간략화 (머리+귀 도형)
-        icon_c.create_oval(3, 3, 13, 13, fill=BG, outline="")
-        icon_c.create_oval(4, 4, 12, 12, fill=FG_DIM, outline="")
-        icon_c.create_oval(5, 5, 11, 11, fill=BG, outline="")
-        icon_c.create_oval(6, 6, 10, 10, fill=FG_DIM, outline="")
+        sb_frame = tk.Frame(parent, bg=BG)
+        sb_frame.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(sb_frame, text="모델", bg=BG, fg="#444455",
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w").pack(side="left")
+        tk.Entry(sb_frame, bg=BG3, fg="#444455",
+                 font=(FONT_MONO, 9), relief="flat",
+                 highlightthickness=1, highlightbackground="#333333",
+                 state="disabled").pack(side="left", fill="x", expand=True, ipady=3)
 
-        gh_lbl = tk.Label(gh_row, text="GitHub", bg=BG, fg=FG_DIM,
-                          font=(FONT_FAMILY, 9, "underline"), cursor="hand2")
-        gh_lbl.pack(side="left", padx=(5, 0))
+        # 실행 버튼
+        btn_row = tk.Frame(parent, bg=BG)
+        btn_row.pack(fill="x", padx=20, pady=(8, 10))
+        tk.Button(btn_row, text="🎙  WhisperX로 화자 분석 시작",
+                  bg=ACCENT, fg="white", relief="flat", bd=0, cursor="hand2",
+                  font=(FONT_FAMILY, 10, "bold"), padx=18, pady=6,
+                  activebackground="#7B5FB4",
+                  command=self._run_diarize_whisperx
+                  ).pack(side="left")
+        tk.Button(btn_row, text="SpeechBrain (준비 중)",
+                  bg="#2A2A2A", fg="#444455", relief="flat", bd=0,
+                  font=(FONT_FAMILY, 10), padx=14, pady=6,
+                  state="disabled").pack(side="left", padx=(8, 0))
 
-        def _on_enter(e):
-            gh_lbl.configure(fg=ACCENT)
-        def _on_leave(e):
-            gh_lbl.configure(fg=FG_DIM)
+    def _open_diarize_dialog(self):
+        """툴바 버튼 → 설정창 화자 분석 탭 직접 열기."""
+        global g_speaker_pattern, g_display_pattern
+        win = tk.Toplevel(self)
+        win.title("화자 자동 분석")
+        win.configure(bg=BG)
+        win.geometry("520x320")
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+        self._build_diarize_tab(win)
 
-        for w in (icon_c, gh_lbl):
-            w.bind("<Button-1>", _open_github)
-            w.bind("<Enter>",    _on_enter)
-            w.bind("<Leave>",    _on_leave)
+    def _run_diarize_whisperx(self):
+        """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
+        if not self.media_path:
+            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 불러오세요.", parent=self)
+            return
+        if not self.subtitles:
+            messagebox.showwarning("화자 분석", "SRT 자막을 먼저 불러오세요.", parent=self)
+            return
+
+        token   = getattr(self, "_hf_token_var", None)
+        hf_tok  = token.get().strip() if token else ""
+        if not hf_tok:
+            messagebox.showwarning("화자 분석",
+                "HuggingFace 토큰을 입력하세요.\n"
+                "https://huggingface.co/settings/tokens 에서 발급받을 수 있습니다.",
+                parent=self)
+            return
+
+        num_spk_var = getattr(self, "_diarize_num_spk", None)
+        num_spk = num_spk_var.get() if num_spk_var else 0
+        self._hf_token          = hf_tok
+        self._diarize_num_spk_val = num_spk
+
+        # 진행 다이얼로그
+        prog_win = tk.Toplevel(self)
+        prog_win.title("화자 분석 중...")
+        prog_win.configure(bg=BG)
+        prog_win.geometry("360x140")
+        prog_win.resizable(False, False)
+        prog_win.transient(self)
+        prog_win.grab_set()
+
+        tk.Label(prog_win, text="🎙  화자 자동 분석 중...", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(pady=(24, 6))
+        self._diarize_status_lbl = tk.Label(prog_win, text="WhisperX 초기화 중...",
+                                             bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9))
+        self._diarize_status_lbl.pack()
+        prog_bar = ttk.Progressbar(prog_win, mode="indeterminate", length=300)
+        prog_bar.pack(pady=14)
+        prog_bar.start(12)
+
+        def _set_status(msg):
+            try:
+                self._diarize_status_lbl.configure(text=msg)
+            except Exception:
+                pass
+
+        def _worker():
+            try:
+                _set_status("whisperx 임포트 중...")
+                import whisperx
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                compute = "float16" if device == "cuda" else "int8"
+
+                _set_status(f"Whisper 모델 로드 중... ({device})")
+                model = whisperx.load_model("base", device, compute_type=compute)
+
+                _set_status("음성 로드 중...")
+                audio = whisperx.load_audio(self.media_path)
+
+                _set_status("음성 인식 중...")
+                result = model.transcribe(audio, batch_size=16)
+
+                _set_status("타임스탬프 정렬 중...")
+                model_a, meta = whisperx.load_align_model(
+                    language_code=result["language"], device=device)
+                result = whisperx.align(
+                    result["segments"], model_a, meta, audio, device,
+                    return_char_alignments=False)
+
+                _set_status("화자 분리 중...")
+                from whisperx.diarize import DiarizationPipeline, assign_word_speakers
+
+                diarize_model = DiarizationPipeline(
+                    token=hf_tok,
+                    device=device,
+                )
+                kw = {}
+                if num_spk > 0:
+                    kw["num_speakers"] = num_spk
+                diarize_segments = diarize_model(audio, **kw)
+
+                _set_status("화자 매핑 중...")
+                result = assign_word_speakers(diarize_segments, result)
+
+                # 결과를 기존 자막에 매핑
+                def _apply():
+                    try:
+                        prog_bar.stop()
+                        prog_win.destroy()
+                    except Exception:
+                        pass
+                    self._apply_diarize_result(result["segments"])
+
+                self.after(0, _apply)
+
+            except ImportError:
+                def _err_import():
+                    try: prog_win.destroy()
+                    except Exception: pass
+                    messagebox.showerror("설치 필요",
+                        "whisperx가 설치되지 않았습니다.\n\n"
+                        "pip install whisperx\n\n"
+                        "설치 후 다시 시도하세요.", parent=self)
+                self.after(0, _err_import)
+            except Exception as e:
+                err_msg = str(e)
+                def _err():
+                    try: prog_win.destroy()
+                    except Exception: pass
+                    messagebox.showerror("화자 분석 오류", err_msg, parent=self)
+                self.after(0, _err)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_diarize_result(self, segments):
+        """WhisperX 결과를 기존 SRT 자막에 화자 매핑으로 적용."""
+        if not segments:
+            messagebox.showinfo("화자 분석", "분석 결과가 없습니다.", parent=self)
+            return
+
+        # WhisperX 세그먼트에서 (start, end, speaker) 추출
+        diar = []
+        for seg in segments:
+            spk = seg.get("speaker", "")
+            if spk:
+                diar.append((seg["start"], seg["end"], spk))
+
+        if not diar:
+            messagebox.showinfo("화자 분석",
+                "화자 정보를 추출하지 못했습니다.\n"
+                "HuggingFace 토큰과 pyannote 모델 접근 권한을 확인하세요.",
+                parent=self)
+            return
+
+        # WhisperX 화자 ID → 앱 화자명 매핑 (SPEAKER_00 → 화자 N)
+        spk_ids = sorted(set(s for _, _, s in diar))
+        spk_map = {}
+        for sid in spk_ids:
+            # 기존 이름과 겹치지 않는 번호 찾기
+            n = 1
+            while True:
+                name = f"화자 {n}"
+                if name not in self.speakers:
+                    break
+                n += 1
+            self.speakers.append(name)
+            spk_map[sid] = name
+
+        self._push_undo()
+
+        # 각 자막에 겹치는 시간이 가장 긴 화자 배정
+        cache = getattr(self, "_ts_cache", [])
+        for i, (t_s, t_e) in enumerate(cache):
+            if t_s is None or t_e is None:
+                continue
+            best_spk  = ""
+            best_over = 0.0
+            for d_s, d_e, d_spk in diar:
+                overlap = max(0.0, min(t_e, d_e) - max(t_s, d_s))
+                if overlap > best_over:
+                    best_over = overlap
+                    best_spk  = spk_map.get(d_spk, "")
+            if best_spk:
+                self.subtitles[i]["speaker"] = best_spk
+
+        self._unsaved = True
+        self._auto_resize_speaker_col()
+        self._fill_slots(self._vscroll_top)
+        self._render_speakers()
+        self._update_count()
+        self._wf_img_cache = None
+        self._pb_redraw()
+
+        n_mapped = sum(1 for s in self.subtitles if s.get("speaker"))
+        messagebox.showinfo("화자 분석 완료",
+            f"총 {len(self.subtitles)}개 자막 중 {n_mapped}개에 화자를 배정했습니다.\n"
+            f"감지된 화자: {', '.join(spk_map.values())}\n\n"
+            "결과를 확인하고 필요하면 수동으로 수정하세요.",
+            parent=self)
 
     # ── 자막 행 렌더 ────────────────────────
 
@@ -2773,6 +2992,17 @@ class SRTEditor(tk.Tk):
         if slot_idx < len(self._slot_data):
             return self._slot_data[slot_idx]
         return -1
+
+    def _slot_click(self, slot_idx, event=None):
+        """좌클릭: 단독 선택 (Ctrl이면 토글)."""
+        di = self._slot_data_idx(slot_idx)
+        if di < 0:
+            return
+        if event and (event.state & 0x4):   # Ctrl
+            self._toggle_select(di)
+        else:
+            self._select_row(di)
+        self._blur_all_entries()
 
     def _slot_right_click(self, slot_idx, event):
         """우클릭: 해당 행 선택 후 컨텍스트 메뉴 표시."""
