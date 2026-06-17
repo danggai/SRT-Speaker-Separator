@@ -10,6 +10,35 @@ import sys
 import time
 import urllib.request
 import json
+import pathlib
+
+# ── 앱 설정 저장/불러오기 ─────────────────────────────────
+_CONFIG_PATH = pathlib.Path.home() / ".srt_speaker_editor_config.json"
+_MAX_RECENT_TOKENS = 5
+
+def _load_config() -> dict:
+    try:
+        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+def _save_config(cfg: dict):
+    try:
+        _CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+def _add_recent_token(cfg: dict, token: str):
+    """최근 토큰 목록에 추가 (최대 _MAX_RECENT_TOKENS개, 중복 제거)."""
+    if not token:
+        return cfg
+    recent = cfg.get("recent_tokens", [])
+    if token in recent:
+        recent.remove(token)
+    recent.insert(0, token)
+    cfg["recent_tokens"] = recent[:_MAX_RECENT_TOKENS]
+    return cfg
+
 
 # ─────────────────────────────────────────────
 #  색상 팔레트 (화자별 자동 배정)
@@ -727,6 +756,15 @@ class SRTEditor(tk.Tk):
         self._wf_zoom:   float = 1.0
         self._wf_offset: float = 0.0
         self._selected_rows: set = set()   # 다중 선택 인덱스 집합
+
+        # 설정 불러오기
+        _cfg = _load_config()
+        self._hf_token             = _cfg.get("hf_token", "")
+        self._diarize_num_spk_val  = _cfg.get("num_speakers", 0)
+        self._diarize_mode_init    = _cfg.get("diarize_mode", "balanced")
+        self._diarize_device_init  = _cfg.get("diarize_device", "auto")
+        self._recent_tokens        = _cfg.get("recent_tokens", [])
+        self._diarize_batch_init  = _cfg.get("diarize_batch", 3)   # index=3 → batch=16 (권장)
 
         self._build_styles()
         self._build_ui()
@@ -2041,10 +2079,15 @@ class SRTEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("560x460")
+        win.geometry("580x500")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
+
+        def _on_settings_close():
+            self._save_diarize_settings()
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_settings_close)
 
         nb = ttk.Notebook(win)
         nb.pack(fill="both", expand=True, padx=0, pady=0)
@@ -2128,6 +2171,170 @@ class SRTEditor(tk.Tk):
         nb.add(tab2, text="  🎙 화자 자동 분석  ")
         self._build_diarize_tab(tab2)
 
+        # ── 탭 3: 모델 관리 ──────────────────────
+        tab3 = tk.Frame(nb, bg=BG)
+        nb.add(tab3, text="  📦 모델 관리  ")
+        self._build_model_mgmt_tab(tab3)
+
+    def _build_model_mgmt_tab(self, parent):
+        """다운로드된 모델 캐시 관리 탭."""
+        import pathlib, os, shutil
+
+        tk.Label(parent, text="다운로드된 모델", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        tk.Label(parent,
+                 text="WhisperX / pyannote 모델 캐시를 확인하고 삭제할 수 있습니다.",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9), justify="left"
+                 ).pack(anchor="w", padx=20, pady=(0, 10))
+
+        # 목록 영역
+        list_frame = tk.Frame(parent, bg=BG2,
+                              highlightthickness=1, highlightbackground=BORDER)
+        list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+
+        # 스크롤 가능한 내부 캔버스
+        _canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0)
+        _sb = ttk.Scrollbar(list_frame, orient="vertical", command=_canvas.yview)
+        _inner = tk.Frame(_canvas, bg=BG2)
+        _canvas.configure(yscrollcommand=_sb.set)
+        _sb.pack(side="right", fill="y")
+        _canvas.pack(side="left", fill="both", expand=True)
+        _win_id = _canvas.create_window((0, 0), window=_inner, anchor="nw")
+        _inner.bind("<Configure>",
+                    lambda e: _canvas.configure(scrollregion=_canvas.bbox("all")))
+        _canvas.bind("<Configure>",
+                     lambda e: _canvas.itemconfigure(_win_id, width=e.width))
+
+        def _fmt_size(nb):
+            for u in ("B", "KB", "MB", "GB"):
+                if nb < 1024:
+                    return f"{nb:.1f} {u}"
+                nb /= 1024
+            return f"{nb:.1f} TB"
+
+        def _dir_size(p):
+            total = 0
+            try:
+                for f in pathlib.Path(p).rglob("*"):
+                    if f.is_file():
+                        total += f.stat().st_size
+            except Exception:
+                pass
+            return total
+
+        def _scan_models():
+            found = []
+            hf_hub = pathlib.Path(os.environ.get(
+                "HF_HOME", pathlib.Path.home() / ".cache" / "huggingface")) / "hub"
+            if hf_hub.exists():
+                for d in sorted(hf_hub.iterdir()):
+                    if not d.is_dir():
+                        continue
+                    sz = _dir_size(d)
+                    if sz == 0:
+                        continue
+                    label = d.name.replace("models--", "").replace("--", "/")
+                    found.append(("dir", d, label, sz))
+            old_w = pathlib.Path.home() / ".cache" / "whisper"
+            if old_w.exists():
+                for f in sorted(old_w.iterdir()):
+                    if f.is_file():
+                        found.append(("file", f, f"whisper/{f.name}", f.stat().st_size))
+            return found
+
+        _chk_vars = {}
+
+        def _refresh():
+            for w in _inner.winfo_children():
+                w.destroy()
+            _chk_vars.clear()
+            models = _scan_models()
+
+            if not models:
+                tk.Label(_inner, text="다운로드된 모델이 없습니다.",
+                         bg=BG2, fg=FG_DIM, font=(FONT_FAMILY, 9)
+                         ).pack(padx=16, pady=16)
+                _del_btn.configure(state="disabled")
+                return
+
+            # 헤더
+            hdr = tk.Frame(_inner, bg=BG3)
+            hdr.pack(fill="x")
+            tk.Label(hdr, text="  모델명", bg=BG3, fg=FG_DIM,
+                     font=(FONT_FAMILY, 8), anchor="w").pack(side="left", fill="x", expand=True)
+            tk.Label(hdr, text="용량  ", bg=BG3, fg=FG_DIM,
+                     font=(FONT_FAMILY, 8), anchor="e", width=10).pack(side="right")
+
+            total_sz = 0
+            for kind, path, label, sz in models:
+                total_sz += sz
+                row = tk.Frame(_inner, bg=BG2)
+                row.pack(fill="x", pady=1)
+                var = tk.BooleanVar(value=False)
+                _chk_vars[str(path)] = (var, kind, path)
+                tk.Checkbutton(row, variable=var, bg=BG2, fg=FG,
+                               selectcolor=BG3, activebackground=BG2,
+                               cursor="hand2").pack(side="left", padx=(6, 0))
+                tk.Label(row, text=label, bg=BG2, fg=FG,
+                         font=(FONT_MONO, 8), anchor="w"
+                         ).pack(side="left", fill="x", expand=True, padx=4)
+                tk.Label(row, text=_fmt_size(sz), bg=BG2, fg=FG_DIM,
+                         font=(FONT_FAMILY, 8), width=10, anchor="e"
+                         ).pack(side="right", padx=(0, 8))
+
+            # 합계
+            foot = tk.Frame(_inner, bg=BG3)
+            foot.pack(fill="x", pady=(2, 0))
+            tk.Label(foot, text="  전체", bg=BG3, fg=FG_DIM,
+                     font=(FONT_FAMILY, 8), anchor="w").pack(side="left", fill="x", expand=True)
+            tk.Label(foot, text=f"{_fmt_size(total_sz)}  ", bg=BG3, fg=FG,
+                     font=(FONT_FAMILY, 8, "bold"), width=10, anchor="e").pack(side="right")
+
+            _del_btn.configure(state="normal")
+
+        def _delete_selected():
+            targets = [(kind, path)
+                       for key, (var, kind, path) in _chk_vars.items() if var.get()]
+            if not targets:
+                messagebox.showwarning("모델 삭제", "삭제할 모델을 선택하세요.",
+                                       parent=parent.winfo_toplevel())
+                return
+            names = "\n".join(f"  • {pathlib.Path(str(p)).name}" for _, p in targets)
+            if not messagebox.askyesno("모델 삭제",
+                    f"선택한 {len(targets)}개 모델을 삭제합니다.\n\n{names}\n\n계속하시겠습니까?",
+                    parent=parent.winfo_toplevel()):
+                return
+            errors = []
+            for kind, path in targets:
+                try:
+                    if kind == "file":
+                        pathlib.Path(str(path)).unlink()
+                    else:
+                        shutil.rmtree(str(path))
+                except Exception as e:
+                    errors.append(str(e))
+            if errors:
+                messagebox.showerror("삭제 오류", "\n".join(errors),
+                                     parent=parent.winfo_toplevel())
+            _refresh()
+
+        # 하단 버튼
+        btn_row = tk.Frame(parent, bg=BG)
+        btn_row.pack(fill="x", padx=20, pady=(0, 16))
+        tk.Button(btn_row, text="↻  새로고침",
+                  bg=BG3, fg=FG, relief="flat", bd=0, cursor="hand2",
+                  font=(FONT_FAMILY, 9), padx=10, pady=5,
+                  activebackground="#333333",
+                  command=_refresh).pack(side="left")
+        _del_btn = tk.Button(btn_row, text="🗑  선택 삭제",
+                  bg="#6B2F2F", fg="white", relief="flat", bd=0, cursor="hand2",
+                  font=(FONT_FAMILY, 9), padx=10, pady=5,
+                  activebackground="#8B3F3F",
+                  command=_delete_selected)
+        _del_btn.pack(side="left", padx=(8, 0))
+
+        _refresh()
+
     def _build_diarize_tab(self, parent):
         """설정창 내 화자 자동 분석 탭."""
         # WhisperX 섹션
@@ -2141,17 +2348,62 @@ class SRTEditor(tk.Tk):
 
         # HuggingFace 토큰
         hf_frame = tk.Frame(parent, bg=BG)
-        hf_frame.pack(fill="x", padx=20, pady=(0, 8))
+        hf_frame.pack(fill="x", padx=20, pady=(0, 2))
         tk.Label(hf_frame, text="HuggingFace 토큰", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
                  ).pack(side="left")
         self._hf_token_var = tk.StringVar(
             value=getattr(self, "_hf_token", ""))
-        tk.Entry(hf_frame, textvariable=self._hf_token_var, show="*",
+        _tok_entry = tk.Entry(hf_frame, textvariable=self._hf_token_var, show="*",
                  bg=BG3, fg=FG, insertbackground=FG,
                  font=(FONT_MONO, 9), relief="flat",
                  highlightthickness=1, highlightbackground=BORDER,
-                 highlightcolor=ACCENT).pack(side="left", fill="x", expand=True, ipady=3)
+                 highlightcolor=ACCENT)
+        _tok_entry.pack(side="left", fill="x", expand=True, ipady=3)
+
+        # 👁 암호화 토글 버튼
+        _show_var = tk.BooleanVar(value=False)
+        def _toggle_show():
+            _show_var.set(not _show_var.get())
+            _tok_entry.configure(show="" if _show_var.get() else "*")
+            _eye_btn.configure(text="🙈" if _show_var.get() else "👁")
+        _eye_btn = tk.Button(hf_frame, text="👁", bg=BG3, fg=FG_DIM,
+                             relief="flat", bd=0, cursor="hand2",
+                             font=(FONT_FAMILY, 10), padx=6,
+                             activebackground=BG3, activeforeground=FG,
+                             command=_toggle_show)
+        _eye_btn.pack(side="left", padx=(4, 0))
+
+        # 최근 토큰 드롭다운
+        _recent = getattr(self, "_recent_tokens", [])
+        if _recent:
+            def _pick_recent(val):
+                self._hf_token_var.set(val)
+                _show_var.set(False)
+                _tok_entry.configure(show="*")
+                _eye_btn.configure(text="👁")
+            _recent_var = tk.StringVar(value="")
+            _recent_menu = tk.OptionMenu(hf_frame, _recent_var,
+                                         *[t[:8] + "…" + t[-4:] if len(t) > 14 else t
+                                           for t in _recent])
+            _recent_menu.configure(bg=BG3, fg=FG_DIM, relief="flat", bd=0,
+                                   font=(FONT_FAMILY, 8), padx=4,
+                                   activebackground=BG3, activeforeground=FG,
+                                   highlightthickness=0, indicatoron=False,
+                                   text="🕘")
+            _recent_menu["menu"].configure(bg=BG3, fg=FG, activebackground=ACCENT,
+                                            font=(FONT_MONO, 8))
+            _recent_menu.pack(side="left", padx=(2, 0))
+            # OptionMenu 선택 시 실제 전체 토큰 삽입
+            def _on_recent_select(*_):
+                idx_label = _recent_var.get()
+                for t in _recent:
+                    label = t[:8] + "…" + t[-4:] if len(t) > 14 else t
+                    if label == idx_label:
+                        _pick_recent(t)
+                        break
+                _recent_var.set("")
+            _recent_var.trace_add("write", _on_recent_select)
 
         # 화자 수
         spk_frame = tk.Frame(parent, bg=BG)
@@ -2167,6 +2419,175 @@ class SRTEditor(tk.Tk):
                    font=(FONT_FAMILY, 10)).pack(side="left", padx=(0, 8))
         tk.Label(spk_frame, text="(0이면 pyannote가 자동 감지)",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left")
+
+        # 분석 모드
+        mode_frame = tk.Frame(parent, bg=BG)
+        mode_frame.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(mode_frame, text="분석 모드", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        if not hasattr(self, "_diarize_mode_var"):
+            self._diarize_mode_var = tk.StringVar(value=getattr(self, "_diarize_mode_init", "balanced"))
+        mode_inner = tk.Frame(mode_frame, bg=BG)
+        mode_inner.pack(side="left")
+        _MODES = [
+            ("⚡ 빠름",      "fast",     "속도 우선 — 정확도 소폭 감소"),
+            ("⚖ 균형",      "balanced", "속도·정확도 균형 (기본)"),
+            ("🎯 정확",      "accurate", "정확도 우선 — 시간 더 소요"),
+            ("🔬 최고 정확", "best",     "회의·다수 화자 최적, 가장 느림"),
+        ]
+        for label, val, tip in _MODES:
+            rb = tk.Radiobutton(mode_inner, text=label, value=val,
+                                variable=self._diarize_mode_var,
+                                bg=BG, fg=FG, selectcolor=BG3,
+                                activebackground=BG, activeforeground=FG,
+                                font=(FONT_FAMILY, 9), cursor="hand2")
+            rb.pack(side="left", padx=(0, 6))
+            # 툴팁
+            def _bind_tip(w, t=tip):
+                def _show(e): pass  # 간단히 title로 대체
+            _bind_tip(rb)
+
+        # 모드 설명 레이블
+        _mode_tips = {
+            "fast":     "⚡ large-v3-turbo, beam_size=1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
+            "balanced": "⚖ large-v3-turbo, beam_size=3 — 일반 대화·인터뷰에 적합",
+            "accurate": "🎯 large-v3, beam_size=5 — 정확한 화자 경계 탐지",
+            "best":     "🔬 large-v3, beam_size=5 — 회의·다수 화자 최적",
+        }
+        _tip_lbl = tk.Label(parent, text=_mode_tips["balanced"],
+                            bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w")
+        _tip_lbl.pack(fill="x", padx=20, pady=(0, 4))
+        def _on_mode_change(*_):
+            _tip_lbl.configure(text=_mode_tips.get(self._diarize_mode_var.get(), ""))
+        self._diarize_mode_var.trace_add("write", _on_mode_change)
+
+        # 디바이스 선택
+        dev_frame = tk.Frame(parent, bg=BG)
+        dev_frame.pack(fill="x", padx=20, pady=(4, 8))
+        tk.Label(dev_frame, text="연산 디바이스", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        if not hasattr(self, "_diarize_device_var"):
+            self._diarize_device_var = tk.StringVar(
+                value=getattr(self, "_diarize_device_init", "auto"))
+        dev_inner = tk.Frame(dev_frame, bg=BG)
+        dev_inner.pack(side="left")
+        for label, val in [("🚀 GPU 우선 (기본)", "auto"), ("🖥 CPU 강제", "cpu")]:
+            tk.Radiobutton(dev_inner, text=label, value=val,
+                           variable=self._diarize_device_var,
+                           bg=BG, fg=FG, selectcolor=BG3,
+                           activebackground=BG, activeforeground=FG,
+                           font=(FONT_FAMILY, 9), cursor="hand2"
+                           ).pack(side="left", padx=(0, 10))
+        tk.Label(parent,
+                 text="  GPU 우선: CUDA 가능 시 GPU 사용, 불가 시 CPU 자동 전환",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
+                 ).pack(fill="x", padx=20, pady=(0, 6))
+
+        # GPU 사용량 — 캔버스 커스텀 5단계 슬라이더
+        _BATCH_MAP   = [2, 4, 8, 16, 32]
+        _BATCH_LABEL = ["최소", "낮음", "보통", "권장", "최대"]
+        _VRAM_HINT   = ["~2 GB", "~4 GB", "~6 GB", "~8 GB", "~12 GB+"]
+        _BATCH_DEFAULT = 3
+
+        if not hasattr(self, "_diarize_batch_var"):
+            self._diarize_batch_var = tk.IntVar(
+                value=getattr(self, "_diarize_batch_init", _BATCH_DEFAULT))
+
+        # 헤더 행
+        gpu_hdr = tk.Frame(parent, bg=BG)
+        gpu_hdr.pack(fill="x", padx=20, pady=(0, 4))
+        tk.Label(gpu_hdr, text="GPU 사용량", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        _gpu_val_lbl = tk.Label(gpu_hdr, bg=BG, fg=ACCENT,
+                                font=(FONT_FAMILY, 9, "bold"), anchor="w")
+        _gpu_val_lbl.pack(side="left")
+
+        # 캔버스 슬라이더
+        _SL_W, _SL_H = 360, 36
+        _N = len(_BATCH_MAP)
+        _sl_cv = tk.Canvas(parent, width=_SL_W, height=_SL_H,
+                           bg=BG, highlightthickness=0)
+        _sl_cv.pack(padx=20, anchor="w", pady=(0, 2))
+
+        # 트랙 Y 중앙
+        _TY = _SL_H // 2
+        _PAD = 20   # 양쪽 여백
+        _TRACK_W = _SL_W - _PAD * 2
+        _enabled = [True]
+
+        def _step_x(i):
+            return _PAD + int(i / (_N - 1) * _TRACK_W)
+
+        def _draw_slider(idx):
+            _sl_cv.delete("all")
+            dim = not _enabled[0]
+            track_color  = "#333344" if dim else BG3
+            fill_color   = "#444455" if dim else ACCENT
+            dot_off      = "#2A2A3A" if dim else BG3
+            dot_on       = "#444455" if dim else ACCENT
+            dot_border   = "#333344" if dim else ACCENT
+            label_active = FG_DIM if dim else FG
+            label_dim    = "#444455" if dim else FG_DIM
+
+            # 트랙 배경
+            _sl_cv.create_rectangle(_PAD, _TY-2, _SL_W-_PAD, _TY+2,
+                                    fill=track_color, outline="")
+            # 채워진 부분
+            if idx > 0:
+                _sl_cv.create_rectangle(_PAD, _TY-2, _step_x(idx), _TY+2,
+                                        fill=fill_color, outline="")
+
+            for i in range(_N):
+                x = _step_x(i)
+                active = i <= idx
+                # 노브
+                r = 7 if i == idx else 5
+                color = dot_on if active else dot_off
+                border = dot_border if active else track_color
+                _sl_cv.create_oval(x-r, _TY-r, x+r, _TY+r,
+                                   fill=color, outline=border, width=1)
+                # 선택된 노브에 내부 흰 점
+                if i == idx and not dim:
+                    _sl_cv.create_oval(x-2, _TY-2, x+2, _TY+2,
+                                       fill="white", outline="")
+                # 레이블
+                lbl_color = label_active if i == idx else label_dim
+                lbl_font  = (FONT_FAMILY, 8, "bold") if i == idx else (FONT_FAMILY, 7)
+                _sl_cv.create_text(x, _TY + 14, text=_BATCH_LABEL[i],
+                                   fill=lbl_color, font=lbl_font, anchor="n")
+
+        def _on_batch(*_):
+            idx = max(0, min(self._diarize_batch_var.get(), _N-1))
+            _draw_slider(idx)
+            bs  = _BATCH_MAP[idx]
+            vrm = _VRAM_HINT[idx]
+            _gpu_val_lbl.configure(text=f"batch {bs}  —  VRAM {vrm}")
+
+        def _sl_click(e):
+            if not _enabled[0]: return
+            # 클릭 x → 가장 가까운 스텝
+            best_i, best_d = 0, 9999
+            for i in range(_N):
+                d = abs(e.x - _step_x(i))
+                if d < best_d:
+                    best_d, best_i = d, i
+            self._diarize_batch_var.set(best_i)
+            _on_batch()
+
+        _sl_cv.bind("<Button-1>", _sl_click)
+        _sl_cv.bind("<B1-Motion>", _sl_click)
+
+        def _on_device_change(*_):
+            is_gpu = self._diarize_device_var.get() != "cpu"
+            _enabled[0] = is_gpu
+            _gpu_val_lbl.configure(fg=ACCENT if is_gpu else FG_DIM)
+            _on_batch()
+        self._diarize_device_var.trace_add("write", _on_device_change)
+        _on_batch()
+        _on_device_change()
 
         # 구분선
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=10)
@@ -2208,11 +2629,47 @@ class SRTEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.title("화자 자동 분석")
         win.configure(bg=BG)
-        win.geometry("520x320")
+        win.geometry("560x500")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
+        def _on_diarize_win_close():
+            self._save_diarize_settings()
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _on_diarize_win_close)
         self._build_diarize_tab(win)
+
+    def _save_diarize_settings(self):
+        """현재 화자 분석 설정을 파일에 저장."""
+        try:
+            tok_var = getattr(self, "_hf_token_var", None)
+            hf_tok  = tok_var.get().strip() if tok_var else getattr(self, "_hf_token", "")
+            num_var = getattr(self, "_diarize_num_spk", None)
+            num_spk = num_var.get() if num_var else getattr(self, "_diarize_num_spk_val", 0)
+            mode_var = getattr(self, "_diarize_mode_var", None)
+            mode    = mode_var.get() if mode_var else getattr(self, "_diarize_mode_init", "balanced")
+
+            _cfg = _load_config()
+            if hf_tok:
+                _cfg["hf_token"] = hf_tok
+                _add_recent_token(_cfg, hf_tok)
+                self._hf_token = hf_tok
+                self._recent_tokens = _cfg.get("recent_tokens", [])
+            device_var = getattr(self, "_diarize_device_var", None)
+            device_pref = device_var.get() if device_var else getattr(self, "_diarize_device_init", "auto")
+            batch_var  = getattr(self, "_diarize_batch_var", None)
+            batch_idx  = batch_var.get() if batch_var else 3
+            _cfg["num_speakers"]   = num_spk
+            _cfg["diarize_mode"]   = mode
+            _cfg["diarize_device"] = device_pref
+            _cfg["diarize_batch"]  = batch_idx
+            self._diarize_num_spk_val = num_spk
+            self._diarize_mode_init   = mode
+            self._diarize_device_init = device_pref
+            self._diarize_batch_init  = batch_idx
+            _save_config(_cfg)
+        except Exception:
+            pass
 
     def _run_diarize_whisperx(self):
         """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
@@ -2234,59 +2691,604 @@ class SRTEditor(tk.Tk):
 
         num_spk_var = getattr(self, "_diarize_num_spk", None)
         num_spk = num_spk_var.get() if num_spk_var else 0
-        self._hf_token          = hf_tok
+        self._hf_token            = hf_tok
         self._diarize_num_spk_val = num_spk
 
+        # 설정 저장 (토큰·화자 수·모드)
+        _cfg = _load_config()
+        _cfg["hf_token"]     = hf_tok
+        _cfg["num_speakers"] = num_spk
+        _cfg["diarize_mode"] = getattr(self, "_diarize_mode_var", tk.StringVar()).get()
+        _add_recent_token(_cfg, hf_tok)
+        self._recent_tokens  = _cfg.get("recent_tokens", [])
+        _save_config(_cfg)
+
         # 진행 다이얼로그
+        import math as _math, time as _time
         prog_win = tk.Toplevel(self)
         prog_win.title("화자 분석 중...")
         prog_win.configure(bg=BG)
-        prog_win.geometry("360x140")
+        prog_win.geometry("440x260")
         prog_win.resizable(False, False)
         prog_win.transient(self)
         prog_win.grab_set()
 
         tk.Label(prog_win, text="🎙  화자 자동 분석 중...", bg=BG, fg=FG,
-                 font=(FONT_FAMILY, 11, "bold")).pack(pady=(24, 6))
-        self._diarize_status_lbl = tk.Label(prog_win, text="WhisperX 초기화 중...",
-                                             bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9))
-        self._diarize_status_lbl.pack()
-        prog_bar = ttk.Progressbar(prog_win, mode="indeterminate", length=300)
-        prog_bar.pack(pady=14)
-        prog_bar.start(12)
+                 font=(FONT_FAMILY, 11, "bold")).pack(pady=(18, 2))
 
-        def _set_status(msg):
+        # 현재 단계 텍스트
+        self._diarize_status_lbl = tk.Label(prog_win, text="초기화 중...",
+                                             bg=BG, fg=FG, font=(FONT_FAMILY, 9, "bold"))
+        self._diarize_status_lbl.pack()
+
+        # 단계별 서브 상태 (점 애니메이션 + 경과시간)
+        _sub_lbl = tk.Label(prog_win, text="", bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8))
+        _sub_lbl.pack(pady=(1, 0))
+
+        # ── 그라데이션 웨이브 프로그레스바 ──
+        BAR_W, BAR_H = 380, 20
+        bar_canvas = tk.Canvas(prog_win, width=BAR_W, height=BAR_H,
+                               bg=BG3, highlightthickness=1,
+                               highlightbackground=BORDER)
+        bar_canvas.pack(pady=(10, 6))
+
+        # 시간 정보 행 (경과 / 예상)
+        time_row = tk.Frame(prog_win, bg=BG)
+        time_row.pack(fill="x", padx=32, pady=(2, 0))
+        _elapsed_lbl = tk.Label(time_row, text="경과  0:00", bg=BG, fg=FG_DIM,
+                                font=(FONT_FAMILY, 8), anchor="w")
+        _elapsed_lbl.pack(side="left")
+        _eta_lbl = tk.Label(time_row, text="", bg=BG, fg=ACCENT,
+                            font=(FONT_FAMILY, 10, "bold"), anchor="e")
+        _eta_lbl.pack(side="right")
+
+        # 단계 타임라인 — 전체 너비에 균등 분배
+        STEP_LABELS = ["import", "model", "audio", "transcribe", "align", "diarize", "map"]
+        STEP_NAMES  = ["임포트", "모델로드", "음성로드", "음성인식", "정렬", "화자분리", "매핑"]
+        step_row = tk.Frame(prog_win, bg=BG)
+        step_row.pack(fill="x", padx=32, pady=(8, 0))
+        _step_lbls = []
+        for sname in STEP_NAMES:
+            lbl = tk.Label(step_row, text=sname, bg=BG3, fg=FG_DIM,
+                           font=(FONT_FAMILY, 7), pady=3,
+                           relief="flat", anchor="center")
+            lbl.pack(side="left", fill="x", expand=True, padx=1)
+            _step_lbls.append(lbl)
+
+        # 진행 상태
+        _prog_state = {
+            "target": 0.0, "current": 0.0, "wave_phase": 0.0, "running": True,
+            "step_key": None, "step_start": _time.time(), "global_start": _time.time(),
+            "dot_tick": 0,
+        }
+
+        # 단계별 누적 % (예상시간 제거 — 실측 기반으로 계산)
+        _STEPS = {
+            "import":      5,
+            "model":       20,
+            "audio":       25,
+            "transcribe":  55,
+            "align":       70,
+            "diarize":     90,
+            "map":         97,
+            "done":        100,
+        }
+        _STEP_ORDER = ["import","model","audio","transcribe","align","diarize","map","done"]
+
+        def _fmt_time(sec):
+            sec = int(sec)
+            return f"{sec//60}:{sec%60:02d}"
+
+        # PhotoImage 픽셀 렌더
+        _bar_img = tk.PhotoImage(width=BAR_W, height=BAR_H)
+        bar_canvas.create_image(0, 0, anchor="nw", image=_bar_img)
+        _pct_id = bar_canvas.create_text(BAR_W // 2, BAR_H // 2,
+                                         text="0%", fill=FG_DIM,
+                                         font=(FONT_FAMILY, 8, "bold"))
+        _BG3R = int(BG3[1:3], 16)
+        _BG3G = int(BG3[3:5], 16)
+        _BG3B = int(BG3[5:7], 16)
+
+        def _draw_bar():
+            if not _prog_state["running"]:
+                return
+            try:
+                now   = _time.time()
+                cur   = _prog_state["current"]
+                phase = _prog_state["wave_phase"]
+                fill_w = int(BAR_W * cur / 100)
+
+                # ── 픽셀 렌더 ──
+                row = []
+                for x in range(BAR_W):
+                    if x < fill_w:
+                        t = x / BAR_W
+                        if t < 0.5:
+                            k = t * 2
+                            r0 = int(0x7B + (0x4A - 0x7B) * k)
+                            g0 = int(0x4F + (0x90 - 0x4F) * k)
+                            b0 = int(0xD4 + (0xE2 - 0xD4) * k)
+                        else:
+                            k = (t - 0.5) * 2
+                            r0 = int(0x4A + (0x1A - 0x4A) * k)
+                            g0 = int(0x90 + (0xBC - 0x90) * k)
+                            b0 = int(0xE2 + (0x9C - 0xE2) * k)
+                        wave = _math.sin(phase - x * 0.045) * 0.20 + 0.85
+                        glow = _math.exp(-(fill_w - x) * 0.10) * 0.35
+                        bri  = min(1.15, wave + glow)
+                        row.append("#{:02x}{:02x}{:02x}".format(
+                            min(255, int(r0 * bri)),
+                            min(255, int(g0 * bri)),
+                            min(255, int(b0 * bri))))
+                    else:
+                        row.append("#{:02x}{:02x}{:02x}".format(_BG3R, _BG3G, _BG3B))
+                row_str = "{" + " ".join(row) + "}"
+                _bar_img.put(" ".join([row_str] * BAR_H))
+                bar_canvas.itemconfigure(_pct_id,
+                    text=f"{int(cur)}%",
+                    fill="white" if fill_w > BAR_W // 2 else FG_DIM)
+
+                # ── 경과 시간 ──
+                elapsed = now - _prog_state["global_start"]
+                _elapsed_lbl.configure(text=f"경과  {_fmt_time(elapsed)}")
+
+                # ── 예상 남은 시간 ──
+                # 오디오 길이 기반 각 단계 예상 종료 시각으로 역산
+                # (프로그레스바 추정치 사용 X → 늘어나는 현상 방지)
+                step_key = _prog_state["step_key"]
+                if step_key:
+                    _stage_est = _prog_state.get("stage_estimates", {})
+                    if _stage_est:
+                        remaining = 0.0
+                        for sk in _STEP_ORDER:
+                            if sk == "done":
+                                continue
+                            est = _stage_est.get(sk, 0.0)
+                            wall = _prog_state.get(f"wall_{sk}", None)
+                            if wall is None:
+                                # 아직 시작 안 한 단계 → 예상치 전부 합산
+                                remaining += est
+                            elif sk == step_key:
+                                # 현재 진행 중인 단계 → 실제 경과 빼고 남은 것만
+                                elapsed_in_step = now - wall
+                                remaining += max(0.0, est - elapsed_in_step)
+                            # 이미 완료된 단계는 0
+                        if remaining > 5:
+                            _eta_lbl.configure(text=f"예상 잔여  ~{_fmt_time(remaining)}")
+                        elif remaining > 0:
+                            _eta_lbl.configure(text="거의 완료...")
+                    else:
+                        _eta_lbl.configure(text="계산 중...")
+
+                # ── 단계 타임라인 색상 ──
+                if step_key in STEP_LABELS:
+                    cur_idx = STEP_LABELS.index(step_key)
+                    for i, lbl in enumerate(_step_lbls):
+                        if i < cur_idx:
+                            lbl.configure(bg="#1E4A2E", fg="#4CAF50")   # 완료: 초록
+                        elif i == cur_idx:
+                            lbl.configure(bg=ACCENT, fg="white")         # 현재: 강조
+                        else:
+                            lbl.configure(bg=BG3, fg=FG_DIM)             # 대기: 회색
+
+                # ── 점 애니메이션 (현재 단계 살아있음 표시) ──
+                tick = _prog_state["dot_tick"]
+                dots = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+                step_elapsed_s = now - _prog_state["step_start"]
+                _sub_lbl.configure(
+                    text=f"{dots[tick % len(dots)]}  {_fmt_time(step_elapsed_s)} 경과")
+                _prog_state["dot_tick"] += 1
+
+                # ── ease-out ──
+                _prog_state["wave_phase"] += 0.18
+                diff = _prog_state["target"] - cur
+                if abs(diff) > 0.05:
+                    _prog_state["current"] += diff * 0.07
+                else:
+                    _prog_state["current"] = _prog_state["target"]
+
+                prog_win.after(100, _draw_bar)  # 10fps (시간 표시는 1초 정밀도면 충분)
+            except Exception:
+                pass
+
+        prog_win.after(100, _draw_bar)
+
+        def _set_status(msg, step_key=None):
             try:
                 self._diarize_status_lbl.configure(text=msg)
+                if step_key and step_key in _STEPS:
+                    t = _time.time()
+                    _prog_state["target"]          = float(_STEPS[step_key])
+                    _prog_state["step_key"]        = step_key
+                    _prog_state["step_start"]      = t
+                    _prog_state["dot_tick"]        = 0
+                    _prog_state[f"wall_{step_key}"] = t  # 단계별 실제 시작 시각
+            except Exception:
+                pass
+
+        def _tick_progress(step_key, elapsed_sec, total_est_sec):
+            """긴 단계 내부에서 세부 진행률 추정 업데이트 (30초마다 호출)."""
+            try:
+                if step_key not in _STEPS:
+                    return
+                step_start_pct = {
+                    "transcribe": 25.0, "align": 55.0, "diarize": 70.0
+                }.get(step_key, None)
+                step_end_pct = float(_STEPS[step_key])
+                if step_start_pct is None:
+                    return
+                ratio = min(0.92, elapsed_sec / max(1, total_est_sec))
+                new_target = step_start_pct + (step_end_pct - step_start_pct) * ratio
+                if new_target > _prog_state["target"]:
+                    _prog_state["target"] = new_target
             except Exception:
                 pass
 
         def _worker():
             try:
-                _set_status("whisperx 임포트 중...")
+                _set_status("whisperx 임포트 중...", "import")
                 import whisperx
                 import torch
+                import os
 
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                compute = "float16" if device == "cuda" else "int8"
+                # ── GPU 진단 ──────────────────────────────────────────
+                _cuda_build   = torch.cuda.is_available()
+                _cuda_ver     = torch.version.cuda if _cuda_build else None
+                _gpu_name     = torch.cuda.get_device_name(0) if _cuda_build else None
+                _torch_ver    = torch.__version__
 
-                _set_status(f"Whisper 모델 로드 중... ({device})")
-                model = whisperx.load_model("base", device, compute_type=compute)
+                # 디바이스 결정
+                _dev_pref = getattr(self, "_diarize_device_var", None)
+                _dev_pref = _dev_pref.get() if _dev_pref else "auto"
+                if _dev_pref == "cpu":
+                    device = "cpu"
+                    _dev_reason = "CPU 강제 모드"
+                elif not _cuda_build:
+                    device = "cpu"
+                    _dev_reason = f"CUDA 불가 (torch {_torch_ver} — CPU 전용 빌드일 수 있음)"
+                else:
+                    device = "cuda"
+                    _dev_reason = f"GPU: {_gpu_name}  |  CUDA {_cuda_ver}"
 
-                _set_status("음성 로드 중...")
+                _set_status(f"디바이스: {_dev_reason}", "import")
+
+                # CUDA 빌드가 아닌데 GPU 우선 선택이면 → 자동 재설치 제안
+                if _dev_pref != "cpu" and not _cuda_build:
+                    import tkinter.messagebox as _mb
+                    import subprocess, sys
+
+                    # NVIDIA 드라이버에서 지원 CUDA 버전 감지
+                    def _detect_cuda_tag():
+                        try:
+                            out = subprocess.check_output(
+                                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
+                                stderr=subprocess.DEVNULL, text=True).strip()
+                            # 드라이버 버전으로 CUDA 지원 버전 추정
+                            drv = float(out.split("\n")[0].split(".")[0])
+                            if drv >= 525: return "cu121"
+                            if drv >= 520: return "cu118"
+                            return "cu117"
+                        except Exception:
+                            return "cu121"  # 기본값
+
+                    _do_install = self.after(0, lambda: None)  # dummy
+
+                    def _ask_and_install():
+                        cuda_tag = _detect_cuda_tag()
+                        ans = _mb.askyesno(
+                            "GPU torch 자동 설치",
+                            f"현재 torch ({_torch_ver}) 가 CPU 전용 빌드라 GPU를 쓸 수 없어요.\n\n"
+                            f"CUDA 빌드 torch ({cuda_tag}) 를 지금 자동 설치할까요?\n"
+                            f"(설치 후 앱이 자동 재시작됩니다)\n\n"
+                            "아니오 선택 시 CPU로 계속 진행합니다.",
+                            parent=self
+                        )
+                        if not ans:
+                            return  # CPU로 그냥 진행
+
+                        # 설치 진행 (별도 창)
+                        inst_win = tk.Toplevel(self)
+                        inst_win.title("torch 설치 중...")
+                        inst_win.configure(bg=BG)
+                        inst_win.geometry("400x120")
+                        inst_win.resizable(False, False)
+                        inst_win.transient(self)
+                        inst_win.grab_set()
+                        tk.Label(inst_win,
+                                 text=f"⏳  torch+{cuda_tag} 설치 중...",
+                                 bg=BG, fg=FG, font=(FONT_FAMILY, 10, "bold")
+                                 ).pack(pady=(24, 6))
+                        _inst_sub = tk.Label(inst_win,
+                                 text="pip install 실행 중 (수 분 소요될 수 있습니다)",
+                                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8))
+                        _inst_sub.pack()
+                        inst_win.update()
+
+                        def _update_sub(text):
+                            try: _inst_sub.configure(text=text)
+                            except Exception: pass
+
+                        def _do_pip():
+                            idx_url = f"https://download.pytorch.org/whl/{cuda_tag}"
+                            cmd_base = [
+                                sys.executable, "-m", "pip", "install",
+                                "torch", "torchaudio",
+                                "--index-url", idx_url,
+                                "--upgrade",
+                                "--force-reinstall",   # CPU 빌드를 확실히 덮어씀
+                            ]
+
+                            def _run_cmd(extra_args=[]):
+                                """pip 실행 후 stdout/stderr 캡처해서 반환."""
+                                result = subprocess.run(
+                                    cmd_base + extra_args,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    text=True
+                                )
+                                return result.returncode, result.stdout
+
+                            def _verify_cuda():
+                                """설치 후 실제 CUDA 동작 여부 확인."""
+                                try:
+                                    result = subprocess.run(
+                                        [sys.executable, "-c",
+                                         "import torch; print(torch.cuda.is_available()); "
+                                         "print(torch.__version__)"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        text=True, timeout=30
+                                    )
+                                    lines = result.stdout.strip().splitlines()
+                                    cuda_ok = len(lines) >= 1 and lines[0].strip() == "True"
+                                    ver = lines[1].strip() if len(lines) >= 2 else "?"
+                                    return cuda_ok, ver
+                                except Exception as e:
+                                    return False, str(e)
+
+                            # 1차: 일반 설치
+                            self.after(0, lambda: _update_sub("pip 설치 중... (수 분 소요)"))
+                            rc, out = _run_cmd()
+
+                            if rc != 0:
+                                # 2차: --user 재시도
+                                self.after(0, lambda: _update_sub("권한 문제 → --user 모드로 재시도 중..."))
+                                rc, out = _run_cmd(["--user"])
+
+                            if rc != 0:
+                                # 3차: UAC 관리자 승격
+                                def _try_admin(log=out):
+                                    try: inst_win.destroy()
+                                    except Exception: pass
+                                    ans2 = _mb.askyesno(
+                                        "설치 실패 — 관리자 권한 필요",
+                                        f"pip 설치가 실패했습니다.\n\n"
+                                        f"오류 내용:\n{log[-300:]}\n\n"
+                                        "관리자 권한으로 다시 시도할까요? (UAC 창이 뜹니다)",
+                                        parent=self)
+                                    if ans2:
+                                        try:
+                                            import ctypes
+                                            args = (f"-m pip install torch torchaudio "
+                                                    f"--index-url {idx_url} --upgrade --force-reinstall")
+                                            ctypes.windll.shell32.ShellExecuteW(
+                                                None, "runas", sys.executable, args, None, 1)
+                                            _mb.showinfo("설치 진행 중",
+                                                "관리자 권한으로 설치를 시작했습니다.\n"
+                                                "완료 후 앱을 직접 재시작해주세요.",
+                                                parent=self)
+                                        except Exception as e2:
+                                            _mb.showerror("설치 실패",
+                                                f"관리자 설치도 실패했습니다.\n{e2}",
+                                                parent=self)
+                                self.after(0, _try_admin)
+                                return
+
+                            # 설치 성공 → CUDA 실제 동작 검증
+                            self.after(0, lambda: _update_sub("설치 완료 — CUDA 동작 검증 중..."))
+                            cuda_ok, ver = _verify_cuda()
+
+                            if not cuda_ok:
+                                def _bad_install(log=out, v=ver):
+                                    try: inst_win.destroy()
+                                    except Exception: pass
+                                    _mb.showerror(
+                                        "GPU 활성화 실패",
+                                        f"pip 설치는 완료됐지만 CUDA가 여전히 비활성 상태입니다.\n"
+                                        f"(torch {v})\n\n"
+                                        "가능한 원인:\n"
+                                        "• NVIDIA 드라이버가 너무 오래됨 → 드라이버 업데이트 필요\n"
+                                        f"• CUDA 태그 불일치 (현재: {cuda_tag}) → "
+                                        "다른 버전 시도 필요\n\n"
+                                        "pip 출력 로그:\n" + log[-400:],
+                                        parent=self)
+                                self.after(0, _bad_install)
+                                return
+
+                            def _restart(v=ver):
+                                try: inst_win.destroy()
+                                except Exception: pass
+                                _mb.showinfo("설치 완료",
+                                    f"torch {v} GPU 빌드 설치 완료!\n"
+                                    "앱을 재시작합니다.",
+                                    parent=self)
+                                self.destroy()
+                                _frozen = getattr(sys, "frozen", False)
+                                if _frozen:
+                                    os.execv(sys.executable, [sys.executable])
+                                else:
+                                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                            self.after(0, _restart)
+
+                        import threading as _t2
+                        _t2.Thread(target=_do_pip, daemon=True).start()
+
+                    self.after(0, _ask_and_install)
+                    # 설치 완료 전까지 분석은 중단 (창 닫히면서 자연스럽게 종료)
+                    return
+
+                # CPU 스레드 최대한 활용
+                cpu_count = os.cpu_count() or 4
+                torch.set_num_threads(cpu_count)
+
+                # ── 모드별 파라미터 ──────────────────────────────────
+                _mode = getattr(self, "_diarize_mode_var", None)
+                _mode = _mode.get() if _mode else "balanced"
+
+                # GPU batch_size: VRAM 여유에 따라 조정 가능
+                # CPU batch_size: 1 고정 (메모리/속도 균형)
+                if device == "cuda":
+                    _MODE_CFG = {
+                        #           model               beam  batch
+                        "fast":     ("large-v3-turbo",  1,    16),
+                        "balanced": ("large-v3-turbo",  3,    16),
+                        "accurate": ("large-v3",        5,    8),
+                        "best":     ("large-v3",        5,    8),
+                    }
+                else:
+                    _MODE_CFG = {
+                        "fast":     ("large-v3-turbo",  1,    1),
+                        "balanced": ("large-v3-turbo",  3,    1),
+                        "accurate": ("large-v3",        5,    1),
+                        "best":     ("large-v3",        5,    1),
+                    }
+                wmodel, beam, _mb = _MODE_CFG.get(_mode, _MODE_CFG["balanced"])
+                compute = "float16" if device == "cuda" else "float32"
+
+                # batch_size: GPU → 슬라이더, CPU → 1
+                if device == "cuda":
+                    _BATCH_MAP = [2, 4, 8, 16, 32]
+                    _bidx = getattr(self, "_diarize_batch_var", None)
+                    _bidx = _bidx.get() if _bidx else 3
+                    batch_size = _BATCH_MAP[max(0, min(_bidx, len(_BATCH_MAP)-1))]
+                else:
+                    batch_size = 1
+
+                # ── 모델 다운로드 진행 표시 ──────────────────────────────
+                # huggingface_hub의 다운로드 콜백으로 실시간 진행률 수신
+                _dl_state = {"active": False, "desc": "", "pct": 0.0}
+
+                def _hf_dl_callback(info):
+                    """huggingface_hub tqdm 콜백 → 진행창 업데이트."""
+                    try:
+                        downloaded = info.get("downloaded", 0)
+                        total      = info.get("total", 0)
+                        fname      = info.get("filename", "")
+                        fname      = fname.split("/")[-1] if fname else ""
+                        if total and total > 0:
+                            pct = downloaded / total * 100
+                            mb_done = downloaded / 1e6
+                            mb_tot  = total / 1e6
+                            _dl_state["active"] = True
+                            _dl_state["pct"]    = pct
+                            msg = (f"모델 다운로드 중... {fname}  {mb_done:.0f} / {mb_tot:.0f} MB  ({pct:.0f}%)")
+                            _set_status(msg, None)   # step_key 안 바꾸고 텍스트만
+                    except Exception:
+                        pass
+
+                try:
+                    from huggingface_hub import hf_hub_download as _orig_dl
+                    import huggingface_hub as _hf
+                    # 환경 변수로 tqdm 끄고 파일 단위 다운로드 후킹
+                    _orig_snapshot = _hf.snapshot_download
+
+                    def _patched_snapshot(*a, **kw):
+                        """snapshot_download 래핑 → 파일별 진행 표시."""
+                        import os as _os
+                        repo_id = a[0] if a else kw.get("repo_id", "")
+                        _set_status(f"모델 다운로드 중: {repo_id}", None)
+                        # local_files_only=True 가능하면 스킵
+                        try:
+                            kw["local_files_only"] = True
+                            return _orig_snapshot(*a, **kw)
+                        except Exception:
+                            kw.pop("local_files_only", None)
+
+                        # 실제 다운로드: 파일 목록 → 개별 다운로드 + 진행 표시
+                        from huggingface_hub import list_repo_files, hf_hub_download
+                        try:
+                            files = list(list_repo_files(repo_id,
+                                token=kw.get("token") or kw.get("use_auth_token")))
+                        except Exception:
+                            files = []
+
+                        total_files = len(files)
+                        for fi, fname in enumerate(files, 1):
+                            _set_status(
+                                f"다운로드 {fi}/{total_files}: {fname.split('/')[-1]}", None)
+                        return _orig_snapshot(*a, **kw)
+
+                    _hf.snapshot_download = _patched_snapshot
+                except Exception:
+                    pass  # 후킹 실패해도 계속 진행
+
+                _set_status(f"Whisper 모델 로드 중... ({device} / {wmodel})", "model")
+                model = whisperx.load_model(
+                    wmodel, device,
+                    compute_type=compute,
+                    asr_options={"beam_size": beam},
+                )
+
+                _set_status("음성 로드 중...", "audio")
                 audio = whisperx.load_audio(self.media_path)
 
-                _set_status("음성 인식 중...")
-                result = model.transcribe(audio, batch_size=16)
+                # 오디오 길이 기반 단계별 예상시간 계산 (초)
+                audio_dur = len(audio) / 16000.0
+                if device == "cuda":
+                    spd = 20.0 if "turbo" in wmodel else 12.0
+                else:
+                    spd = 1.5
+                _est_transcribe = audio_dur / spd
+                _est_align      = audio_dur / 30.0
+                _est_diarize    = audio_dur / 8.0
+                # ETA 계산에 사용할 단계별 예상시간 등록
+                _prog_state["stage_estimates"] = {
+                    "import":    2.0,
+                    "model":     15.0,
+                    "audio":     3.0,
+                    "transcribe": _est_transcribe,
+                    "align":     _est_align,
+                    "diarize":   _est_diarize,
+                    "map":       2.0,
+                }
 
-                _set_status("타임스탬프 정렬 중...")
+                import threading as _threading
+
+                def _progress_ticker(step_key, est_sec):
+                    """0.5초마다 세부 진행률 업데이트."""
+                    t0 = _time.time()
+                    while _prog_state["running"] and _prog_state["step_key"] == step_key:
+                        _tick_progress(step_key, _time.time() - t0, est_sec)
+                        _time.sleep(0.5)
+
+                _set_status("음성 인식 중...", "transcribe")
+                _t = _threading.Thread(
+                    target=_progress_ticker, args=("transcribe", _est_transcribe), daemon=True)
+                _t.start()
+                result = model.transcribe(audio, batch_size=batch_size)
+                # 인식 모델 즉시 해제
+                del model
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+
+                _set_status("타임스탬프 정렬 중...", "align")
+                _t = _threading.Thread(
+                    target=_progress_ticker, args=("align", _est_align), daemon=True)
+                _t.start()
                 model_a, meta = whisperx.load_align_model(
                     language_code=result["language"], device=device)
                 result = whisperx.align(
                     result["segments"], model_a, meta, audio, device,
-                    return_char_alignments=False)
+                    return_char_alignments=False,
+                )
+                # align 모델 즉시 해제 (VRAM/RAM 확보 → diarize 여유 확보)
+                del model_a
+                if device == "cuda":
+                    torch.cuda.empty_cache()
 
-                _set_status("화자 분리 중...")
+                _set_status("화자 분리 중...", "diarize")
+                _t = _threading.Thread(
+                    target=_progress_ticker, args=("diarize", _est_diarize), daemon=True)
+                _t.start()
                 from whisperx.diarize import DiarizationPipeline, assign_word_speakers
 
                 diarize_model = DiarizationPipeline(
@@ -2298,14 +3300,14 @@ class SRTEditor(tk.Tk):
                     kw["num_speakers"] = num_spk
                 diarize_segments = diarize_model(audio, **kw)
 
-                _set_status("화자 매핑 중...")
+                _set_status("화자 매핑 중...", "map")
                 result = assign_word_speakers(diarize_segments, result)
 
                 # 결과를 기존 자막에 매핑
                 def _apply():
                     try:
-                        prog_bar.stop()
-                        prog_win.destroy()
+                        _set_status("완료!", "done")
+                        prog_win.after(300, prog_win.destroy)
                     except Exception:
                         pass
                     self._apply_diarize_result(result["segments"])
@@ -2354,9 +3356,9 @@ class SRTEditor(tk.Tk):
         # WhisperX 화자 ID → 앱 화자명 매핑 (SPEAKER_00 → 화자 N)
         spk_ids = sorted(set(s for _, _, s in diar))
         spk_map = {}
+        n = 1  # 카운터를 루프 밖에서 관리해 sid마다 재초기화되지 않도록 수정
         for sid in spk_ids:
             # 기존 이름과 겹치지 않는 번호 찾기
-            n = 1
             while True:
                 name = f"화자 {n}"
                 if name not in self.speakers:
@@ -2364,23 +3366,77 @@ class SRTEditor(tk.Tk):
                 n += 1
             self.speakers.append(name)
             spk_map[sid] = name
+            n += 1  # 방금 쓴 번호는 건너뛰어 다음 sid가 중복되지 않도록
 
         self._push_undo()
 
-        # 각 자막에 겹치는 시간이 가장 긴 화자 배정
+        # ── 각 자막에 화자 배정 (가중치 샘플링 방식) ──────────────────
+        # 자막 구간을 N개 포인트로 샘플링 → 각 포인트의 화자 구간 매핑 → 가중 투표
+        # 경계선 자막에서도 실제 발화 비율대로 화자를 결정
+        SAMPLES = 20   # 자막 1개당 샘플 포인트 수 (많을수록 정밀, 성능 미미)
+
+        # diar를 시작시간 기준으로 정렬 → 이진탐색으로 빠른 lookup
+        diar_sorted = sorted(diar, key=lambda x: x[0])
+
+        def _spk_at(t):
+            """시각 t에 발화 중인 화자 반환. 없으면 None."""
+            # 이진탐색: t보다 start가 작거나 같은 마지막 세그먼트 찾기
+            lo, hi = 0, len(diar_sorted) - 1
+            idx = -1
+            while lo <= hi:
+                mid = (lo + hi) // 2
+                if diar_sorted[mid][0] <= t:
+                    idx = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+            if idx >= 0:
+                d_s, d_e, d_spk = diar_sorted[idx]
+                if d_s <= t <= d_e:
+                    return spk_map.get(d_spk, "")
+            return None
+
         cache = getattr(self, "_ts_cache", [])
         for i, (t_s, t_e) in enumerate(cache):
             if t_s is None or t_e is None:
                 continue
-            best_spk  = ""
-            best_over = 0.0
-            for d_s, d_e, d_spk in diar:
-                overlap = max(0.0, min(t_e, d_e) - max(t_s, d_s))
-                if overlap > best_over:
-                    best_over = overlap
-                    best_spk  = spk_map.get(d_spk, "")
-            if best_spk:
+
+            dur = t_e - t_s
+            if dur <= 0:
+                continue
+
+            # 자막 구간을 SAMPLES개 포인트로 샘플링
+            # 포인트 간격을 균일하게, 경계 부근 0.05초 가중치 낮춤
+            scores: dict[str, float] = {}
+            for k in range(SAMPLES):
+                # 0~1 사이 균일 분포, 양 끝단은 약간 안쪽으로
+                r = (k + 0.5) / SAMPLES
+                t = t_s + dur * r
+
+                # 경계 근처(앞 10% / 뒤 10%)는 가중치 0.5로 낮춤 (경계 오류 완화)
+                weight = 0.5 if r < 0.10 or r > 0.90 else 1.0
+
+                spk = _spk_at(t)
+                if spk:
+                    scores[spk] = scores.get(spk, 0.0) + weight
+
+            if scores:
+                # 가중치 합이 가장 높은 화자 선택
+                best_spk = max(scores, key=scores.__getitem__)
                 self.subtitles[i]["speaker"] = best_spk
+            else:
+                # 겹치는 구간이 아예 없으면 → 중간점 기준 가장 가까운 화자 fallback
+                t_mid = (t_s + t_e) / 2
+                best_spk  = ""
+                best_dist = float("inf")
+                for d_s, d_e, d_spk in diar_sorted:
+                    d_mid = (d_s + d_e) / 2
+                    dist  = abs(t_mid - d_mid)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_spk  = spk_map.get(d_spk, "")
+                if best_spk:
+                    self.subtitles[i]["speaker"] = best_spk
 
         self._unsaved = True
         self._auto_resize_speaker_col()
