@@ -838,8 +838,10 @@ class SRTEditor(tk.Tk):
         self.bind("<Control-S>", lambda e: self.save_file_as())
         self.bind("<Control-o>", lambda e: self.open_file())
         self.bind("<space>",     self._on_space_key)
-        self.bind("<Left>",      self._on_left_key)
-        self.bind("<Right>",     self._on_right_key)
+        self.bind("<Left>",       self._on_left_key)
+        self.bind("<Right>",      self._on_right_key)
+        self.bind("<Shift-Left>",  self._on_left_key)
+        self.bind("<Shift-Right>", self._on_right_key)
         self.bind("<Control-z>", lambda e: self._undo())
         self.bind("<Control-Z>", lambda e: self._redo())
         self.bind("<Control-x>", self._on_cut)
@@ -897,8 +899,8 @@ class SRTEditor(tk.Tk):
         # 아이콘 전용 버튼 — 텍스트 없이 아이콘만, 정사각형에 가깝게
         style.configure("Icon.TButton",
             background=BG2, foreground=FG,
-            font=(FONT_FAMILY, 13),
-            borderwidth=1, relief="flat", padding=(4, 3))
+            font=(FONT_FAMILY, 10),
+            borderwidth=0, relief="flat", padding=(2, 2))
         style.map("Icon.TButton",
             background=[("active", BG3), ("pressed", BORDER)])
 
@@ -954,19 +956,31 @@ class SRTEditor(tk.Tk):
         top.pack(fill="x")
         self._top_bar = top   # 업데이트 배지 삽입용
 
-        # ── 파일 메뉴 버튼 ────────────────────
-        file_btn = ttk.Menubutton(top, text="  파일  ",
-                                  style="Ghost.TButton", direction="below",
-                                  takefocus=0)
-        file_btn.pack(side="left", padx=(8, 0), pady=8)
-        file_menu = tk.Menu(file_btn, tearoff=0,
+        # ── 파일 메뉴 버튼 (컴팩트 아이콘) ──
+        file_menu = tk.Menu(top, tearoff=0,
                             bg=BG3, fg=FG, activebackground=ACCENT,
                             activeforeground="white", borderwidth=0,
                             font=(FONT_FAMILY, 9))
         file_menu.add_command(label="📂  열기",               command=self.open_file)
         file_menu.add_command(label="💾  저장",               command=self.save_file)
         file_menu.add_command(label="📝  다른 이름으로 저장", command=self.save_file_as)
-        file_btn["menu"] = file_menu
+
+        _file_wrap = tk.Frame(top, bg=BG3,
+                              highlightthickness=1, highlightbackground=BORDER)
+        _file_wrap.pack(side="left", padx=(8, 0), pady=10)
+
+        def _show_file_menu(e=None):
+            w = _file_wrap
+            file_menu.post(w.winfo_rootx(), w.winfo_rooty() + w.winfo_height())
+
+        _file_btn = tk.Button(_file_wrap, text="📁  파일",
+                              bg=BG3, fg=FG, relief="flat", bd=0,
+                              font=(FONT_FAMILY, 10), padx=7, pady=2,
+                              cursor="hand2", takefocus=0,
+                              activebackground=BG2, activeforeground=FG,
+                              command=_show_file_menu)
+        _file_btn.pack(side="left")
+        Tooltip(_file_btn, "파일  열기 / 저장", delay=500)
 
         tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
 
@@ -984,42 +998,71 @@ class SRTEditor(tk.Tk):
             btn.bind("<FocusIn>", lambda e: self.focus_set())
             return btn
 
-        _no_focus_btn(top, text="＋", style="Icon.TButton",
-                      command=_defocus(lambda: self.add_row(getattr(self, "_last_focused_idx", None)))
-                      ).pack(side="left", padx=(0, 2), pady=8)
-        _no_focus_btn(top, text="↩", style="Icon.TButton",
-                      command=_defocus(self._undo)
-                      ).pack(side="left", padx=(0, 2), pady=8)
-        _no_focus_btn(top, text="↪", style="Icon.TButton",
-                      command=_defocus(self._redo)
-                      ).pack(side="left", padx=(0, 4), pady=8)
+        # 컴팩트 버튼 그룹 (자막추가 / 실행취소 / 다시실행)
+        _btn_group = tk.Frame(top, bg=BG3,
+                              highlightthickness=1, highlightbackground=BORDER)
+        _btn_group.pack(side="left", padx=(0, 4), pady=10)
+
+        def _mini_btn(parent, text, cmd, tip):
+            b = tk.Button(parent, text=text, command=cmd,
+                          bg=BG3, fg=FG, relief="flat", bd=0,
+                          font=(FONT_FAMILY, 10), padx=7, pady=2,
+                          cursor="hand2", takefocus=0,
+                          activebackground=BG2, activeforeground=FG)
+            b.pack(side="left")
+            # 버튼 사이 구분선
+            Tooltip(b, tip, delay=500)
+            return b
+
+        _mini_btn(_btn_group, "＋",
+                  _defocus(lambda: self.add_row(getattr(self, "_last_focused_idx", None))),
+                  "자막 추가  [Ctrl+Enter]")
+        tk.Frame(_btn_group, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
+        _mini_btn(_btn_group, "↩",
+                  _defocus(self._undo),
+                  "실행 취소  [Ctrl+Z]")
+        tk.Frame(_btn_group, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
+        _mini_btn(_btn_group, "↪",
+                  _defocus(self._redo),
+                  "다시 실행  [Ctrl+Y]")
 
         tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
 
-        self.lbl_file = ttk.Label(top, text="파일을 열어주세요", style="Dim.TLabel")
-        self.lbl_file.pack(side="left", padx=12, pady=8)
+        # 업데이트 배지 위치
+        self._update_badge_anchor = top
 
-        # 업데이트 배지 위치 (파일명 오른쪽, left 방향으로 삽입)
-        self._update_badge_anchor = top   # _show_update_badge에서 여기에 left로 삽입
+        # ── 우측 버튼 그룹 ───────────────────────────
+        def _right_group(*items):
+            """(text, cmd, tip) 목록으로 컴팩트 버튼 그룹 생성."""
+            grp = tk.Frame(top, bg=BG3,
+                           highlightthickness=1, highlightbackground=BORDER)
+            grp.pack(side="right", padx=(0, 6), pady=10)
+            for i, (text, cmd, tip) in enumerate(items):
+                if i > 0:
+                    tk.Frame(grp, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
+                b = tk.Button(grp, text=text, command=cmd,
+                              bg=BG3, fg=FG, relief="flat", bd=0,
+                              font=(FONT_FAMILY, 10), padx=8, pady=2,
+                              cursor="hand2", takefocus=0,
+                              activebackground=BG2, activeforeground=FG)
+                b.pack(side="left")
+                Tooltip(b, tip, delay=500)
+            return grp
 
-        # ── 우측: 내보내기 + 설정 + 미지정 카운터 ───────
+        # 미지정 카운터
         self.lbl_count = tk.Label(top, text="", bg=BG3,
                                   fg="#FF9A5C", cursor="hand2",
                                   font=(FONT_FAMILY, 9))
-        self.lbl_count.pack(side="right", padx=(0, 12), pady=8)
+        self.lbl_count.pack(side="right", padx=(0, 4), pady=8)
         self.lbl_count.bind("<Button-1>", lambda e: self._goto_next_unassigned())
 
-        _no_focus_btn(top, text="⚙  설정",
-                      style="Ghost.TButton", command=self._open_settings
-                      ).pack(side="right", padx=(0, 4), pady=8)
-
-        _no_focus_btn(top, text="📤  화자별 자막 내보내기",
-                      style="Ghost.TButton", command=self.export
-                      ).pack(side="right", padx=(0, 4), pady=8)
-
-        _no_focus_btn(top, text="🎙  화자 자동 분석",
-                      style="Ghost.TButton", command=self._open_diarize_dialog
-                      ).pack(side="right", padx=(0, 4), pady=8)
+        _right_group(("⚙", self._open_settings, "설정"))
+        _right_group(
+            ("📤  내보내기", self.export, "화자별 자막 내보내기"),
+        )
+        _right_group(
+            ("🎙  화자 분석", self._open_diarize_dialog, "화자 자동 분석"),
+        )
 
         # 본문 영역 (사이드바 + 테이블)
         body = ttk.Frame(self)
@@ -1142,8 +1185,11 @@ class SRTEditor(tk.Tk):
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
 
-        ttk.Label(side, text="SPEAKERS", style="Header.TLabel",
-                  background=BG2).pack(anchor="w", padx=14, pady=(16, 6))
+        # SPEAKERS 헤더 + 우측 + 버튼
+        _hdr_row = tk.Frame(side, bg=BG2)
+        _hdr_row.pack(fill="x", padx=(14, 8), pady=(16, 6))
+        ttk.Label(_hdr_row, text="SPEAKERS", style="Header.TLabel",
+                  background=BG2).pack(side="left")
 
         list_frame = tk.Frame(side, bg=BG2)
         list_frame.pack(fill="both", expand=True, padx=6)
@@ -1161,43 +1207,6 @@ class SRTEditor(tk.Tk):
             lambda e, w=_spk_win: canvas.itemconfigure(w, width=e.width))
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
-        btn_frame = tk.Frame(side, bg=BG2)
-        btn_frame.pack(fill="x", padx=10, pady=10)
-        ttk.Button(btn_frame, text="＋  화자 추가",
-                   style="Accent.TButton",
-                   command=self.add_speaker).pack(fill="x")
-
-    def _build_sidebar(self, parent):
-        side = ttk.Frame(parent, style="Side.TFrame", width=220)
-        side.pack(side="left", fill="y")
-        side.pack_propagate(False)
-
-        ttk.Label(side, text="SPEAKERS", style="Header.TLabel",
-                  background=BG2).pack(anchor="w", padx=14, pady=(16, 6))
-
-        list_frame = tk.Frame(side, bg=BG2)
-        list_frame.pack(fill="both", expand=True, padx=6)
-
-        canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical",
-                                  command=canvas.yview)
-        self.speaker_inner = tk.Frame(canvas, bg=BG2)
-        self.speaker_inner.bind("<Configure>",
-            lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        _spk_win = canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        # speaker_inner 너비를 canvas 너비에 고정 — 내용물이 사이드바를 밀어내지 않도록
-        canvas.bind("<Configure>",
-            lambda e, w=_spk_win: canvas.itemconfigure(w, width=e.width))
-        canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        btn_frame = tk.Frame(side, bg=BG2)
-        btn_frame.pack(fill="x", padx=10, pady=10)
-        ttk.Button(btn_frame, text="＋  화자 추가",
-                   style="Accent.TButton",
-                   command=self.add_speaker).pack(fill="x")
 
     def _setup_media_dnd(self, widget):
         """미디어 패널 위젯에 드래그드롭 바인딩 (tkinterdnd2)"""
@@ -1529,20 +1538,43 @@ class SRTEditor(tk.Tk):
                 if not pts_vis:
                     pts_vis = wf
 
-                x_amp = {}
+                # 데이터 포인트 → x픽셀 매핑 (최대값)
+                x_amp_raw = {}
                 for rx, amp in pts_vis:
                     x = int(self._wf_ratio_to_x(rx, cw))
                     if 0 <= x < cw:
-                        x_amp[x] = max(x_amp.get(x, 0.0), amp)
+                        x_amp_raw[x] = max(x_amp_raw.get(x, 0.0), amp)
+
+                # 선형 보간: 데이터 없는 픽셀은 인접 포인트 사이를 부드럽게 채움
+                if x_amp_raw:
+                    filled_xs = sorted(x_amp_raw)
+                    x_amp = {}
+                    for i in range(len(filled_xs)):
+                        xa = filled_xs[i]
+                        aa = x_amp_raw[xa]
+                        x_amp[xa] = aa
+                        if i + 1 < len(filled_xs):
+                            xb = filled_xs[i + 1]
+                            ab = x_amp_raw[xb]
+                            for xi in range(xa + 1, xb):
+                                t = (xi - xa) / (xb - xa)
+                                x_amp[xi] = aa + (ab - aa) * t
+                    # 양 끝 채우기
+                    for xi in range(0, filled_xs[0]):
+                        x_amp[xi] = x_amp_raw[filled_xs[0]]
+                    for xi in range(filled_xs[-1] + 1, cw):
+                        x_amp[xi] = x_amp_raw[filled_xs[-1]]
+                else:
+                    x_amp = {}
 
                 half_h  = wf_h // 2 - 2   # 채널 하나의 최대 높이
                 WF_BASE = (0x1E, 0x1E, 0x3A)
                 WF_PLAY = (0x3A, 0x2A, 0x5A)
 
                 for x in range(cw):
-                    amp = x_amp.get(x)
-                    if amp is None:
-                        amp = (x_amp.get(x-1, 0.0) + x_amp.get(x+1, 0.0)) * 0.5
+                    amp = x_amp.get(x, 0.0)
+                    if False:  # 구 코드 제거
+                        amp = 0.0
                     px = int(amp * half_h)
                     col = WF_PLAY if x <= head_x else WF_BASE
 
@@ -3735,6 +3767,14 @@ class SRTEditor(tk.Tk):
             tk.Label(self.speaker_inner, text="화자가 없습니다",
                      bg=BG2, fg=FG_DIM,
                      font=(FONT_FAMILY, 9)).pack(padx=10, pady=4)
+            add_row = tk.Frame(self.speaker_inner, bg=BG2)
+            add_row.pack(fill="x", padx=6, pady=(2, 6))
+            tk.Button(add_row, text="＋  화자 추가",
+                      bg=BG2, fg=FG_DIM,
+                      font=(FONT_FAMILY, 9), bd=0, relief="flat",
+                      cursor="hand2", anchor="w",
+                      activebackground=BG3, activeforeground=FG,
+                      command=self.add_speaker).pack(fill="x", padx=4, pady=2)
             return
 
         # 드래그 상태
@@ -3877,6 +3917,17 @@ class SRTEditor(tk.Tk):
             Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
             Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
             Tooltip(del_btn, f"'{name}' 화자 삭제", delay=400)
+
+        # 목록 마지막에 '+ 화자 추가' 버튼
+        add_row = tk.Frame(self.speaker_inner, bg=BG2)
+        add_row.pack(fill="x", padx=6, pady=(2, 6))
+        add_btn = tk.Button(add_row, text="＋  화자 추가",
+                            bg=BG2, fg=FG_DIM,
+                            font=(FONT_FAMILY, 9), bd=0, relief="flat",
+                            cursor="hand2", anchor="w",
+                            activebackground=BG3, activeforeground=FG,
+                            command=self.add_speaker)
+        add_btn.pack(fill="x", padx=4, pady=2)
 
     # ── 화자 드래그 순서 변경 ─────────────────
     def _spk_drag_start(self, event, row):
@@ -5429,7 +5480,8 @@ class SRTEditor(tk.Tk):
 
         self.filepath  = path
         self.save_path = path
-        self.lbl_file.configure(text=os.path.basename(path))
+        _fname = os.path.splitext(os.path.basename(path))[0]
+        self.title(f"{_fname} - SRT Speaker Editer")
 
         self.speakers = []
         self.speaker_colors = {}
@@ -5610,25 +5662,17 @@ class SRTEditor(tk.Tk):
         self._media_play_pause()
 
     def _on_left_key(self, event):
-        """재생 중: 현재 자막 그룹 기준 이전 자막 시작점으로 점프.
-        정지 중: 기존처럼 -5초 이동."""
         if isinstance(self.focus_get(), tk.Entry):
             return
-        if self.media_path and self.player.is_playing:
-            self._seek_to_adjacent_subtitle(-1)
-        else:
-            self._media_seek(-5)
+        step = 30 if (event.state & 0x1) else 5
+        self._media_seek(-step)
         return "break"
 
     def _on_right_key(self, event):
-        """재생 중: 현재 자막 그룹 기준 다음 자막 시작점으로 점프.
-        정지 중: 기존처럼 +5초 이동."""
         if isinstance(self.focus_get(), tk.Entry):
             return
-        if self.media_path and self.player.is_playing:
-            self._seek_to_adjacent_subtitle(+1)
-        else:
-            self._media_seek(+5)
+        step = 30 if (event.state & 0x1) else 5
+        self._media_seek(+step)
         return "break"
 
     def _seek_to_adjacent_subtitle(self, direction):
@@ -5884,9 +5928,9 @@ class SRTEditor(tk.Tk):
                 meta["display_pattern"] = g_display_pattern
             write_srt_tagged(self.subtitles, self.save_path, meta or None)
             self._unsaved = False
-            self.lbl_file.configure(text=f"{os.path.basename(self.save_path)}  ✓")
-            self.after(800, lambda: self.lbl_file.configure(
-                text=os.path.basename(self.save_path)))
+            _fn = os.path.splitext(os.path.basename(self.save_path))[0]
+            self.title(f"{_fn} - SRT Speaker Editer  ✓")
+            self.after(800, lambda fn=_fn: self.title(f"{fn} - SRT Speaker Editer"))
         except Exception as e:
             messagebox.showerror("저장 오류", str(e), parent=self)
 
@@ -5916,9 +5960,9 @@ class SRTEditor(tk.Tk):
             write_srt_tagged(self.subtitles, path, meta or None)
             self._unsaved = False
             self.save_path = path
-            self.lbl_file.configure(text=f"{os.path.basename(path)}  ✓")
-            self.after(800, lambda: self.lbl_file.configure(
-                text=os.path.basename(path)))
+            _fn2 = os.path.splitext(os.path.basename(path))[0]
+            self.title(f"{_fn2} - SRT Speaker Editer  ✓")
+            self.after(800, lambda fn=_fn2: self.title(f"{fn} - SRT Speaker Editer"))
         except Exception as e:
             messagebox.showerror("저장 오류", str(e), parent=self)
 
