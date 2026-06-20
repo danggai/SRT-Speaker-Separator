@@ -251,63 +251,85 @@ def read_srt_meta(filepath) -> dict:
 
 
 # ─────────────────────────────────────────────
-#  미디어 플레이어 (subprocess + ffplay / afplay)
+#  미디어 플레이어 (pygame.mixer 기반 — ffmpeg 불필요)
 # ─────────────────────────────────────────────
+def _ensure_pygame():
+    """pygame 미설치 시 자동 pip install."""
+    try:
+        import pygame
+        return pygame
+    except ImportError:
+        import subprocess, sys
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "pygame", "-q"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import pygame
+        return pygame
+
+def _ensure_mutagen():
+    """mutagen 미설치 시 자동 pip install (길이 조회용)."""
+    try:
+        import mutagen
+        return mutagen
+    except ImportError:
+        import subprocess, sys
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "mutagen", "-q"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        import mutagen
+        return mutagen
+
+
 class MediaPlayer:
-    """ffplay / afplay 기반 경량 미디어 플레이어"""
+    """pygame.mixer 기반 미디어 플레이어 (ffmpeg/ffplay 불필요)."""
 
     SEEK_DELTA = 5   # 방향키 이동 초
 
-    # Windows에서 subprocess 콘솔 창 억제
-    _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if sys.platform == "win32" else {}
-
     def __init__(self):
-        self._proc       = None
         self._filepath   = None
         self._duration   = 0.0
-        self._position   = 0.0       # 현재 재생 위치 (초)
+        self._position   = 0.0
         self._playing    = False
-        self._start_wall = 0.0       # 재생 시작 시점의 wall time
-        self._start_pos  = 0.0       # 재생 시작 시점의 position
+        self._paused     = False
+        self._start_wall = 0.0
+        self._start_pos  = 0.0
         self._lock       = threading.Lock()
-        self._backend    = self._detect_backend()
         self._volume     = 100   # 0~100
+        self._pg         = None  # pygame 모듈 (lazy init)
+        self._watch_thread = None
 
-    # ── 백엔드 탐지 ───────────────────────────
-    def _detect_backend(self):
-        """ffplay → afplay 순으로 사용 가능 백엔드 반환"""
-        for cmd in ["ffplay", "ffmpeg"]:
-            try:
-                subprocess.run([cmd, "-version"],
-                               capture_output=True, timeout=2, **self._NO_WINDOW)
-                return "ffplay"
-            except Exception:
-                pass
-        if sys.platform == "darwin":
-            return "afplay"
-        return None
+    def _init_pygame(self):
+        if self._pg is not None:
+            return True
+        try:
+            pg = _ensure_pygame()
+            if not pg.get_init():
+                pg.init()
+            if not pg.mixer.get_init():
+                # 고품질 설정: 44100Hz, 16bit, stereo, 2048 buffer
+                pg.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+            self._pg = pg
+            return True
+        except Exception as e:
+            self._pg = None
+            return False
 
     def _get_duration(self, path):
-        """ffprobe / ffmpeg 로 길이 조회"""
+        """mutagen으로 길이 조회 (순수 파이썬, ffprobe 불필요)."""
         try:
-            result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-print_format", "json",
-                 "-show_format", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-                **self._NO_WINDOW)
-            info = json.loads(result.stdout)
-            return float(info["format"]["duration"])
+            mut = _ensure_mutagen()
+            f = mut.File(path)
+            if f is not None and hasattr(f, "info") and hasattr(f.info, "length"):
+                return float(f.info.length)
         except Exception:
             pass
+        # fallback: pygame Sound 로드 후 get_length (메모리 사용 주의)
         try:
-            result = subprocess.run(
-                ["ffmpeg", "-i", path],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-                **self._NO_WINDOW)
-            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", result.stderr)
-            if m:
-                h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
-                return h * 3600 + mi * 60 + s
+            if self._init_pygame():
+                snd = self._pg.mixer.Sound(path)
+                dur = snd.get_length()
+                del snd
+                return dur
         except Exception:
             pass
         return 0.0
@@ -317,7 +339,10 @@ class MediaPlayer:
         self.stop()
         self._filepath = path
         self._position = 0.0
-        self._duration = self._get_duration(path)
+        if not self._init_pygame():
+            self._duration = 0.0
+        else:
+            self._duration = self._get_duration(path)
         return self._duration
 
     def play(self):
@@ -326,42 +351,47 @@ class MediaPlayer:
         self._start_play(self._position)
 
     def pause(self):
-        """토글 pause / resume"""
-        if self._playing:
+        """토글 pause / resume."""
+        if self._playing and not self._paused:
             self._pause()
         else:
             self._resume()
 
     def stop(self):
-        self._kill_proc()
-        self._playing  = False
+        self._playing = False
+        self._paused  = False
         self._position = 0.0
+        try:
+            if self._pg and self._pg.mixer.get_init():
+                self._pg.mixer.music.stop()
+        except Exception:
+            pass
 
     def seek(self, delta):
-        """delta 초만큼 이동 (양수/음수)"""
-        new_pos = max(0.0, min(self._position + delta, self._duration))
-        was_playing = self._playing
-        self._kill_proc()
+        # 재생 중에는 position 프로퍼티로 실제 현재 위치 읽기
+        cur = self.position
+        new_pos = max(0.0, min(cur + delta, self._duration))
+        was_playing = self._playing and not self._paused
+        self._stop_music()
         self._position = new_pos
         if was_playing:
             self._start_play(new_pos)
 
     def seek_to(self, pos):
-        """절대 위치(초)로 이동"""
         new_pos = max(0.0, min(pos, self._duration))
-        was_playing = self._playing
-        self._kill_proc()
+        was_playing = self._playing and not self._paused
+        self._stop_music()
         self._position = new_pos
         if was_playing:
             self._start_play(new_pos)
 
     @property
     def is_playing(self):
-        return self._playing
+        return self._playing and not self._paused
 
     @property
     def position(self):
-        if self._playing:
+        if self._playing and not self._paused:
             elapsed = time.time() - self._start_wall
             return min(self._start_pos + elapsed, self._duration)
         return self._position
@@ -372,65 +402,88 @@ class MediaPlayer:
 
     # ── 내부 ──────────────────────────────────
     def _start_play(self, start_sec):
-        self._kill_proc()
-        backend = self._backend
-        vol = max(0, min(self._volume, 100))
-        if backend == "ffplay":
-            cmd = [
-                "ffplay", "-nodisp", "-autoexit",
-                "-ss", f"{start_sec:.3f}",
-                "-volume", str(vol),
-                self._filepath
-            ]
-        elif backend == "afplay":
-            # afplay 볼륨: 0.0~1.0
-            afvol = vol / 100.0
-            cmd = ["afplay", "-t", str(max(0, self._duration - start_sec)),
-                   "-q", "1", "-v", f"{afvol:.2f}", self._filepath]
-        else:
+        if not self._init_pygame():
             return
+        try:
+            self._pg.mixer.music.load(self._filepath)
+            # set_volume: 0.0~1.0
+            self._pg.mixer.music.set_volume(self._volume / 100.0)
+            # start_sec 위치부터 재생
+            self._pg.mixer.music.play(start=start_sec)
+            self._playing    = True
+            self._paused     = False
+            self._start_wall = time.time()
+            self._start_pos  = start_sec
 
-        self._proc       = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            **self._NO_WINDOW)
-        self._playing    = True
-        self._start_wall = time.time()
-        self._start_pos  = start_sec
-
-        # 재생 완료 감시 스레드
-        t = threading.Thread(target=self._watch, daemon=True)
-        t.start()
+            # 재생 완료 감시 스레드
+            self._watch_thread = threading.Thread(
+                target=self._watch, daemon=True)
+            self._watch_thread.start()
+        except Exception:
+            self._playing = False
 
     def _watch(self):
-        if self._proc:
-            self._proc.wait()
-        with self._lock:
-            if self._playing:
-                self._position = min(
-                    self._start_pos + (time.time() - self._start_wall),
-                    self._duration)
-                self._playing = False
+        """재생 완료 감시 — mixer.music.get_busy() 폴링."""
+        pg = self._pg
+        if not pg:
+            return
+        while True:
+            time.sleep(0.2)
+            with self._lock:
+                if not self._playing or self._paused:
+                    return
+                try:
+                    busy = pg.mixer.music.get_busy()
+                except Exception:
+                    busy = False
+                if not busy:
+                    self._position = self._duration
+                    self._playing  = False
+                    return
 
     def _pause(self):
         self._position = self.position
-        self._kill_proc()
-        self._playing = False
+        try:
+            if self._pg and self._pg.mixer.get_init():
+                self._pg.mixer.music.pause()
+        except Exception:
+            pass
+        self._paused  = True
 
     def _resume(self):
-        if self._filepath:
+        if not self._filepath:
+            return
+        if self._paused:
+            try:
+                self._pg.mixer.music.unpause()
+                self._paused     = False
+                self._start_wall = time.time()
+                self._start_pos  = self._position
+            except Exception:
+                self._start_play(self._position)
+        elif not self._playing:
             self._start_play(self._position)
 
-    def _kill_proc(self):
-        if self._proc:
-            try:
-                self._proc.terminate()
-                self._proc.wait(timeout=1)
-            except Exception:
-                pass
-            self._proc = None
+    def _stop_music(self):
+        self._playing = False
+        self._paused  = False
+        try:
+            if self._pg and self._pg.mixer.get_init():
+                self._pg.mixer.music.stop()
+        except Exception:
+            pass
+
+    def set_volume(self, vol):
+        """볼륨 설정 (0~100)."""
+        self._volume = max(0, min(vol, 100))
+        try:
+            if self._pg and self._pg.mixer.get_init():
+                self._pg.mixer.music.set_volume(self._volume / 100.0)
+        except Exception:
+            pass
 
     def __del__(self):
-        self._kill_proc()
+        self._stop_music()
 
 
 # ─────────────────────────────────────────────
@@ -718,6 +771,13 @@ class _ColorPickerDialog:
 
 
 # ─────────────────────────────────────────────
+#  버전 정보
+# ─────────────────────────────────────────────
+APP_VERSION      = "0.1.0"   # 현재 버전 (릴리즈 태그와 맞춰 관리)
+GITHUB_TAGS_URL  = "https://github.com/danggai/SRT-Speaker-Separator/tags"
+GITHUB_LATEST_API = "https://api.github.com/repos/danggai/SRT-Speaker-Separator/tags"
+
+# ─────────────────────────────────────────────
 #  메인 앱
 # ─────────────────────────────────────────────
 class SRTEditor(tk.Tk):
@@ -769,6 +829,9 @@ class SRTEditor(tk.Tk):
         self._build_styles()
         self._build_ui()
         self._setup_dnd()        # 드래그 앤 드롭
+
+        # 업데이트 체크 (백그라운드, 앱 시작 3초 후)
+        self.after(3000, self._check_update_async)
 
         # 단축키
         self.bind("<Control-s>", lambda e: self.save_file())
@@ -889,6 +952,7 @@ class SRTEditor(tk.Tk):
         # 상단 툴바
         top = ttk.Frame(self, style="Top.TFrame")
         top.pack(fill="x")
+        self._top_bar = top   # 업데이트 배지 삽입용
 
         # ── 파일 메뉴 버튼 ────────────────────
         file_btn = ttk.Menubutton(top, text="  파일  ",
@@ -934,6 +998,9 @@ class SRTEditor(tk.Tk):
 
         self.lbl_file = ttk.Label(top, text="파일을 열어주세요", style="Dim.TLabel")
         self.lbl_file.pack(side="left", padx=12, pady=8)
+
+        # 업데이트 배지 위치 (파일명 오른쪽, left 방향으로 삽입)
+        self._update_badge_anchor = top   # _show_update_badge에서 여기에 left로 삽입
 
         # ── 우측: 내보내기 + 설정 + 미지정 카운터 ───────
         self.lbl_count = tk.Label(top, text="", bg=BG3,
@@ -1147,6 +1214,7 @@ class SRTEditor(tk.Tk):
         panel = tk.Frame(parent, bg=MEDIA_BG)
         panel.pack(fill="x", side="bottom")
         self.media_panel = panel
+        self._media_panel = panel   # 스크롤 바인딩용
 
         tk.Frame(panel, bg=ACCENT, height=2).pack(fill="x")
 
@@ -1187,6 +1255,7 @@ class SRTEditor(tk.Tk):
         self._pb_canvas.bind("<Motion>",          self._wf_on_motion)
         self._pb_canvas.bind("<MouseWheel>",      self._wf_mousewheel)
         self._pb_canvas.bind("<Control-MouseWheel>", self._wf_zoom_wheel)
+        # panel 생성 완료 후 모든 자식 위젯에 스크롤 바인딩
         self._pb_configure_job = None
 
         # ── 파형 스크롤바 ─────────────────────
@@ -1945,12 +2014,15 @@ class SRTEditor(tk.Tk):
         self._wf_hsb_dragging = False
 
     def _wf_mousewheel(self, e):
-        if e.state & 0x1:
-            span  = 1.0 / max(1.0, self._wf_zoom)
-            delta = span * 0.1 * (1 if e.delta < 0 else -1)
-            self._wf_offset = max(0.0, min(self._wf_offset + delta, 1.0 - span))
-            self._pb_redraw()
+        # 파형 뷰 구간 이동 (재생 위치 무관)
+        # 위 스크롤 → 앞, 아래 스크롤 → 뒤 / Shift: 5배 빠르게
+        span  = 1.0 / max(1.0, self._wf_zoom)
+        step  = span * 0.2 if (e.state & 0x1) else span * 0.03
+        delta = -step if e.delta > 0 else step
+        self._wf_offset = max(0.0, min(self._wf_offset + delta, 1.0 - span))
+        self._pb_redraw()
         return "break"
+
 
     def _wf_zoom_wheel(self, e):
         cw = self._pb_canvas.winfo_width()
@@ -2073,13 +2145,136 @@ class SRTEditor(tk.Tk):
             self._set_volume(self._vol_before_mute if self._vol_before_mute > 0 else 80)
 
 
+    def _check_update_async(self):
+        """백그라운드에서 최신 릴리즈 태그를 확인하고 새 버전 있으면 아이콘 표시."""
+        # 이미 설정창 등에서 캐시된 버전이 있으면 즉시 배지 표시
+        cached = getattr(self, "_latest_version_cache", None)
+        if cached:
+            def _parse(v):
+                try: return tuple(int(x) for x in v.strip().lstrip("v").split("."))
+                except: return (0,)
+            if _parse(cached) > _parse(APP_VERSION):
+                self._show_update_badge(cached)
+                return
+        import threading
+        threading.Thread(target=self._fetch_latest_version, daemon=True).start()
+
+    def _fetch_latest_version(self):
+        import urllib.request, json, pathlib, datetime
+
+        log_path = pathlib.Path.home() / ".srt_speaker_update.log"
+
+        def _log(msg):
+            try:
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(f"[{datetime.datetime.now():%H:%M:%S}] {msg}\n")
+            except Exception:
+                pass
+
+        def _parse(v):
+            try:
+                return tuple(int(x) for x in v.strip().lstrip("v").split("."))
+            except Exception:
+                return (0,)
+
+        def _check(latest_raw):
+            latest = latest_raw.lstrip("v").strip()
+            if not latest:
+                return
+            self._latest_version_cache = latest  # 설정창 등 다른 곳에서 재사용
+            _log(f"latest={latest!r}  current={APP_VERSION!r}  newer={_parse(latest) > _parse(APP_VERSION)}")
+            if _parse(latest) > _parse(APP_VERSION):
+                self.after(0, lambda v=latest: self._show_update_badge(v))
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 SRT-Speaker-Separator",
+            "Accept": "application/vnd.github+json",
+        }
+
+        # 1온차: /releases/latest (릴리즈 있을 때)
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/danggai/SRT-Speaker-Separator/releases/latest",
+                headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode())
+            tag = data.get("tag_name", "")
+            _log(f"releases/latest -> tag={tag!r}")
+            if tag:
+                _check(tag)
+                return
+        except Exception as e:
+            _log(f"releases/latest FAIL: {e}")
+
+        # 2온차: /git/refs/tags (태그만 있을 때 — 가장 안정적)
+        try:
+            req = urllib.request.Request(
+                "https://api.github.com/repos/danggai/SRT-Speaker-Separator/git/refs/tags",
+                headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                refs = json.loads(resp.read().decode())
+            _log(f"git/refs/tags -> {len(refs)} refs, last={refs[-1]['ref'] if refs else 'none'}")
+            if refs:
+                tag = refs[-1]["ref"].split("/")[-1]
+                _check(tag)
+                return
+        except Exception as e:
+            _log(f"git/refs/tags FAIL: {e}")
+
+        # 3온차: /tags API
+        try:
+            req = urllib.request.Request(
+                GITHUB_LATEST_API, headers=headers)
+            with urllib.request.urlopen(req, timeout=6) as resp:
+                tags = json.loads(resp.read().decode())
+            _log(f"/tags API -> {[t['name'] for t in tags[:3]]}")
+            if tags:
+                _check(tags[0]["name"])
+                return
+        except Exception as e:
+            _log(f"/tags API FAIL: {e}")
+
+        _log("모든 엔드포인트 실패")
+
+    def _show_update_badge(self, latest_ver):
+        """툴바에 '새 버전!' 버튼 추가."""
+        if getattr(self, "_update_btn", None):
+            return  # 중복 방지
+
+        import webbrowser
+
+        def _on_click(v=latest_ver):
+            ans = messagebox.askyesno(
+                "업데이트 알림",
+                f"새로운 버전이 있습니다!\n\n"
+                f"현재 버전: v{APP_VERSION}\n"
+                f"최신 버전: v{v}\n\n"
+                "GitHub 릴리즈 페이지로 이동할까요?",
+                parent=self
+            )
+            if ans:
+                webbrowser.open(GITHUB_TAGS_URL)
+
+        btn = tk.Button(
+            self._update_badge_anchor,
+            text="🆕  새로운 버전!",
+            bg="#1E3A1E", fg="#4CAF50",
+            relief="flat", bd=0, cursor="hand2",
+            font=(FONT_FAMILY, 9, "bold"),
+            padx=10, pady=4,
+            activebackground="#162E16", activeforeground="#6FCF6F",
+            command=_on_click
+        )
+        btn.pack(side="left", padx=(4, 0), pady=8)
+        self._update_btn = btn
+
     def _open_settings(self):
         """설정 창 (탭: 패턴 / 화자 분석)"""
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("580x500")
+        win.geometry("580x540")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
@@ -2090,6 +2285,63 @@ class SRTEditor(tk.Tk):
         win.protocol("WM_DELETE_WINDOW", _on_settings_close)
 
         nb = ttk.Notebook(win)
+
+        # ── 하단 버전 정보 (먼저 pack해야 Notebook에 가려지지 않음)
+        _ver_frame = tk.Frame(win, bg=BG2)
+        _ver_frame.pack(fill="x", side="bottom")
+        tk.Frame(_ver_frame, bg=BORDER, height=1).pack(fill="x")
+        _ver_row = tk.Frame(_ver_frame, bg=BG2)
+        _ver_row.pack(fill="x", padx=16, pady=6)
+        tk.Label(_ver_row, text=f"현재 버전: v{APP_VERSION}",
+                 bg=BG2, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left")
+        self._settings_latest_lbl = tk.Label(_ver_row, text="최신 버전: 확인 중...",
+                 bg=BG2, fg=FG_DIM, font=(FONT_FAMILY, 8))
+        self._settings_latest_lbl.pack(side="left", padx=(16, 0))
+
+        import webbrowser as _wb
+        _gh_lbl = tk.Label(_ver_row, text="🔗 GitHub",
+                           bg=BG2, fg="#4A90E2",
+                           font=(FONT_FAMILY, 8, "underline"),
+                           cursor="hand2")
+        _gh_lbl.pack(side="right")
+        _gh_lbl.bind("<Button-1>",
+                     lambda e: _wb.open("https://github.com/danggai/SRT-Speaker-Separator"))
+
+        def _update_latest_lbl(v):
+            try:
+                self._settings_latest_lbl.configure(text=f"최신 버전: v{v}")
+            except Exception:
+                pass
+
+        if getattr(self, "_latest_version_cache", None):
+            _update_latest_lbl(self._latest_version_cache)
+        else:
+            import threading
+            def _fetch_for_settings():
+                import urllib.request, json
+                headers = {"User-Agent": "Mozilla/5.0 SRT-Speaker-Separator",
+                           "Accept": "application/vnd.github+json"}
+                for url, extractor in [
+                    ("https://api.github.com/repos/danggai/SRT-Speaker-Separator/releases/latest",
+                     lambda d: d.get("tag_name", "")),
+                    ("https://api.github.com/repos/danggai/SRT-Speaker-Separator/git/refs/tags",
+                     lambda d: d[-1]["ref"].split("/")[-1] if d else ""),
+                    (GITHUB_LATEST_API,
+                     lambda d: d[0]["name"] if d else ""),
+                ]:
+                    try:
+                        req = urllib.request.Request(url, headers=headers)
+                        with urllib.request.urlopen(req, timeout=5) as resp:
+                            tag = extractor(json.loads(resp.read().decode()))
+                        if tag:
+                            self._latest_version_cache = tag.lstrip("v")
+                            self.after(0, lambda v=tag.lstrip("v"): _update_latest_lbl(v))
+                            return
+                    except Exception:
+                        continue
+                self.after(0, lambda: _update_latest_lbl("확인 실패"))
+            threading.Thread(target=_fetch_for_settings, daemon=True).start()
+
         nb.pack(fill="both", expand=True, padx=0, pady=0)
 
         # ── 탭 1: 화자 구분 패턴 ──────────────────
@@ -2166,15 +2418,11 @@ class SRTEditor(tk.Tk):
                   activebackground="#333333",
                   command=win.destroy).pack(side="right", padx=(0, 8))
 
-        # ── 탭 2: 화자 자동 분석 ──────────────────
+        # ── 탭 2: 모델 관리 ────────────────────
         tab2 = tk.Frame(nb, bg=BG)
-        nb.add(tab2, text="  🎙 화자 자동 분석  ")
-        self._build_diarize_tab(tab2)
+        nb.add(tab2, text="  📦 모델 관리  ")
+        self._build_model_mgmt_tab(tab2)
 
-        # ── 탭 3: 모델 관리 ──────────────────────
-        tab3 = tk.Frame(nb, bg=BG)
-        nb.add(tab3, text="  📦 모델 관리  ")
-        self._build_model_mgmt_tab(tab3)
 
     def _build_model_mgmt_tab(self, parent):
         """다운로드된 모델 캐시 관리 탭."""
@@ -2506,7 +2754,7 @@ class SRTEditor(tk.Tk):
         _gpu_val_lbl.pack(side="left")
 
         # 캔버스 슬라이더
-        _SL_W, _SL_H = 360, 36
+        _SL_W, _SL_H = 360, 52   # 레이블 잘림 방지
         _N = len(_BATCH_MAP)
         _sl_cv = tk.Canvas(parent, width=_SL_W, height=_SL_H,
                            bg=BG, highlightthickness=0)
@@ -2629,7 +2877,7 @@ class SRTEditor(tk.Tk):
         win = tk.Toplevel(self)
         win.title("화자 자동 분석")
         win.configure(bg=BG)
-        win.geometry("560x500")
+        win.geometry("560x540")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
@@ -3847,6 +4095,15 @@ class SRTEditor(tk.Tk):
                 self._vscroll_to(self._vscroll_top + amount * visible)
 
     def _on_mousewheel(self, event):
+        # 재생바 패널 위면 seek, 그 외엔 자막 스크롤
+        try:
+            mp = self._media_panel
+            if (mp.winfo_rooty() <= event.y_root
+                    <= mp.winfo_rooty() + mp.winfo_height()):
+                self._wf_mousewheel(event)
+                return
+        except Exception:
+            pass
         delta = -1 if event.delta > 0 else 1
         self._vscroll_to(self._vscroll_top + delta)
 
@@ -5227,11 +5484,11 @@ class SRTEditor(tk.Tk):
         self._load_media(path)
 
     def _load_media(self, path):
-        if self.player._backend is None:
+        if not self.player._init_pygame():
             messagebox.showwarning(
                 "미디어 재생 불가",
-                "ffplay 또는 ffmpeg가 설치되어 있지 않습니다.\n"
-                "https://ffmpeg.org 에서 설치 후 다시 시도하세요.",
+                "pygame 초기화에 실패했습니다.\n"
+                "pip install pygame 후 다시 시도하세요.",
                 parent=self)
             return
 
@@ -5271,7 +5528,7 @@ class SRTEditor(tk.Tk):
         self._extract_waveform(path)
 
     def _extract_waveform(self, path):
-        """ffmpeg 스트리밍으로 파형 추출 — UI 블로킹 없음."""
+        """librosa 로 파형 추출 (mp3 포함 전 포맷 지원, ffmpeg 불필요) — UI 블로킹 없음."""
         self._wf_loading = True
         self._waveform_pts = []
         self._pb_redraw()
@@ -5279,79 +5536,50 @@ class SRTEditor(tk.Tk):
         cw    = max(self._pb_canvas.winfo_width(), 800)
         N_PTS = max(4000, min(cw * 128, 32000))
 
-        def _worker():
-            import subprocess, array, math
-            try:
-                cmd = [
-                    "ffmpeg", "-y", "-i", path,
-                    "-ac", "1", "-ar", "22050",
-                    "-f", "f32le", "-",
-                ]
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.DEVNULL,
-                )
-
-                # 먼저 전체 길이를 ffprobe로 얻어 chunk 크기 결정
+        def _ensure_pip(*pkgs):
+            import subprocess as _sp, sys as _sys
+            for pkg in pkgs:
                 try:
-                    probe = subprocess.run(
-                        ["ffprobe", "-v", "error", "-show_entries",
-                         "format=duration", "-of", "default=nw=1:nk=1", path],
-                        capture_output=True, text=True, timeout=10,
-                    )
-                    total_dur = float(probe.stdout.strip())
-                    total_samples = int(total_dur * 22050)
-                except Exception:
-                    total_samples = 22050 * 3600  # 최대 1시간 가정
+                    __import__(pkg)
+                except ImportError:
+                    _sp.check_call(
+                        [_sys.executable, "-m", "pip", "install", pkg, "-q"],
+                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
 
-                chunk_samples = max(1, total_samples // N_PTS)
-                BYTES_PER_SAMPLE = 4
-                CHUNK_BYTES = chunk_samples * BYTES_PER_SAMPLE
+        def _worker():
+            import traceback
+            try:
+                _ensure_pip("librosa", "numpy", "soundfile", "audioread")
+                import librosa, numpy as np
 
-                # 중간 결과 전송 간격 (매 500포인트마다 UI 갱신)
+                # 22050Hz 모노로 로드 (mp3/wav/flac/ogg/m4a 전부 지원)
+                y, sr = librosa.load(path, sr=22050, mono=True)
+                total  = len(y)
+                hop    = max(1, total // N_PTS)
+
+                # librosa.util.frame: 버전에 따라 shape (frame_length, n_frames)
+                frames = librosa.util.frame(y, frame_length=hop, hop_length=hop)
+                # 항상 axis=0이 frame_length, axis=1이 n_frames
+                if frames.ndim == 1:
+                    frames = frames.reshape(-1, 1)
+
+                peak    = np.max(np.abs(frames), axis=0)   # (n_frames,)
+                rms     = np.sqrt(np.mean(frames ** 2, axis=0))
+                amp_arr = np.clip(peak * 0.6 + rms * 2.5, 0.0, 1.0)
+                n_frames = int(amp_arr.shape[0])
+
+                # x: 0~1 시간축 비율
+                pts = [(i / max(1, n_frames - 1), float(amp_arr[i]))
+                       for i in range(n_frames)]
+
                 UPDATE_EVERY = 500
-
-                pts      = []
-                buf      = b""
-                pt_idx   = 0
-                samples_acc = array.array("f")
-
-                while True:
-                    chunk = proc.stdout.read(CHUNK_BYTES * 4)  # 작게 읽어 GIL 자주 해제
-                    if not chunk:
-                        break
-                    buf += chunk
-                    while len(buf) >= CHUNK_BYTES:
-                        seg_raw = buf[:CHUNK_BYTES]
-                        buf     = buf[CHUNK_BYTES:]
-                        seg = array.array("f")
-                        seg.frombytes(seg_raw)
-                        peak = max(abs(v) for v in seg)
-                        rms  = math.sqrt(sum(v*v for v in seg) / len(seg))
-                        amp  = min(peak * 0.6 + rms * 2.5, 1.0)
-                        pts.append((pt_idx / N_PTS, amp))
-                        pt_idx += 1
-                        # 중간 갱신
-                        if len(pts) % UPDATE_EVERY == 0:
-                            snapshot = list(pts)
-                            def _partial(s=snapshot):
-                                if self.media_path == path:
-                                    self._waveform_pts = s
-                                    self._pb_redraw()
-                            self.after(0, _partial)
-
-                proc.wait()
-
-                # 나머지 버퍼 처리
-                if len(buf) >= BYTES_PER_SAMPLE:
-                    n = (len(buf) // BYTES_PER_SAMPLE)
-                    seg = array.array("f")
-                    seg.frombytes(buf[:n * BYTES_PER_SAMPLE])
-                    peak = max(abs(v) for v in seg)
-                    rms  = math.sqrt(sum(v*v for v in seg) / len(seg))
-                    amp  = min(peak * 0.6 + rms * 2.5, 1.0)
-                    pts.append((pt_idx / N_PTS, amp))
+                for i in range(UPDATE_EVERY, len(pts), UPDATE_EVERY):
+                    snapshot = pts[:i]
+                    def _partial(s=snapshot):
+                        if self.media_path == path:
+                            self._waveform_pts = s
+                            self._pb_redraw()
+                    self.after(0, _partial)
 
                 def _apply():
                     if self.media_path == path:
@@ -5361,6 +5589,7 @@ class SRTEditor(tk.Tk):
                 self.after(0, _apply)
 
             except Exception:
+                traceback.print_exc()   # 콘솔에 오류 출력
                 def _done():
                     self._wf_loading = False
                     self._pb_redraw()
@@ -5523,7 +5752,7 @@ class SRTEditor(tk.Tk):
         self._pb_redraw()
         if was_playing:
             self.btn_play.configure(text="⏸")
-            # ffplay 재시작 안정화 후 poll 시작
+            # 재생 안정화 후 poll 시작
             self.after(150, self._start_progress_poll)
 
     def _on_seek_drag(self, val):
