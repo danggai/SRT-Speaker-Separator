@@ -1,5 +1,109 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog, colorchooser
+import subprocess, sys
+
+# ── 필수 패키지 자동 설치 (앱 시작 시 1회) ─────────────────────────────
+def _bootstrap_packages():
+    """Pillow, tkinterdnd2, pygame, mutagen, librosa 미설치 시 자동 pip install."""
+    _REQUIRED = [
+        ("PIL",         "Pillow"),
+        ("tkinterdnd2", "tkinterdnd2"),
+        ("pygame",      "pygame"),
+        ("mutagen",     "mutagen"),
+        ("librosa",     "librosa"),
+        ("soundfile",   "soundfile"),
+        ("audioread",   "audioread"),
+        ("numpy",       "numpy"),
+    ]
+    missing = []
+    for import_name, pip_name in _REQUIRED:
+        try:
+            __import__(import_name)
+        except ImportError:
+            missing.append(pip_name)
+
+    if not missing:
+        return
+
+    # 설치 전 사용자 안내 (tkinter 윈도우 띄우기)
+    root = tk.Tk()
+    root.withdraw()
+    ok = messagebox.askyesno(
+        "필수 패키지 설치",
+        f"다음 패키지가 설치되어 있지 않습니다:\n\n"
+        f"  {', '.join(missing)}\n\n"
+        "지금 자동으로 설치할까요?\n"
+        "(인터넷 연결 필요, 수 분 소요될 수 있습니다)",
+        parent=root
+    )
+    root.destroy()
+    if not ok:
+        sys.exit(0)
+
+    # 설치 진행 창
+    prog_root = tk.Tk()
+    prog_root.title("패키지 설치 중...")
+    prog_root.geometry("380x110")
+    prog_root.resizable(False, False)
+    lbl = tk.Label(prog_root, text="설치 준비 중...", font=("", 10), pady=16)
+    lbl.pack()
+    bar = ttk.Progressbar(prog_root, mode="indeterminate", length=320)
+    bar.pack()
+    bar.start(10)
+    prog_root.update()
+
+    errors = []
+    for i, pkg in enumerate(missing):
+        lbl.configure(text=f"설치 중: {pkg}  ({i+1}/{len(missing)})")
+        prog_root.update()
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", pkg, "-q"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except subprocess.CalledProcessError:
+            # --user 재시도
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", pkg, "-q", "--user"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                )
+            except subprocess.CalledProcessError as e:
+                errors.append(pkg)
+
+    bar.stop()
+    prog_root.destroy()
+
+    if errors:
+        root2 = tk.Tk()
+        root2.withdraw()
+        messagebox.showerror(
+            "설치 실패",
+            f"다음 패키지 설치에 실패했습니다:\n{', '.join(errors)}\n\n"
+            "수동으로 설치 후 다시 실행해주세요:\n"
+            f"pip install {' '.join(errors)}",
+            parent=root2
+        )
+        root2.destroy()
+        sys.exit(1)
+
+    # 설치 완료 → 재시작
+    root3 = tk.Tk()
+    root3.withdraw()
+    messagebox.showinfo("설치 완료",
+        "패키지 설치가 완료됐습니다.\n앱을 재시작합니다.",
+        parent=root3)
+    root3.destroy()
+    _frozen = getattr(sys, "frozen", False)
+    if _frozen:
+        subprocess.Popen([sys.executable])
+    else:
+        subprocess.Popen([sys.executable] + sys.argv)
+    sys.exit(0)
+
+_bootstrap_packages()
+# ─────────────────────────────────────────────────────────────────────────
+
 import re
 import os
 import copy
@@ -98,32 +202,6 @@ def display_to_regex(display: str) -> str:
     return regex
 
 
-def regex_to_display(regex: str) -> str:
-    """내부 정규식을 사용자 표시 패턴으로 역변환 (최선 노력)."""
-    # 기본 패턴 [%] & 이면 그대로 반환
-    if regex == DEFAULT_SPEAKER_PATTERN:
-        return DEFAULT_DISPLAY_PATTERN
-    # 역변환은 간단히: 캡처그룹 → %, 나머지는 unescape
-    try:
-        # ^re.escape(prefix)(.+?)re.escape(between)\s* 역산
-        inner = regex
-        if inner.startswith("^"):
-            inner = inner[1:]
-        if inner.endswith(r"\s*"):
-            inner = inner[: -len(r"\s*")]
-        # (.+?) 또는 ([^\n]+?) 를 % 로
-        inner = re.sub(r'\([^)]+\)', '%', inner, count=1)
-        # re.escape 된 특수문자 복원
-        inner = inner.replace(r'\[', '[').replace(r'\]', ']') \
-                     .replace(r'\.', '.').replace(r'\(', '(') \
-                     .replace(r'\)', ')').replace(r'\s', ' ')
-        return inner.strip() + " &"
-    except Exception:
-        return DEFAULT_DISPLAY_PATTERN
-
-# ─────────────────────────────────────────────
-#  한글 지원 폰트 탐색
-# ─────────────────────────────────────────────
 def _pick_font(root=None):
     """시스템에서 한글 지원 폰트를 찾아 반환.
     root가 주어지면 해당 Tk 인스턴스 기준으로 폰트 목록 조회 (빈 창 없음).
@@ -346,7 +424,12 @@ class MediaPlayer:
         return self._duration
 
     def play(self):
-        if not self._filepath or self._playing:
+        if not self._filepath:
+            return
+        if self._paused:
+            self._resume()
+            return
+        if self._playing:
             return
         self._start_play(self._position)
 
@@ -754,7 +837,6 @@ class _ColorPickerDialog:
 
     @staticmethod
     def _rgb2hsv(r, g, b):
-        import colorsys
         return colorsys.rgb_to_hsv(r/255, g/255, b/255)
 
     @staticmethod
@@ -766,7 +848,6 @@ class _ColorPickerDialog:
             b = int(hex_color[4:6], 16)
         except (ValueError, IndexError):
             return 0.6, 0.5, 0.8
-        import colorsys
         return colorsys.rgb_to_hsv(r/255, g/255, b/255)
 
 
@@ -992,17 +1073,6 @@ class SRTEditor(tk.Tk):
                 self.focus_set()
             return wrapper
 
-        def _no_focus_btn(parent, **kw):
-            """포커스를 절대 갖지 않는 버튼."""
-            btn = ttk.Button(parent, takefocus=0, **kw)
-            btn.bind("<FocusIn>", lambda e: self.focus_set())
-            return btn
-
-        # 컴팩트 버튼 그룹 (자막추가 / 실행취소 / 다시실행)
-        _btn_group = tk.Frame(top, bg=BG3,
-                              highlightthickness=1, highlightbackground=BORDER)
-        _btn_group.pack(side="left", padx=(0, 4), pady=10)
-
         def _mini_btn(parent, text, cmd, tip):
             b = tk.Button(parent, text=text, command=cmd,
                           bg=BG3, fg=FG, relief="flat", bd=0,
@@ -1013,6 +1083,11 @@ class SRTEditor(tk.Tk):
             # 버튼 사이 구분선
             Tooltip(b, tip, delay=500)
             return b
+
+        # 콤팩트 버튼 그룹 (자막추가 / 실행취소 / 다시실행)
+        _btn_group = tk.Frame(top, bg=BG3,
+                              highlightthickness=1, highlightbackground=BORDER)
+        _btn_group.pack(side="left", padx=(0, 4), pady=10)
 
         _mini_btn(_btn_group, "＋",
                   _defocus(lambda: self.add_row(getattr(self, "_last_focused_idx", None))),
@@ -1028,8 +1103,19 @@ class SRTEditor(tk.Tk):
 
         tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
 
-        # 업데이트 배지 위치
+        # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
+        import webbrowser as _wb_top
+        self._update_btn = tk.Button(
+            top, text="🆕  새로운 버전!",
+            bg="#1E3A1E", fg="#4CAF50",
+            relief="flat", bd=0, cursor="hand2",
+            font=(FONT_FAMILY, 9, "bold"),
+            padx=10, pady=4,
+            activebackground="#162E16", activeforeground="#6FCF6F"
+        )
+        # 처음엔 숨김 — 신버전 감지 시 command 설정 후 pack
         self._update_badge_anchor = top
+        self._update_badge_latest = None
 
         # ── 우측 버튼 그룹 ───────────────────────────
         def _right_group(*items):
@@ -1238,9 +1324,17 @@ class SRTEditor(tk.Tk):
             text="🎵  음성/영상 파일을 여기에 드래그하거나 버튼으로 여세요",
             bg=MEDIA_BG, fg=FG_DIM, font=(FONT_FAMILY, 9), anchor="w")
         self.lbl_media.pack(side="left", fill="x", expand=True)
-        ttk.Button(top_row, text="📁  미디어 열기",
-                   style="Media.TButton",
-                   command=self.open_media).pack(side="right", padx=(8, 0))
+        _med_wrap = tk.Frame(top_row, bg="#1A1A2A",
+                             highlightthickness=1, highlightbackground="#252535")
+        _med_wrap.pack(side="right", padx=(8, 0))
+        _med_btn = tk.Button(_med_wrap, text="♪  음성 파일 열기",
+                             bg="#1A1A2A", fg=FG, relief="flat", bd=0,
+                             font=(FONT_FAMILY, 10), padx=8, pady=2,
+                             cursor="hand2", takefocus=0,
+                             activebackground=BG2, activeforeground=FG,
+                             command=self.open_media)
+        _med_btn.pack()
+        Tooltip(_med_btn, "음성/영상 파일 열기", delay=500)
 
         # ── 파형 Canvas (100px) ────────────────
         self.media_progress_var = tk.DoubleVar(value=0)
@@ -1289,42 +1383,44 @@ class SRTEditor(tk.Tk):
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
         btn_group.pack(side="left", expand=True)
 
-        btn_cfg = dict(bg="#2A2A2A", fg=FG, relief="flat", bd=0, cursor="hand2",
-                       activebackground="#3A3A3A", activeforeground=FG,
-                       font=(FONT_FAMILY, 12), width=3, pady=4)
+        # 재생 컨트롤 — 배경 MEDIA_BG와 동일, 테두리 없음
+        _pc = dict(bg=MEDIA_BG, fg=FG, relief="flat", bd=0, cursor="hand2",
+                   activebackground=BG3, activeforeground=FG,
+                   font=(FONT_FAMILY, 11), padx=10, pady=3, takefocus=0)
 
-        self.btn_stop = tk.Button(btn_group, text="⏮", **btn_cfg,
+        self.btn_stop = tk.Button(btn_group, text="⏮", **_pc,
                   command=self._media_stop)
-        self.btn_stop.pack(side="left", padx=3)
-        self.btn_prev = tk.Button(btn_group, text="◀◀", **btn_cfg,
+        self.btn_stop.pack(side="left", padx=1)
+        self.btn_prev = tk.Button(btn_group, text="⏪", **_pc,
                   command=lambda: self._media_seek(-5))
-        self.btn_prev.pack(side="left", padx=3)
+        self.btn_prev.pack(side="left", padx=1)
 
         self.btn_play = tk.Button(btn_group, text="▶",
                                   bg=ACCENT, fg="white",
-                                  font=(FONT_FAMILY, 14, "bold"),
+                                  font=(FONT_FAMILY, 13, "bold"),
                                   relief="flat", bd=0, cursor="hand2",
                                   activebackground="#7B5FB4", activeforeground="white",
-                                  width=3, pady=4, command=self._media_play_pause)
-        self.btn_play.pack(side="left", padx=5)
+                                  padx=14, pady=3, takefocus=0,
+                                  command=self._media_play_pause)
+        self.btn_play.pack(side="left", padx=6)
 
-        self.btn_next = tk.Button(btn_group, text="▶▶", **btn_cfg,
+        self.btn_next = tk.Button(btn_group, text="⏩", **_pc,
                   command=lambda: self._media_seek(+5))
-        self.btn_next.pack(side="left", padx=3)
+        self.btn_next.pack(side="left", padx=1)
 
-        # 줌 컨트롤
-        zoom_frame = tk.Frame(ctrl, bg=MEDIA_BG)
-        zoom_frame.pack(side="left", padx=(10, 0))
-        tk.Button(zoom_frame, text="−", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
-                  font=(FONT_FAMILY, 11), width=2, pady=2, cursor="hand2",
-                  activebackground="#3A3A3A",
+        # 줌 컨트롤 — 주변 배경과 동일색, 테두리 없음
+        zoom_wrap = tk.Frame(ctrl, bg=MEDIA_BG)
+        zoom_wrap.pack(side="left", padx=(12, 0))
+        tk.Button(zoom_wrap, text="−", bg=MEDIA_BG, fg=FG, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 10), padx=6, pady=2, cursor="hand2",
+                  activebackground=BG3,
                   command=self._wf_zoom_out).pack(side="left")
-        self.lbl_zoom = tk.Label(zoom_frame, text="1×", bg=MEDIA_BG, fg=FG_DIM,
+        self.lbl_zoom = tk.Label(zoom_wrap, text="1×", bg=MEDIA_BG, fg=FG_DIM,
                                  font=(FONT_FAMILY, 9), width=4)
-        self.lbl_zoom.pack(side="left", padx=2)
-        tk.Button(zoom_frame, text="+", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
-                  font=(FONT_FAMILY, 11), width=2, pady=2, cursor="hand2",
-                  activebackground="#3A3A3A",
+        self.lbl_zoom.pack(side="left")
+        tk.Button(zoom_wrap, text="+", bg=MEDIA_BG, fg=FG, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 10), padx=6, pady=2, cursor="hand2",
+                  activebackground=BG3,
                   command=self._wf_zoom_in).pack(side="left")
 
         self.lbl_dur = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
@@ -1505,9 +1601,9 @@ class SRTEditor(tk.Tk):
                                 int(fb*0.30+BG_B*0.70))
                     fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
                     # 블록 채우기 (1px 위아래 여백)
-                    draw.rectangle([x1, sub_top+2, x2, sub_bot-2], fill=fill_hex)
-                    # 좌측 색상 강조선
-                    draw.rectangle([x1, sub_top+2, x1+2, sub_bot-2], fill=raw)
+                    draw.rectangle([x1+1, sub_top+3, x2, sub_bot-3], fill=fill_hex)
+                    # 좌측 색상 강조선 (1px)
+                    draw.line([x1+1, sub_top+3, x1+1, sub_bot-3], fill=raw, width=1)
 
                     # 텍스트 (폭이 허용되는 만큼)
                     box_w = x2 - x1 - 6
@@ -1590,12 +1686,6 @@ class SRTEditor(tk.Tk):
                     for y in range(y0_bot, y1_bot):
                         pixels[x, y] = col
 
-                    # 엣지선 (상단 채널 꼭대기)
-                    ey = wf_mid - px
-                    if wf_top <= ey < wf_mid:
-                        edge = (0x9B,0x7F,0xD4) if x <= head_x else (0x44,0x40,0x6A)
-                        pixels[x, ey] = edge
-
             elif dur_ > 0:
                 draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
                 if head_x > 0:
@@ -1667,92 +1757,6 @@ class SRTEditor(tk.Tk):
                          text="파형 분석 중...", fill="#555577", font=(FONT_FAMILY, 9))
 
         self._wf_hsb_redraw()
-
-    @staticmethod
-    def _blend_color(fg_hex, bg_hex, alpha):
-        def parse(h):
-            h = h.lstrip("#")
-            return int(h[0:2],16), int(h[2:4],16), int(h[4:6],16)
-        try:
-            fr,fg_,fb = parse(fg_hex); br,bg_,bb = parse(bg_hex)
-            return f"#{int(fr*alpha+br*(1-alpha)):02x}{int(fg_*alpha+bg_*(1-alpha)):02x}{int(fb*alpha+bb*(1-alpha)):02x}"
-        except Exception:
-            return fg_hex
-
-    _WF_HANDLE_W = 3
-
-    def _wf_hit_test(self, x, y):
-        dur = self.player.duration
-        cache = getattr(self, "_ts_cache", [])
-        if not self.subtitles or not cache:
-            return None
-        if dur <= 0:
-            ends = [t_e for _, t_e in cache if t_e is not None]
-            dur  = max(ends) if ends else 0
-        if dur <= 0:
-            return None
-        cw      = self._pb_canvas.winfo_width()
-        SUB_H   = 26
-        start_r, end_r = self._wf_view_range()
-        HW = max(self._WF_HANDLE_W + 3, 7)
-
-        # ── Pass 1: 핸들 우선 ────────────────────
-        if y <= SUB_H:
-            # 모든 자막의 핸들 후보를 수집
-            candidates = []   # (dist, side, i, x_handle)
-            for i in range(len(cache)):
-                t_s, t_e = cache[i]
-                if t_s is None or t_e is None:
-                    continue
-                r_s, r_e = t_s/dur, t_e/dur
-                if r_e < start_r or r_s > end_r:
-                    continue
-                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-                d_start = abs(x - x1)
-                d_end   = abs(x - x2)
-                if d_start <= HW:
-                    candidates.append((d_start, "head_start", i, x1))
-                if d_end <= HW:
-                    candidates.append((d_end, "head_end", i, x2))
-
-            if candidates:
-                # 거리 동률 시: x 기준으로 경계선 좌/우 판별
-                # 같은 거리의 head_end vs head_start가 공존하면
-                # 클릭 x가 경계선보다 왼쪽 → head_end 우선
-                # 클릭 x가 경계선보다 오른쪽 → head_start 우선
-                min_dist = min(c[0] for c in candidates)
-                tied = [c for c in candidates if c[0] <= min_dist + 1]
-
-                if len(tied) == 1:
-                    return (tied[0][1], tied[0][2])
-
-                # 동률 다수: 클릭 x 기준으로 좌/우 판별
-                # x 기준 왼쪽 → head_end(왼쪽 클립 끝) 우선
-                # x 기준 오른쪽 → head_start(오른쪽 클립 시작) 우선
-                for dist, side, i, xh in tied:
-                    if side == "head_start" and xh >= x:
-                        return (side, i)
-                for dist, side, i, xh in tied:
-                    if side == "head_end" and xh <= x:
-                        return (side, i)
-                # fallback: 그냥 가장 가까운 것
-                tied.sort(key=lambda c: c[0])
-                return (tied[0][1], tied[0][2])
-
-        # ── Pass 2: body ─────────────────────────
-        for i in range(len(cache)-1, -1, -1):
-            t_s, t_e = cache[i]
-            if t_s is None or t_e is None:
-                continue
-            r_s, r_e = t_s/dur, t_e/dur
-            if r_e < start_r or r_s > end_r:
-                continue
-            x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-            x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-            if x1 <= x <= x2:
-                return ("sub_body", i)
-        return None
 
     def _wf_on_motion(self, event):
         """마우스 위치에 따라 커서 변경 + hover 자막 추적."""
@@ -2178,24 +2182,13 @@ class SRTEditor(tk.Tk):
 
 
     def _check_update_async(self):
-        """백그라운드에서 최신 릴리즈 태그를 확인하고 새 버전 있으면 아이콘 표시."""
-        # 이미 설정창 등에서 캐시된 버전이 있으면 즉시 배지 표시
-        cached = getattr(self, "_latest_version_cache", None)
-        if cached:
-            def _parse(v):
-                try: return tuple(int(x) for x in v.strip().lstrip("v").split("."))
-                except: return (0,)
-            if _parse(cached) > _parse(APP_VERSION):
-                self._show_update_badge(cached)
-                return
-        import threading
-        threading.Thread(target=self._fetch_latest_version, daemon=True).start()
+        import threading as _threading
+        _threading.Thread(target=self._fetch_latest_version, daemon=True).start()
 
     def _fetch_latest_version(self):
         import urllib.request, json, pathlib, datetime
 
         log_path = pathlib.Path.home() / ".srt_speaker_update.log"
-
         def _log(msg):
             try:
                 with open(log_path, "a", encoding="utf-8") as f:
@@ -2209,96 +2202,72 @@ class SRTEditor(tk.Tk):
             except Exception:
                 return (0,)
 
-        def _check(latest_raw):
-            latest = latest_raw.lstrip("v").strip()
-            if not latest:
-                return
-            self._latest_version_cache = latest  # 설정창 등 다른 곳에서 재사용
-            _log(f"latest={latest!r}  current={APP_VERSION!r}  newer={_parse(latest) > _parse(APP_VERSION)}")
-            if _parse(latest) > _parse(APP_VERSION):
-                self.after(0, lambda v=latest: self._show_update_badge(v))
-
         headers = {
             "User-Agent": "Mozilla/5.0 SRT-Speaker-Separator",
             "Accept": "application/vnd.github+json",
         }
 
-        # 1온차: /releases/latest (릴리즈 있을 때)
-        try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/danggai/SRT-Speaker-Separator/releases/latest",
-                headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                data = json.loads(resp.read().decode())
-            tag = data.get("tag_name", "")
-            _log(f"releases/latest -> tag={tag!r}")
-            if tag:
-                _check(tag)
-                return
-        except Exception as e:
-            _log(f"releases/latest FAIL: {e}")
+        latest = None
 
-        # 2온차: /git/refs/tags (태그만 있을 때 — 가장 안정적)
+        # 1차: git/refs/tags (가장 안정적)
         try:
             req = urllib.request.Request(
                 "https://api.github.com/repos/danggai/SRT-Speaker-Separator/git/refs/tags",
                 headers=headers)
             with urllib.request.urlopen(req, timeout=6) as resp:
                 refs = json.loads(resp.read().decode())
-            _log(f"git/refs/tags -> {len(refs)} refs, last={refs[-1]['ref'] if refs else 'none'}")
             if refs:
-                tag = refs[-1]["ref"].split("/")[-1]
-                _check(tag)
-                return
+                latest = refs[-1]["ref"].split("/")[-1].lstrip("v")
+                _log(f"git/refs/tags → {latest}")
         except Exception as e:
             _log(f"git/refs/tags FAIL: {e}")
 
-        # 3온차: /tags API
-        try:
-            req = urllib.request.Request(
-                GITHUB_LATEST_API, headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                tags = json.loads(resp.read().decode())
-            _log(f"/tags API -> {[t['name'] for t in tags[:3]]}")
-            if tags:
-                _check(tags[0]["name"])
-                return
-        except Exception as e:
-            _log(f"/tags API FAIL: {e}")
+        # 2차: /tags API
+        if not latest:
+            try:
+                req = urllib.request.Request(
+                    "https://api.github.com/repos/danggai/SRT-Speaker-Separator/tags",
+                    headers=headers)
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    tags = json.loads(resp.read().decode())
+                if tags:
+                    latest = tags[0]["name"].lstrip("v")
+                    _log(f"/tags → {latest}")
+            except Exception as e:
+                _log(f"/tags FAIL: {e}")
 
-        _log("모든 엔드포인트 실패")
+        if not latest:
+            _log("모든 엔드포인트 실패")
+            return
+
+        self._latest_version_cache = latest
+        _log(f"current={APP_VERSION} latest={latest} newer={_parse(latest) > _parse(APP_VERSION)}")
+
+        if _parse(latest) > _parse(APP_VERSION):
+            self.after(0, lambda v=latest: self._show_update_badge(v))
 
     def _show_update_badge(self, latest_ver):
-        """툴바에 '새 버전!' 버튼 추가."""
-        if getattr(self, "_update_btn", None):
-            return  # 중복 방지
-
         import webbrowser
+        try:
+            def _on_click(v=latest_ver):
+                ans = messagebox.askyesno(
+                    "업데이트 알림",
+                    f"새로운 버전이 있습니다!\n\n"
+                    f"현재 버전: v{APP_VERSION}\n"
+                    f"최신 버전: v{v}\n\n"
+                    "GitHub 릴리즈 페이지로 이동할까요?",
+                    parent=self
+                )
+                if ans:
+                    webbrowser.open(GITHUB_TAGS_URL)
 
-        def _on_click(v=latest_ver):
-            ans = messagebox.askyesno(
-                "업데이트 알림",
-                f"새로운 버전이 있습니다!\n\n"
-                f"현재 버전: v{APP_VERSION}\n"
-                f"최신 버전: v{v}\n\n"
-                "GitHub 릴리즈 페이지로 이동할까요?",
-                parent=self
-            )
-            if ans:
-                webbrowser.open(GITHUB_TAGS_URL)
-
-        btn = tk.Button(
-            self._update_badge_anchor,
-            text="🆕  새로운 버전!",
-            bg="#1E3A1E", fg="#4CAF50",
-            relief="flat", bd=0, cursor="hand2",
-            font=(FONT_FAMILY, 9, "bold"),
-            padx=10, pady=4,
-            activebackground="#162E16", activeforeground="#6FCF6F",
-            command=_on_click
-        )
-        btn.pack(side="left", padx=(4, 0), pady=8)
-        self._update_btn = btn
+            btn = self._update_btn
+            btn.configure(command=_on_click)
+            if not btn.winfo_ismapped():
+                btn.pack(side="left", padx=(4, 0), pady=8)
+                btn.lift()
+        except Exception as e:
+            import traceback; traceback.print_exc()
 
     def _open_settings(self):
         """설정 창 (탭: 패턴 / 화자 분석)"""
@@ -2905,6 +2874,9 @@ class SRTEditor(tk.Tk):
 
     def _open_diarize_dialog(self):
         """툴바 버튼 → 설정창 화자 분석 탭 직접 열기."""
+        if not self.media_path:
+            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 불러오세요.", parent=self)
+            return
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("화자 자동 분석")
@@ -2921,35 +2893,34 @@ class SRTEditor(tk.Tk):
 
     def _save_diarize_settings(self):
         """현재 화자 분석 설정을 파일에 저장."""
-        try:
-            tok_var = getattr(self, "_hf_token_var", None)
-            hf_tok  = tok_var.get().strip() if tok_var else getattr(self, "_hf_token", "")
-            num_var = getattr(self, "_diarize_num_spk", None)
-            num_spk = num_var.get() if num_var else getattr(self, "_diarize_num_spk_val", 0)
-            mode_var = getattr(self, "_diarize_mode_var", None)
-            mode    = mode_var.get() if mode_var else getattr(self, "_diarize_mode_init", "balanced")
+        # tk 위젯은 창 닫힌 후 소멸될 수 있으므로 try/except로 각각 읽기
+        def _safe_get(var, fallback):
+            try:
+                return var.get() if var else fallback
+            except Exception:
+                return fallback
 
-            _cfg = _load_config()
-            if hf_tok:
-                _cfg["hf_token"] = hf_tok
-                _add_recent_token(_cfg, hf_tok)
-                self._hf_token = hf_tok
-                self._recent_tokens = _cfg.get("recent_tokens", [])
-            device_var = getattr(self, "_diarize_device_var", None)
-            device_pref = device_var.get() if device_var else getattr(self, "_diarize_device_init", "auto")
-            batch_var  = getattr(self, "_diarize_batch_var", None)
-            batch_idx  = batch_var.get() if batch_var else 3
-            _cfg["num_speakers"]   = num_spk
-            _cfg["diarize_mode"]   = mode
-            _cfg["diarize_device"] = device_pref
-            _cfg["diarize_batch"]  = batch_idx
-            self._diarize_num_spk_val = num_spk
-            self._diarize_mode_init   = mode
-            self._diarize_device_init = device_pref
-            self._diarize_batch_init  = batch_idx
-            _save_config(_cfg)
-        except Exception:
-            pass
+        hf_tok      = _safe_get(getattr(self, "_hf_token_var",     None), getattr(self, "_hf_token", "")).strip()
+        num_spk     = _safe_get(getattr(self, "_diarize_num_spk",  None), getattr(self, "_diarize_num_spk_val", 0))
+        mode        = _safe_get(getattr(self, "_diarize_mode_var", None), getattr(self, "_diarize_mode_init", "balanced"))
+        device_pref = _safe_get(getattr(self, "_diarize_device_var", None), getattr(self, "_diarize_device_init", "auto"))
+        batch_idx   = _safe_get(getattr(self, "_diarize_batch_var", None), 3)
+
+        _cfg = _load_config()
+        if hf_tok:
+            _cfg["hf_token"] = hf_tok
+            _add_recent_token(_cfg, hf_tok)
+            self._hf_token      = hf_tok
+            self._recent_tokens = _cfg.get("recent_tokens", [])
+        _cfg["num_speakers"]   = num_spk
+        _cfg["diarize_mode"]   = mode
+        _cfg["diarize_device"] = device_pref
+        _cfg["diarize_batch"]  = batch_idx
+        self._diarize_num_spk_val = num_spk
+        self._diarize_mode_init   = mode
+        self._diarize_device_init = device_pref
+        self._diarize_batch_init  = batch_idx
+        _save_config(_cfg)
 
     def _run_diarize_whisperx(self):
         """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
@@ -3209,7 +3180,6 @@ class SRTEditor(tk.Tk):
                 _set_status("whisperx 임포트 중...", "import")
                 import whisperx
                 import torch
-                import os
 
                 # ── GPU 진단 ──────────────────────────────────────────
                 _cuda_build   = torch.cuda.is_available()
@@ -3447,59 +3417,12 @@ class SRTEditor(tk.Tk):
                 # huggingface_hub의 다운로드 콜백으로 실시간 진행률 수신
                 _dl_state = {"active": False, "desc": "", "pct": 0.0}
 
-                def _hf_dl_callback(info):
-                    """huggingface_hub tqdm 콜백 → 진행창 업데이트."""
-                    try:
-                        downloaded = info.get("downloaded", 0)
-                        total      = info.get("total", 0)
-                        fname      = info.get("filename", "")
-                        fname      = fname.split("/")[-1] if fname else ""
-                        if total and total > 0:
-                            pct = downloaded / total * 100
-                            mb_done = downloaded / 1e6
-                            mb_tot  = total / 1e6
-                            _dl_state["active"] = True
-                            _dl_state["pct"]    = pct
-                            msg = (f"모델 다운로드 중... {fname}  {mb_done:.0f} / {mb_tot:.0f} MB  ({pct:.0f}%)")
-                            _set_status(msg, None)   # step_key 안 바꾸고 텍스트만
-                    except Exception:
-                        pass
-
-                try:
-                    from huggingface_hub import hf_hub_download as _orig_dl
-                    import huggingface_hub as _hf
-                    # 환경 변수로 tqdm 끄고 파일 단위 다운로드 후킹
-                    _orig_snapshot = _hf.snapshot_download
-
-                    def _patched_snapshot(*a, **kw):
-                        """snapshot_download 래핑 → 파일별 진행 표시."""
-                        import os as _os
-                        repo_id = a[0] if a else kw.get("repo_id", "")
-                        _set_status(f"모델 다운로드 중: {repo_id}", None)
-                        # local_files_only=True 가능하면 스킵
-                        try:
-                            kw["local_files_only"] = True
-                            return _orig_snapshot(*a, **kw)
-                        except Exception:
-                            kw.pop("local_files_only", None)
-
-                        # 실제 다운로드: 파일 목록 → 개별 다운로드 + 진행 표시
-                        from huggingface_hub import list_repo_files, hf_hub_download
-                        try:
-                            files = list(list_repo_files(repo_id,
-                                token=kw.get("token") or kw.get("use_auth_token")))
-                        except Exception:
-                            files = []
-
-                        total_files = len(files)
-                        for fi, fname in enumerate(files, 1):
-                            _set_status(
-                                f"다운로드 {fi}/{total_files}: {fname.split('/')[-1]}", None)
-                        return _orig_snapshot(*a, **kw)
-
-                    _hf.snapshot_download = _patched_snapshot
-                except Exception:
-                    pass  # 후킹 실패해도 계속 진행
+                def _progress_ticker(step_key, est_sec):
+                    """0.5초마다 세부 진행률 업데이트."""
+                    t0 = _time.time()
+                    while _prog_state["running"] and _prog_state["step_key"] == step_key:
+                        _tick_progress(step_key, _time.time() - t0, est_sec)
+                        _time.sleep(0.5)
 
                 _set_status(f"Whisper 모델 로드 중... ({device} / {wmodel})", "model")
                 model = whisperx.load_model(
@@ -3511,7 +3434,9 @@ class SRTEditor(tk.Tk):
                 _set_status("음성 로드 중...", "audio")
                 audio = whisperx.load_audio(self.media_path)
 
-                # 오디오 길이 기반 단계별 예상시간 계산 (초)
+                import threading as _threading
+
+                # 오디오 길이 기반 단계별 예상시간 계산
                 audio_dur = len(audio) / 16000.0
                 if device == "cuda":
                     spd = 20.0 if "turbo" in wmodel else 12.0
@@ -3520,7 +3445,6 @@ class SRTEditor(tk.Tk):
                 _est_transcribe = audio_dur / spd
                 _est_align      = audio_dur / 30.0
                 _est_diarize    = audio_dur / 8.0
-                # ETA 계산에 사용할 단계별 예상시간 등록
                 _prog_state["stage_estimates"] = {
                     "import":    2.0,
                     "model":     15.0,
@@ -3530,15 +3454,6 @@ class SRTEditor(tk.Tk):
                     "diarize":   _est_diarize,
                     "map":       2.0,
                 }
-
-                import threading as _threading
-
-                def _progress_ticker(step_key, est_sec):
-                    """0.5초마다 세부 진행률 업데이트."""
-                    t0 = _time.time()
-                    while _prog_state["running"] and _prog_state["step_key"] == step_key:
-                        _tick_progress(step_key, _time.time() - t0, est_sec)
-                        _time.sleep(0.5)
 
                 _set_status("음성 인식 중...", "transcribe")
                 _t = _threading.Thread(
@@ -4047,8 +3962,9 @@ class SRTEditor(tk.Tk):
 
     # ── 자막 테이블 (가상 스크롤) ─────────────
     # 컬럼 정의: num / ts_s / ts_e / content(가변) / speaker / del
-    _COL_IDS   = ["num", "ts_s", "ts_e", "speaker", "del"]
-    _COL_DEF_W = {"num": 40, "ts_s": 132, "ts_e": 132, "speaker": 220, "del": 30}
+    _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
+    _COL_IDS   = ["num", "ts_s", "ts_e", "speaker"]
+    _COL_DEF_W = {"num": 40, "ts_s": 132, "ts_e": 132, "speaker": 220}
     ROW_H      = 34   # 행 높이 (px)
     _VSCROLL_BUF = 3  # 뷰포트 위아래로 미리 만들어둘 여분 행 수
 
@@ -4067,7 +3983,7 @@ class SRTEditor(tk.Tk):
         self._hdr_canvas = hdr_c
 
         _titles = {"num":"#","ts_s":"시작시간","ts_e":"종료시간",
-                   "content":"자막 내용","speaker":"화자","del":""}
+                   "content":"자막 내용","speaker":"화자"}
         self._hdr_wins = {}
         for cid in list(self._COL_IDS) + ["content"]:
             lbl = tk.Label(hdr_c, text=_titles[cid],
@@ -4262,20 +4178,6 @@ class SRTEditor(tk.Tk):
         wi["pills"] = pill_labels
         wi["pill_values"] = [""] * len(pill_labels)   # 각 pill이 나타내는 화자값 캐시
 
-        # 삭제 버튼
-        del_x = pos["del"][0]
-        del_btn = tk.Label(row, text="✕", bg=ROW_EVEN, fg="#FF6B8A",
-                           font=(FONT_FAMILY, 10), cursor="hand2", anchor="center")
-        del_btn.place(x=del_x, y=0, width=self._col_w["del"], height=h)
-        def _del_click(e, s=slot_idx):
-            self._slot_delete(s)
-            return "break"
-        del_btn.bind("<Button-1>",        lambda e: "break")
-        del_btn.bind("<ButtonRelease-1>", _del_click)
-        del_btn.bind("<Enter>",  lambda e, b=del_btn: b.configure(fg=ACCENT))
-        del_btn.bind("<Leave>",  lambda e, b=del_btn: b.configure(fg="#FF6B8A"))
-        Tooltip(del_btn, "자막 행 삭제  [Ctrl+X로 잘라내기]", delay=600)
-        wi["del"] = del_btn
         wi["_row_frame"] = row
 
         # 이벤트: 슬롯 인덱스 기준 → _slot_data로 실제 인덱스 조회
@@ -4716,7 +4618,6 @@ class SRTEditor(tk.Tk):
 
             row.configure(bg=bg)
             wi["num"].configure(bg=bg)
-            wi["del"].configure(bg=bg, activebackground=bg)
             wi["speaker"].configure(bg=bg)
 
             self._apply_col_to_slot(slot_idx, pos, cw)
@@ -4745,7 +4646,6 @@ class SRTEditor(tk.Tk):
             return
         row.configure(bg=bg)
         wi["num"].configure(bg=bg)
-        wi["del"].configure(bg=bg, activebackground=bg)
         wi["speaker"].configure(bg=bg)
         # 스크롤 중 지연 중이면 pill은 flush 때 갱신
         if getattr(self, "_pill_defer_job", None):
@@ -4843,7 +4743,6 @@ class SRTEditor(tk.Tk):
             pos[cid] = (x, self._col_w[cid]); x += self._col_w[cid]
         pos["content"] = (x, content_w);     x += content_w
         pos["speaker"] = (x, self._col_w["speaker"]); x += self._col_w["speaker"]
-        pos["del"]     = (x, self._col_w["del"])
         return pos
 
     # ── 헤더 ──────────────────────────────────
@@ -5018,7 +4917,6 @@ class SRTEditor(tk.Tk):
 
         row.configure(bg=bg)
         wi["num"].configure(bg=bg)
-        wi["del"].configure(bg=bg, activebackground=bg)
         wi["speaker"].configure(bg=bg)
         self._apply_col_to_slot(slot, pos, cw)
 
@@ -5651,15 +5549,18 @@ class SRTEditor(tk.Tk):
 
     # ── 미디어 컨트롤 ────────────────────────
     def _on_space_key(self, event):
-        """스페이스바: 자막 내용 Entry에 포커스가 있으면 무시, 그 외에는 재생/정지."""
+        """스페이스바: 자막 내용 Entry 편집 중이면 무시, 그 외 재생/정지."""
         focused = self.focus_get()
-        # 자막 내용(content) Entry인지 확인
+        # 자막 content Entry 편집 중이면 스페이스 통과
         if isinstance(focused, tk.Entry):
             for wi in self._slot_widgets:
                 if wi.get("content") is focused:
-                    return  # 자막 내용 편집 중 → 스페이스 통과
+                    return
+        # 버튼에 포커스가 있으면 앱으로 돌려서 이중 호출 방지
+        if isinstance(focused, (tk.Button, ttk.Button)):
             self.focus_set()
         self._media_play_pause()
+        return "break"
 
     def _on_left_key(self, event):
         if isinstance(self.focus_get(), tk.Entry):
@@ -5674,56 +5575,6 @@ class SRTEditor(tk.Tk):
         step = 30 if (event.state & 0x1) else 5
         self._media_seek(+step)
         return "break"
-
-    def _seek_to_adjacent_subtitle(self, direction):
-        """direction=-1: 이전 자막 시작, +1: 다음 자막 시작."""
-        cache = getattr(self, "_ts_cache", [])
-        if not cache:
-            self._media_seek(5 * direction)
-            return
-
-        pos = self.player.position
-
-        # 현재 pos에서 실제로 재생 중인 자막의 시작점을 직접 계산
-        # (_playing_rows는 폴링 지연으로 부정확할 수 있음)
-        current_rows = self._get_rows_at(pos)
-        if current_rows:
-            group_start = min(
-                cache[i][0] for i in current_rows
-                if i < len(cache) and cache[i][0] is not None
-            )
-        else:
-            # 자막 없는 구간: pos 기준으로 직전 자막 시작을 group_start로
-            before = [t_s for t_s, t_e in cache
-                      if t_s is not None and t_s <= pos]
-            group_start = max(before) if before else pos
-
-        if direction == +1:
-            candidates = [
-                t_s for t_s, t_e in cache
-                if t_s is not None and t_s > group_start + 0.01
-            ]
-            if not candidates:
-                return
-            target_sec = min(candidates)
-
-        else:  # direction == -1
-            candidates = [
-                t_s for t_s, t_e in cache
-                if t_s is not None and t_s < group_start - 0.01
-            ]
-            if not candidates:
-                target_sec = group_start
-            else:
-                target_sec = max(candidates)
-
-        # seek — 좌/우 키 이동은 현재 선택 자막을 변경하지 않음
-        was_playing = self.player.is_playing
-        self._stop_progress_poll()
-        self._do_seek(target_sec, update_selection=False)
-        if was_playing:
-            self.btn_play.configure(text="⏸")
-            self.after(150, self._start_progress_poll)
 
     def _on_arrow_up(self, event):
         if isinstance(self.focus_get(), tk.Entry):
