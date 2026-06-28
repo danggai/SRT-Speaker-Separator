@@ -540,8 +540,13 @@ class MediaPlayer:
             try:
                 self._pg.mixer.music.unpause()
                 self._paused     = False
+                self._playing    = True
                 self._start_wall = time.time()
                 self._start_pos  = self._position
+                # resume 후 watch 스레드 재시작
+                self._watch_thread = threading.Thread(
+                    target=self._watch, daemon=True)
+                self._watch_thread.start()
             except Exception:
                 self._start_play(self._position)
         elif not self._playing:
