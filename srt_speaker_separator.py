@@ -463,6 +463,16 @@ class MediaPlayer:
     def seek_to(self, pos):
         new_pos = max(0.0, min(pos, self._duration))
         was_playing = self._playing and not self._paused
+        if was_playing:
+            # 재생 중엔 set_pos로 즉시 이동 (파일 재로드 없음)
+            try:
+                self._pg.mixer.music.set_pos(new_pos)
+                self._start_wall = time.time()
+                self._start_pos  = new_pos
+                self._position   = new_pos
+                return
+            except Exception:
+                pass  # set_pos 미지원 포맷이면 fallback
         self._stop_music()
         self._position = new_pos
         if was_playing:
@@ -1044,12 +1054,17 @@ class SRTEditor(tk.Tk):
 
         # ── 파일 메뉴 버튼 (컴팩트 아이콘) ──
         file_menu = tk.Menu(top, tearoff=0,
-                            bg=BG3, fg=FG, activebackground=ACCENT,
-                            activeforeground="white", borderwidth=0,
+                            bg=BG3, fg=FG,
+                            activebackground=ACCENT,
+                            activeforeground="white",
+                            disabledforeground=FG_DIM,
+                            relief="flat", bd=0,
+                            activeborderwidth=0,
                             font=(FONT_FAMILY, 9))
-        file_menu.add_command(label="📂  열기",               command=self.open_file)
-        file_menu.add_command(label="💾  저장",               command=self.save_file)
-        file_menu.add_command(label="📝  다른 이름으로 저장", command=self.save_file_as)
+        file_menu.add_command(label="  열기             Ctrl+O", command=self.open_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="  저장             Ctrl+S", command=self.save_file)
+        file_menu.add_command(label="  다른 이름으로 저장",      command=self.save_file_as)
 
         _file_wrap = tk.Frame(top, bg=BG3,
                               highlightthickness=1, highlightbackground=BORDER)
@@ -4287,20 +4302,21 @@ class SRTEditor(tk.Tk):
 
     def _show_context_menu(self, event, anchor_idx):
         """자막 행 컨텍스트 메뉴."""
-        MENU_BG     = "#2A2A2A"
-        MENU_FG     = "#CCCCCC"
-        MENU_ACT_BG = "#3A3A3A"
-        MENU_DIM    = "#666666"
+        MENU_BG     = BG3
+        MENU_FG     = FG
+        MENU_ACT_BG = ACCENT
+        MENU_DIM    = FG_DIM
 
         def make_menu(parent=None):
             return tk.Menu(
                 parent or self, tearoff=0,
                 bg=MENU_BG, fg=MENU_FG,
-                activebackground=MENU_ACT_BG, activeforeground=MENU_FG,
+                activebackground=MENU_ACT_BG, activeforeground="white",
                 disabledforeground=MENU_DIM,
-                relief="flat", bd=1,
-                font=(FONT_FAMILY, 10),
+                relief="flat", bd=0,
+                font=(FONT_FAMILY, 9),
                 activeborderwidth=0,
+                selectcolor=ACCENT,
             )
 
         menu = make_menu()
@@ -4954,7 +4970,7 @@ class SRTEditor(tk.Tk):
     def _blur_content_entry(self):
         self._blur_all_entries()
 
-    def _select_row(self, idx):
+    def _select_row(self, idx, seek=True):
         """단독 선택 — 다중 선택 해제 후 idx만 선택."""
         prev       = getattr(self, "_selected_row_idx", None)
         old_multi  = set(getattr(self, "_selected_rows", set()))
@@ -4968,7 +4984,8 @@ class SRTEditor(tk.Tk):
         if prev is not None and prev != idx and prev not in old_multi:
             self._redraw_slot_for(prev)
         self._redraw_slot_for(idx)
-        self._seek_to_subtitle(idx)
+        if seek:
+            self._seek_to_subtitle(idx)
         self._wf_reveal_subtitle(idx)
 
     def _wf_reveal_subtitle(self, idx):
@@ -5043,7 +5060,7 @@ class SRTEditor(tk.Tk):
             return
         h, mi, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
         pos = h * 3600 + mi * 60 + s + ms / 1000.0
-        was_playing = self.player.is_playing
+        was_playing = self.player.is_playing or self.player._paused
         self.player.seek_to(pos)
         self.media_progress_var.set(pos)
         self.lbl_pos.configure(text=self._fmt_time(pos))
@@ -5726,7 +5743,7 @@ class SRTEditor(tk.Tk):
             prev_pos = getattr(self, "_last_polled_pos", -1.0)
             self._last_polled_pos = pos
 
-            if abs(pos - prev_pos) >= 0.05:
+            if abs(pos - prev_pos) >= 0.01:
                 self.media_progress_var.set(pos)
                 self.lbl_pos.configure(text=self._fmt_time(pos))
                 dur = self.player.duration
@@ -5737,23 +5754,29 @@ class SRTEditor(tk.Tk):
                 self._pb_redraw()
 
             self._update_playback_highlight(pos)
-            self._seek_job = self.after(100, self._poll_progress)
+            self._seek_job = self.after(16, self._poll_progress)
         else:
             self._last_polled_pos = -1.0
             self.btn_play.configure(text="▶")
             self._seek_job = None
 
     def _wf_follow_playhead(self, pos):
-        """재생 중 헤드가 뷰 오른쪽 80% 초과 시 한 페이지 앞으로 이동."""
+        """재생 중 헤드가 뷰 밖으로 나가지 않도록 부드럽게 오프셋 추종."""
         dur = self.player.duration
         if dur <= 0 or self._wf_zoom <= 1.0:
             return
         pos_r = pos / dur
         start, end = self._wf_view_range()
         span = end - start
-        # 헤드가 뷰 오른쪽 끝 근처면 앞으로
-        if pos_r > start + span * 0.85:
-            self._wf_offset = max(0.0, min(pos_r - span * 0.1, 1.0 - span))
+        # 헤드를 뷰의 30%~70% 사이에 유지 (ease toward center)
+        target_center = pos_r
+        new_offset = target_center - span * 0.35
+        new_offset = max(0.0, min(new_offset, 1.0 - span))
+        # 현재 오프셋과 너무 차이나지 않으면 스킵 (작은 움직임은 무시)
+        if abs(new_offset - self._wf_offset) < span * 0.01:
+            return
+        # ease: 현재 → 목표를 10% 씩 이동 (부드러운 추종)
+        self._wf_offset += (new_offset - self._wf_offset) * 0.15
 
     def _stop_progress_poll(self):
         if self._seek_job:
