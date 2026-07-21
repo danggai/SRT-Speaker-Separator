@@ -115,6 +115,7 @@ import time
 import urllib.request
 import json
 import pathlib
+import colorsys
 
 # ── 앱 설정 저장/불러오기 ─────────────────────────────────
 _CONFIG_PATH = pathlib.Path.home() / ".srt_speaker_editor_config.json"
@@ -648,6 +649,91 @@ class Tooltip:
 
 
 # ─────────────────────────────────────────────
+#  커스텀 슬라이더 (음량 조절 바와 동일한 디자인)
+# ─────────────────────────────────────────────
+class PurpleSlider(tk.Canvas):
+    """음량 조절 슬라이더와 같은 스타일의 커스텀 Canvas 슬라이더.
+    ttk.Scale의 기본(회색 촌스러운) 디자인 대신 사용."""
+
+    def __init__(self, parent, from_=0, to=100, value=None,
+                 width=200, height=18, command=None,
+                 bg=BG, track_color="#2A2A2A", fill_color="#7A5FB0",
+                 handle_color="white", handle_outline="#555555", **kwargs):
+        super().__init__(parent, width=width, height=height, bg=bg,
+                          highlightthickness=0, cursor="hand2", **kwargs)
+        self.from_        = from_
+        self.to           = to
+        self._value       = value if value is not None else from_
+        self._command     = command
+        self._track_color = track_color
+        self._fill_color  = fill_color
+        self._handle_color   = handle_color
+        self._handle_outline = handle_outline
+        self._dragging = False
+
+        self.bind("<ButtonPress-1>",   self._on_press)
+        self.bind("<B1-Motion>",       self._on_drag)
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Configure>",       self._redraw)
+        self.after(10, self._redraw)
+
+    def get(self):
+        return self._value
+
+    def set(self, v, fire=True):
+        v = max(self.from_, min(self.to, v))
+        self._value = v
+        self._redraw()
+        if fire and self._command:
+            self._command(v)
+
+    def _value_from_x(self, x):
+        cw = self.winfo_width()
+        if cw <= 1:
+            return self._value
+        ratio = max(0.0, min(1.0, x / cw))
+        return self.from_ + ratio * (self.to - self.from_)
+
+    def _redraw(self, event=None):
+        cw = self.winfo_width()
+        ch = self.winfo_height()
+        if cw <= 1:
+            self.after(50, self._redraw)
+            return
+        self.delete("all")
+        span  = self.to - self.from_
+        ratio = (self._value - self.from_) / span if span else 0
+        filled = int(cw * ratio)
+        track_y = ch // 2
+
+        # 트랙 배경
+        self.create_rectangle(0, track_y - 4, cw, track_y + 4,
+                               fill=self._track_color, outline="", tags="track")
+        # 채워진 부분
+        if filled > 0:
+            self.create_rectangle(0, track_y - 4, filled, track_y + 4,
+                                   fill=self._fill_color, outline="", tags="fill")
+        # 핸들
+        hx = max(6, min(filled, cw - 6))
+        self.create_oval(hx - 6, track_y - 6, hx + 6, track_y + 6,
+                          fill=self._handle_color, outline=self._handle_outline,
+                          width=1, tags="handle")
+
+    def _on_press(self, event):
+        self._dragging = True
+        self.set(round(self._value_from_x(event.x)))
+
+    def _on_drag(self, event):
+        if not self._dragging:
+            return
+        self.set(round(self._value_from_x(event.x)))
+
+    def _on_release(self, event):
+        self._dragging = False
+        self.set(round(self._value_from_x(event.x)))
+
+
+# ─────────────────────────────────────────────
 #  커스텀 컬러피커
 # ─────────────────────────────────────────────
 class _ColorPickerDialog:
@@ -876,6 +962,185 @@ GITHUB_LATEST_API = "https://api.github.com/repos/danggai/SRT-Speaker-Separator/
 # ─────────────────────────────────────────────
 #  메인 앱
 # ─────────────────────────────────────────────
+
+# ── 커스텀 팝업 메뉴 (OS 테두리 없는 다크 테마) ─────────────────────────
+class PopupMenu:
+    """tk.Menu 대신 Toplevel로 만든 커스텀 팝업 메뉴.
+    Windows 흰 테두리 문제 없이 완전한 다크 테마 적용 가능."""
+
+    SEP = "__sep__"
+    CASCADE = "__cascade__"
+
+    def __init__(self, root):
+        self._root    = root
+        self._items   = []   # (type, label, command, submenu, state, accel, fg)
+        self._win     = None
+        self._sub_win = None
+
+    def add_command(self, label="", command=None, state="normal",
+                    accelerator="", foreground=None, activeforeground=None):
+        self._items.append(("cmd", label, command, None, state,
+                             accelerator, foreground))
+
+    def add_separator(self):
+        self._items.append(("sep", "", None, None, "normal", "", None))
+
+    def add_cascade(self, label="", menu=None, state="normal"):
+        self._items.append(("cascade", label, None, menu, state, "", None))
+
+    def post(self, x, y):
+        self._show(x, y)
+
+    def tk_popup(self, x, y):
+        self._show(x, y)
+
+    def _show(self, x, y):
+        self._destroy()
+        win = tk.Toplevel(self._root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg=BG3)
+        win.attributes("-alpha", 0.97)
+        self._win = win
+
+        frame = tk.Frame(win, bg=BG3,
+                         highlightthickness=1,
+                         highlightbackground=BORDER)
+        frame.pack(fill="both", expand=True, padx=0, pady=0)
+        frame.configure(width=220)  # 최소 너비
+
+        self._build_items(frame, win)
+
+        win.update_idletasks()
+        sw = self._root.winfo_screenwidth()
+        sh = self._root.winfo_screenheight()
+        ww = win.winfo_reqwidth()
+        wh = win.winfo_reqheight()
+        if x + ww > sw:
+            x = sw - ww - 4
+        if y + wh > sh:
+            y = y - wh
+        win.geometry(f"+{x}+{y}")
+
+        win.bind("<Escape>", lambda e: self._destroy())
+
+        # 포커스 잃으면 닫기 — 서브메뉴 포함 전체 영역 기준
+        def _on_focus_out(e):
+            def _check():
+                try:
+                    focused = self._root.focus_get()
+                    for w in [self._win, self._sub_win]:
+                        if w and w.winfo_exists():
+                            try:
+                                if str(focused).startswith(str(w)):
+                                    return
+                            except Exception:
+                                pass
+                    self._destroy()
+                except Exception:
+                    self._destroy()
+            win.after(100, _check)
+        self._focus_out_handler = _on_focus_out  # _build_items에서 접근용
+        win.bind("<FocusOut>", _on_focus_out)
+        win.focus_set()
+
+    def _build_items(self, parent, win):
+        for kind, label, cmd, submenu, state, accel, fg in self._items:
+            if kind == "sep":
+                tk.Frame(parent, bg=BORDER, height=1).pack(
+                    fill="x", padx=8, pady=2)
+                continue
+
+            disabled = (state == "disabled")
+            row_fg   = fg if (fg and not disabled) else (FG_DIM if disabled else FG)
+
+            row = tk.Frame(parent, bg=BG3, cursor="arrow")
+            row.pack(fill="x", padx=0, pady=0)
+
+            # 라벨
+            lbl = tk.Label(row, text=f"  {label}",
+                           bg=BG3, fg=row_fg,
+                           font=(FONT_FAMILY, 9),
+                           anchor="w", padx=4, pady=5)
+            lbl.pack(side="left", fill="x", expand=True)
+
+            # 단축키
+            if accel:
+                tk.Label(row, text=f"{accel}  ",
+                         bg=BG3, fg=FG_DIM,
+                         font=(FONT_FAMILY, 8),
+                         anchor="e", padx=4).pack(side="right")
+
+            # 서브메뉴 화살표
+            if kind == "cascade":
+                tk.Label(row, text="›",
+                         bg=BG3, fg=FG_DIM,
+                         font=(FONT_FAMILY, 10),
+                         padx=4).pack(side="right")
+
+            if disabled:
+                continue
+
+            # 자식 위젯별 원래 색상 기억
+            _orig_colors = {w: w.cget("fg") for w in row.winfo_children()}
+
+            def _enter(e, r=row):
+                r.configure(bg=ACCENT)
+                for w in r.winfo_children():
+                    try: w.configure(bg=ACCENT, fg="white")
+                    except Exception: pass
+
+            def _leave(e, r=row, orig=_orig_colors):
+                r.configure(bg=BG3)
+                for w in r.winfo_children():
+                    try:
+                        w.configure(bg=BG3, fg=orig.get(w, FG))
+                    except Exception:
+                        pass
+
+            row.bind("<Enter>", _enter)
+            lbl.bind("<Enter>", _enter)
+            row.bind("<Leave>", _leave)
+            lbl.bind("<Leave>", _leave)
+
+            if kind == "cmd" and cmd:
+                def _click(e, c=cmd):
+                    self._destroy()
+                    self._root.after(10, c)  # destroy 완료 후 실행
+                row.bind("<Button-1>", _click)
+                lbl.bind("<Button-1>", _click)
+
+            elif kind == "cascade" and submenu:
+                def _hover_cascade(e, r=row, sub=submenu):
+                    rx = r.winfo_rootx() + r.winfo_width()
+                    ry = r.winfo_rooty()
+                    if self._sub_win:
+                        try: self._sub_win.destroy()
+                        except Exception: pass
+                        self._sub_win = None
+                    sub._show(rx, ry)
+                    self._sub_win = sub._win
+                    # 서브메뉴 FocusOut도 부모 기준으로 처리
+                    if sub._win:
+                        handler = getattr(self, '_focus_out_handler', None)
+                        if handler:
+                            sub._win.bind("<FocusOut>", handler)
+                def _enter_cascade(e, fn=_enter):
+                    fn(e)
+                    _hover_cascade(e)
+                row.bind("<Enter>", _enter_cascade)
+                lbl.bind("<Enter>", _enter_cascade)
+
+    def _destroy(self):
+        if self._sub_win:
+            try: self._sub_win.destroy()
+            except Exception: pass
+            self._sub_win = None
+        if self._win:
+            try: self._win.destroy()
+            except Exception: pass
+            self._win = None
+
 class SRTEditor(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -917,8 +1182,12 @@ class SRTEditor(tk.Tk):
         _cfg = _load_config()
         self._hf_token             = _cfg.get("hf_token", "")
         self._diarize_num_spk_val  = _cfg.get("num_speakers", 0)
+        self._transcribe_max_chars  = _cfg.get("transcribe_max_chars", 25)
+        self._transcribe_period     = _cfg.get("transcribe_period", False)
+        self._transcribe_spellcheck = _cfg.get("transcribe_spellcheck", False)
         self._diarize_mode_init    = _cfg.get("diarize_mode", "balanced")
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")
+        self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 65)
         self._recent_tokens        = _cfg.get("recent_tokens", [])
         self._diarize_batch_init  = _cfg.get("diarize_batch", 3)   # index=3 → batch=16 (권장)
 
@@ -1053,18 +1322,13 @@ class SRTEditor(tk.Tk):
         self._top_bar = top   # 업데이트 배지 삽입용
 
         # ── 파일 메뉴 버튼 (컴팩트 아이콘) ──
-        file_menu = tk.Menu(top, tearoff=0,
-                            bg=BG3, fg=FG,
-                            activebackground=ACCENT,
-                            activeforeground="white",
-                            disabledforeground=FG_DIM,
-                            relief="flat", bd=0,
-                            activeborderwidth=0,
-                            font=(FONT_FAMILY, 9))
-        file_menu.add_command(label="  열기             Ctrl+O", command=self.open_file)
+        file_menu = PopupMenu(self)
+        file_menu.add_command(label="열기",             accelerator="Ctrl+O", command=self.open_file)
         file_menu.add_separator()
-        file_menu.add_command(label="  저장             Ctrl+S", command=self.save_file)
-        file_menu.add_command(label="  다른 이름으로 저장",      command=self.save_file_as)
+        file_menu.add_command(label="저장",             accelerator="Ctrl+S", command=self.save_file)
+        file_menu.add_command(label="다른 이름으로 저장",                      command=self.save_file_as)
+        file_menu.add_separator()
+        file_menu.add_command(label="닫기 (홈으로)",                          command=self._close_to_home)
 
         _file_wrap = tk.Frame(top, bg=BG3,
                               highlightthickness=1, highlightbackground=BORDER)
@@ -1072,7 +1336,7 @@ class SRTEditor(tk.Tk):
 
         def _show_file_menu(e=None):
             w = _file_wrap
-            file_menu.post(w.winfo_rootx(), w.winfo_rooty() + w.winfo_height())
+            file_menu.tk_popup(w.winfo_rootx(), w.winfo_rooty() + w.winfo_height())
 
         _file_btn = tk.Button(_file_wrap, text="📁  파일",
                               bg=BG3, fg=FG, relief="flat", bd=0,
@@ -1277,15 +1541,589 @@ class SRTEditor(tk.Tk):
         paths = re.findall(r'\{([^}]+)\}|(\S+)', raw)
         paths = [p[0] or p[1] for p in paths]
 
+        MEDIA_EXTS = {".mp3",".mp4",".wav",".m4a",".aac",
+                      ".ogg",".flac",".mkv",".avi",".mov",".webm"}
         srt_paths   = [p for p in paths if p.lower().endswith(".srt")]
-        media_paths = [p for p in paths if not p.lower().endswith(".srt")]
+        media_paths = [p for p in paths
+                       if os.path.splitext(p.lower())[1] in MEDIA_EXTS]
 
         if srt_paths:
             self._load_srt(srt_paths[0])
-        if media_paths:
-            self._load_media(media_paths[0])
+            if media_paths:
+                self._load_media(media_paths[0])
+        elif media_paths:
+            # 미디어만 드롭 → 자막 자동 생성 여부 확인
+            mp = media_paths[0]
+            srt_candidate = os.path.splitext(mp)[0] + ".srt"
+            if os.path.isfile(srt_candidate):
+                # 동명 SRT 있으면 바로 로드
+                self._load_srt(srt_candidate)
+                self._load_media(mp)
+            else:
+                self._load_media(mp)
+                self._ask_auto_transcribe(mp)
+        elif not srt_paths and not media_paths and paths:
+            self._load_media(paths[0])
 
-    # ── 사이드바 (화자 관리) ──────────────────
+    def _ask_auto_transcribe(self, media_path):
+        """자막 자동 생성 여부 및 방식 선택 팝업."""
+        win = tk.Toplevel(self)
+        win.title("자막 자동 생성")
+        win.configure(bg=BG)
+        win.geometry("420x430")
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+
+        tk.Label(win, text="🎙  자막 자동 생성",
+                 bg=BG, fg=FG, font=(FONT_FAMILY, 11, "bold")).pack(pady=(16, 4))
+        tk.Label(win,
+                 text=f"{os.path.basename(media_path)}\n\ub3d9\uc77c\ud55c SRT \ud30c\uc77c\uc774 \uc5c6\uc2b5\ub2c8\ub2e4. \uc790\ub3d9 \uc0dd\uc131\ud560\uae4c\uc694?",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9), justify="center").pack(pady=(0, 10))
+
+        mode_var = tk.StringVar(value="text")
+        mode_row = tk.Frame(win, bg=BG)
+        mode_row.pack()
+        tk.Radiobutton(mode_row, text="텍스트만  (빠름)",
+                       variable=mode_var, value="text",
+                       bg=BG, fg=FG, selectcolor=BG3,
+                       activebackground=BG, font=(FONT_FAMILY, 9)).pack(side="left", padx=8)
+        tk.Radiobutton(mode_row, text="화자 분리까지  (느림)",
+                       variable=mode_var, value="diarize",
+                       bg=BG, fg=FG, selectcolor=BG3,
+                       activebackground=BG, font=(FONT_FAMILY, 9)).pack(side="left", padx=8)
+
+        # ── 화자 분리 설정 패널 (diarize 선택 시 표시) ──────────
+        _saved_tok = getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
+        hf_tok_var = tk.StringVar(value=_saved_tok)
+
+        diar_frame = tk.Frame(win, bg=BG)
+
+        # HF 토큰
+        _tok_row = tk.Frame(diar_frame, bg=BG)
+        _tok_row.pack(fill="x", padx=10, pady=(8, 4))
+        tk.Label(_tok_row, text="HuggingFace 토큰", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        tok_entry = tk.Entry(_tok_row, textvariable=hf_tok_var, show="*",
+                             bg=BG3, fg=FG, insertbackground=FG,
+                             font=(FONT_MONO, 8), relief="flat",
+                             highlightthickness=1, highlightbackground=BORDER,
+                             highlightcolor=ACCENT)
+        tok_entry.pack(side="left", fill="x", expand=True, ipady=2)
+        # 👁 토큰 표시 토글
+        def _tog_tok():
+            tok_entry.configure(show="" if tok_entry.cget("show") == "*" else "*")
+        tk.Button(_tok_row, text="👁", bg=BG, fg=FG_DIM, relief="flat", bd=0,
+                  font=(FONT_FAMILY, 9), padx=4, cursor="hand2",
+                  activebackground=BG3, command=_tog_tok).pack(side="left", padx=(4,0))
+
+        # 화자 수
+        _spk_row = tk.Frame(diar_frame, bg=BG)
+        _spk_row.pack(fill="x", padx=10, pady=(0, 4))
+        tk.Label(_spk_row, text="화자 수 (0=자동)", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_diarize_num_spk"):
+            self._diarize_num_spk = tk.IntVar(
+                value=getattr(self, "_diarize_num_spk_val", 0))
+        tk.Spinbox(_spk_row, from_=0, to=20, textvariable=self._diarize_num_spk,
+                   bg=BG3, fg=FG, insertbackground=FG, buttonbackground=BG3,
+                   relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                   font=(FONT_FAMILY, 8), width=5).pack(side="left")
+
+        # 분석 모드
+        _mode_row = tk.Frame(diar_frame, bg=BG)
+        _mode_row.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(_mode_row, text="분석 모드", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_diarize_mode_var"):
+            self._diarize_mode_var = tk.StringVar(
+                value=getattr(self, "_diarize_mode_init", "balanced"))
+        for _ml, _mv in [("⚡ 빠름","fast"),("⚖ 균형","balanced"),("🎯 정확","accurate"),("🔬 최고정확","best")]:
+            tk.Radiobutton(_mode_row, text=_ml, value=_mv,
+                           variable=self._diarize_mode_var,
+                           bg=BG, fg=FG_DIM, selectcolor=BG3,
+                           activebackground=BG, font=(FONT_FAMILY, 7),
+                           cursor="hand2").pack(side="left", padx=(0,4))
+
+        # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
+        _sens_row = tk.Frame(diar_frame, bg=BG)
+        _sens_row.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(_sens_row, text="분리 민감도", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_diarize_sensitivity_var"):
+            self._diarize_sensitivity_var = tk.IntVar(
+                value=getattr(self, "_diarize_sensitivity_init", 65))
+        _sens_val = tk.Label(_sens_row, bg=BG, fg=FG, font=(FONT_FAMILY, 8), width=4)
+        _sens_val.pack(side="right")
+        def _sens_upd(*_):
+            v = int(self._diarize_sensitivity_var.get())
+            _sens_val.configure(text=str(v))
+        def _sens_cmd(v):
+            self._diarize_sensitivity_var.set(int(v))
+            _sens_upd()
+        _sens_upd()
+        PurpleSlider(_sens_row, from_=0, to=100,
+                     value=self._diarize_sensitivity_var.get(),
+                     width=160, height=16, command=_sens_cmd, bg=BG
+                     ).pack(side="left", padx=(6, 0))
+
+        # ── 자막 설정 인라인 ──────────────────────────────────
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(12, 8))
+        tk.Label(win, text="자막 설정", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold")).pack(anchor="w", padx=16)
+
+        # 글자 수 슬라이더
+        _cs_row = tk.Frame(win, bg=BG)
+        _cs_row.pack(fill="x", padx=16, pady=(6, 0))
+        tk.Label(_cs_row, text="문장 당 글자 수", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_transcribe_max_chars_var"):
+            self._transcribe_max_chars_var = tk.IntVar(
+                value=getattr(self, "_transcribe_max_chars", 25))
+        _cs_val = tk.Label(_cs_row, bg=BG, fg=FG, font=(FONT_FAMILY, 8), width=4)
+        _cs_val.pack(side="right")
+        def _cs_upd(*_):
+            try:
+                v = int(self._transcribe_max_chars_var.get())
+                self._transcribe_max_chars = v
+                _cs_val.configure(text=f"{v}자")
+                cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
+            except Exception: pass
+        _cs_upd()
+        def _cs_slider_cmd(v):
+            self._transcribe_max_chars_var.set(int(v))
+            _cs_upd()
+        PurpleSlider(win, from_=10, to=50,
+                     value=self._transcribe_max_chars_var.get(),
+                     width=360, command=_cs_slider_cmd, bg=BG
+                     ).pack(padx=16, pady=(2, 6))
+
+        # 연산 디바이스 (화자분리 설정 공유)
+        _dev_row = tk.Frame(win, bg=BG)
+        _dev_row.pack(fill="x", padx=16, pady=(0, 4))
+        tk.Label(_dev_row, text="연산 디바이스", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_diarize_device_var"):
+            self._diarize_device_var = tk.StringVar(
+                value=getattr(self, "_diarize_device_init", "auto"))
+        for _txt, _val in [("🚀 GPU 우선", "auto"), ("CPU", "cpu")]:
+            tk.Radiobutton(_dev_row, text=_txt, value=_val,
+                           variable=self._diarize_device_var,
+                           bg=BG, fg=FG_DIM, selectcolor=BG3,
+                           activebackground=BG, font=(FONT_FAMILY, 8),
+                           cursor="hand2").pack(side="left", padx=(0, 8))
+
+        # 마침표 + 맞춤법
+        _opt_row = tk.Frame(win, bg=BG)
+        _opt_row.pack(fill="x", padx=16, pady=(0, 4))
+        if not hasattr(self, "_transcribe_period_var"):
+            self._transcribe_period_var = tk.BooleanVar(
+                value=getattr(self, "_transcribe_period", False))
+        def _save_period_inline():
+            v = self._transcribe_period_var.get()
+            self._transcribe_period = v
+            cfg = _load_config(); cfg["transcribe_period"] = v; _save_config(cfg)
+        tk.Checkbutton(_opt_row, variable=self._transcribe_period_var,
+                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
+                       font=(FONT_FAMILY, 8), cursor="hand2",
+                       text="문장 끝 마침표",
+                       command=_save_period_inline).pack(side="left")
+        if not hasattr(self, "_transcribe_spellcheck_var"):
+            self._transcribe_spellcheck_var = tk.BooleanVar(
+                value=getattr(self, "_transcribe_spellcheck", False))
+        def _save_spell_inline():
+            v = self._transcribe_spellcheck_var.get()
+            self._transcribe_spellcheck = v
+            cfg = _load_config(); cfg["transcribe_spellcheck"] = v; _save_config(cfg)
+        tk.Checkbutton(_opt_row, variable=self._transcribe_spellcheck_var,
+                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
+                       font=(FONT_FAMILY, 8), cursor="hand2",
+                       text="맞춤법 검사",
+                       command=_save_spell_inline).pack(side="left", padx=(12, 0))
+
+        # ── 화자 분리 설정 (diarize 선택 시 자막설정 아래에 표시) ──
+        _diar_sep = tk.Frame(win, bg=BORDER, height=1)
+        _diar_hdr = tk.Label(win, text="화자 분리 설정", bg=BG, fg=FG,
+                             font=(FONT_FAMILY, 9, "bold"))
+
+        btn_row = tk.Frame(win, bg=BG)
+        btn_row.pack(pady=12)
+
+        _anim_job = [None]
+
+        def _animate_height(target_h, on_done=None):
+            """창 높이를 target_h까지 부드럽게 애니메이션."""
+            if _anim_job[0]:
+                win.after_cancel(_anim_job[0])
+            def _step():
+                try:
+                    cur_h = win.winfo_height()
+                    diff  = target_h - cur_h
+                    if abs(diff) <= 2:
+                        win.geometry(f"420x{target_h}")
+                        if on_done: on_done()
+                        return
+                    # ease-out: 차이의 30%씩 이동
+                    step = max(2, int(abs(diff) * 0.3)) * (1 if diff > 0 else -1)
+                    win.geometry(f"420x{cur_h + step}")
+                    _anim_job[0] = win.after(12, _step)
+                except Exception:
+                    pass
+            _step()
+
+        def _on_mode_change(*_):
+            if mode_var.get() == "diarize":
+                _diar_sep.pack(fill="x", padx=16, pady=(8, 8))
+                _diar_hdr.pack(anchor="w", padx=16)
+                diar_frame.pack(fill="x", padx=16, pady=(4, 0))
+                btn_row.pack_forget()
+                btn_row.pack(pady=12)
+                _animate_height(560)
+            else:
+                def _hide():
+                    _diar_sep.pack_forget()
+                    _diar_hdr.pack_forget()
+                    diar_frame.pack_forget()
+                _animate_height(430, on_done=_hide)
+        mode_var.trace_add("write", _on_mode_change)
+
+        def _start():
+            hf_tok = hf_tok_var.get().strip()
+            if mode_var.get() == "diarize" and not hf_tok:
+                messagebox.showwarning("토큰 필요",
+                    "화자 분리에는 HuggingFace 토큰이 필요합니다.", parent=win)
+                return
+            if hf_tok:
+                self._hf_token = hf_tok
+                _cfg = _load_config()
+                _cfg["hf_token"] = hf_tok
+                _add_recent_token(_cfg, hf_tok)
+                # 화자 수·모드 저장
+                _cfg["num_speakers"] = self._diarize_num_spk.get() if hasattr(self, "_diarize_num_spk") else 0
+                _cfg["diarize_mode"] = self._diarize_mode_var.get() if hasattr(self, "_diarize_mode_var") else "balanced"
+                _cfg["diarize_sensitivity"] = self._diarize_sensitivity_var.get() if hasattr(self, "_diarize_sensitivity_var") else 65
+                _save_config(_cfg)
+            win.destroy()
+            self._auto_transcribe(media_path, with_diarize=(mode_var.get() == "diarize"),
+                                   hf_token=hf_tok)
+
+        tk.Button(btn_row, text="생성 시작", bg=ACCENT, fg="white",
+                  relief="flat", bd=0, padx=16, pady=5, cursor="hand2",
+                  font=(FONT_FAMILY, 9, "bold"),
+                  activebackground="#7B5FB4",
+                  command=_start).pack(side="left", padx=6)
+        tk.Button(btn_row, text="취소", bg=BG3, fg=FG,
+                  relief="flat", bd=0, padx=16, pady=5, cursor="hand2",
+                  font=(FONT_FAMILY, 9),
+                  activebackground=BG2,
+                  command=win.destroy).pack(side="left", padx=6)
+
+    def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
+        """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
+        import threading, tempfile, math as _math, time as _time
+
+        # ── 진행 창 ──────────────────────────────────────────────
+        prog = tk.Toplevel(self)
+        prog.title("자막 자동 생성 중...")
+        prog.configure(bg=BG)
+        prog.geometry("440x240")
+        prog.resizable(False, False)
+        prog.transient(self)
+        prog.grab_set()
+
+        tk.Label(prog, text="🎙  자막 자동 생성 중...",
+                 bg=BG, fg=FG, font=(FONT_FAMILY, 11, "bold")).pack(pady=(18, 2))
+        _status = tk.Label(prog, text="초기화 중...",
+                           bg=BG, fg=FG, font=(FONT_FAMILY, 9, "bold"))
+        _status.pack()
+        _sub = tk.Label(prog, text="", bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8))
+        _sub.pack(pady=(1, 0))
+
+        BAR_W, BAR_H = 380, 16
+        _bar_cv = tk.Canvas(prog, width=BAR_W, height=BAR_H,
+                            bg=BG3, highlightthickness=1, highlightbackground=BORDER)
+        _bar_cv.pack(pady=(10, 4))
+        _bar_img = tk.PhotoImage(width=BAR_W, height=BAR_H)
+        _bar_cv.create_image(0, 0, anchor="nw", image=_bar_img)
+        _pct_id = _bar_cv.create_text(BAR_W//2, BAR_H//2, text="0%",
+                                       fill=FG_DIM, font=(FONT_FAMILY, 7, "bold"))
+
+        _BG3R = int(BG3[1:3],16); _BG3G = int(BG3[3:5],16); _BG3B = int(BG3[5:7],16)
+        _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True}
+
+        def _draw():
+            if not _pstate["run"]: return
+            try:
+                cur = _pstate["cur"]; phase = _pstate["phase"]
+                fw = int(BAR_W * cur / 100)
+                row = []
+                for x in range(BAR_W):
+                    if x < fw:
+                        t = x / BAR_W
+                        k = t*2 if t < 0.5 else (t-0.5)*2
+                        if t < 0.5:
+                            r0=int(0x7B+(0x4A-0x7B)*k); g0=int(0x4F+(0x90-0x4F)*k); b0=int(0xD4+(0xE2-0xD4)*k)
+                        else:
+                            r0=int(0x4A+(0x1A-0x4A)*k); g0=int(0x90+(0xBC-0x90)*k); b0=int(0xE2+(0x9C-0xE2)*k)
+                        w = _math.sin(phase - x*0.045)*0.20+0.85
+                        g2 = _math.exp(-(fw-x)*0.10)*0.35
+                        br = min(1.15, w+g2)
+                        row.append("#{:02x}{:02x}{:02x}".format(min(255,int(r0*br)),min(255,int(g0*br)),min(255,int(b0*br))))
+                    else:
+                        row.append("#{:02x}{:02x}{:02x}".format(_BG3R,_BG3G,_BG3B))
+                rs = "{" + " ".join(row) + "}"
+                _bar_img.put(" ".join([rs]*BAR_H))
+                _bar_cv.itemconfigure(_pct_id, text=f"{int(cur)}%",
+                    fill="white" if fw > BAR_W//2 else FG_DIM)
+                _pstate["phase"] += 0.18
+                diff = _pstate["target"] - cur
+                _pstate["cur"] += diff*0.07 if abs(diff)>0.05 else diff
+                prog.after(30, _draw)
+            except Exception: pass
+        prog.after(30, _draw)
+
+        def _set(msg, pct=None):
+            try:
+                _status.configure(text=msg)
+                if pct is not None:
+                    _pstate["target"] = float(pct)
+            except Exception: pass
+
+        # ── 워커 ─────────────────────────────────────────────────
+        def _worker():
+            try:
+                import whisperx, torch, os as _os
+
+                _dev_var = getattr(self, "_diarize_device_var", None)
+                _dev_pref = _dev_var.get() if _dev_var else "auto"
+                device = "cuda" if (torch.cuda.is_available() and _dev_pref != "cpu") else "cpu"
+                compute = "float16" if device == "cuda" else "float32"
+
+                _set(f"Whisper 모델 로드 중... ({device})", 5)
+                model = whisperx.load_model("large-v3-turbo", device,
+                                            compute_type=compute,
+                                            asr_options={"beam_size": 3})
+
+                _set("음성 로드 중...", 15)
+                audio = whisperx.load_audio(media_path)
+
+                _set("음성 인식 중...", 20)
+                batch_size = 8 if device == "cuda" else 1
+                result = model.transcribe(audio, batch_size=batch_size)
+                del model
+                if device == "cuda": torch.cuda.empty_cache()
+
+                _set("타임스탬프 정렬 중...", 60)
+                model_a, meta = whisperx.load_align_model(
+                    language_code=result["language"], device=device)
+                result = whisperx.align(result["segments"], model_a, meta,
+                                        audio, device, return_char_alignments=False)
+                del model_a
+                if device == "cuda": torch.cuda.empty_cache()
+
+                segments = result["segments"]
+
+                # 설정값 읽기 (먼저 읽어야 이후 로직에서 참조 가능)
+                _max_chars   = getattr(self, "_transcribe_max_chars", 25)
+                _add_period  = getattr(self, "_transcribe_period", False)
+                _spellcheck  = getattr(self, "_transcribe_spellcheck", False)
+
+                # 맞춤법 검사기 초기화 (활성화 시)
+                _spell_checker = None
+                if _spellcheck:
+                    try:
+                        import subprocess as _sp
+                        _sp.check_call(
+                            [__import__("sys").executable, "-m", "pip",
+                             "install", "py-hanspell", "-q"],
+                            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                        from hanspell import spell_checker as _sc
+                        _spell_checker = _sc
+                    except Exception:
+                        pass
+
+                if with_diarize:
+                    _set("화자 분리 중...", 75)
+                    hf_tok = hf_token or getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
+                    from whisperx.diarize import DiarizationPipeline, assign_word_speakers
+                    diar_model = DiarizationPipeline(token=hf_tok, device=device)
+                    self._apply_diarize_sensitivity(diar_model, self._get_diarize_sensitivity())
+                    _num_spk_var = getattr(self, "_diarize_num_spk", None)
+                    _num_spk = _num_spk_var.get() if _num_spk_var else getattr(self, "_diarize_num_spk_val", 0)
+                    _diar_kw = {"num_speakers": _num_spk} if _num_spk and _num_spk > 0 else {}
+                    diar_segs  = diar_model(audio, **_diar_kw)
+                    result2    = assign_word_speakers(diar_segs, result)
+                    segments   = result2["segments"]
+
+                # segments → SRT 텍스트 생성
+                if _spellcheck and _spell_checker:
+                    _set("맞춤법 검사 중...", 90)
+                _set("자막 변환 중...", 95)
+
+
+                def _fmt_ts(sec):
+                    h=int(sec//3600); m=int((sec%3600)//60)
+                    s=int(sec%60);   ms=int((sec%1)*1000)
+                    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+                def _split_by_chars(text, max_chars):
+                    """글자 수 제한으로 텍스트 분리 (한국어 어절/공백 기준)."""
+                    if len(text) <= max_chars:
+                        return [text]
+                    # 공백 기준 어절 분리 시도
+                    words = text.split()
+                    if not words:
+                        return [text]
+                    lines, cur = [], ""
+                    for w in words:
+                        test = (cur + " " + w).strip() if cur else w
+                        if len(test) <= max_chars:
+                            cur = test
+                        else:
+                            if cur:
+                                lines.append(cur)
+                            # 단어 자체가 max_chars 초과 시 강제 분할
+                            if len(w) > max_chars:
+                                for ci in range(0, len(w), max_chars):
+                                    lines.append(w[ci:ci+max_chars])
+                                cur = ""
+                            else:
+                                cur = w
+                    if cur:
+                        lines.append(cur)
+                    return lines if lines else [text]
+
+                def _split_seg_with_words(seg, max_chars, spk):
+                    """whisperx word-level 타임스탬프 활용 정밀 분리.
+                    words 필드 없으면 균등 시간 분배 fallback."""
+                    t_s  = seg.get("start", 0)
+                    t_e  = seg.get("end", t_s + 1)
+                    text = seg.get("text", "").strip()
+                    word_list = seg.get("words", [])  # whisperx 단어별 타임스탬프
+
+                    lines = _split_by_chars(text, max_chars)
+                    result = []
+
+                    if len(lines) == 1:
+                        result.append({"start": t_s, "end": t_e,
+                                        "text": lines[0], "speaker": spk})
+                        return result
+
+                    if word_list:
+                        # word-level 타임스탬프로 정밀 분리
+                        wi = 0
+                        for line in lines:
+                            line_words = line.split()
+                            seg_ws = t_s
+                            seg_we = t_e
+                            matched = []
+                            for lw in line_words:
+                                while wi < len(word_list):
+                                    wobj = word_list[wi]
+                                    wi += 1
+                                    matched.append(wobj)
+                                    break
+                            if matched:
+                                seg_ws = matched[0].get("start", t_s)
+                                seg_we = matched[-1].get("end", t_e)
+                            result.append({"start": seg_ws, "end": seg_we,
+                                            "text": line, "speaker": spk})
+                    else:
+                        # fallback: 글자 수 비례로 시간 분배
+                        dur = t_e - t_s
+                        total_chars = sum(len(l) for l in lines) or 1
+                        cursor = t_s
+                        for line in lines:
+                            ratio = len(line) / total_chars
+                            sub_e = cursor + dur * ratio
+                            result.append({"start": cursor, "end": sub_e,
+                                            "text": line, "speaker": spk})
+                            cursor = sub_e
+
+                    return result
+
+                # 글자 수 기준으로 segments 재분할
+                split_segs = []
+                for seg in segments:
+                    spk = seg.get("speaker", "")
+                    split_segs.extend(_split_seg_with_words(seg, _max_chars, spk))
+
+                srt_lines = []
+                for i, seg in enumerate(split_segs, 1):
+                    t_s  = seg["start"]
+                    t_e  = seg["end"]
+                    text = seg["text"]
+                    spk  = seg["speaker"]
+                    # 맞춤법 검사
+                    if _spell_checker and text:
+                        try:
+                            _res = _spell_checker.check(text)
+                            text = _res.checked
+                        except Exception:
+                            pass
+                    # 마침표 처리
+                    if text:
+                        if _add_period:
+                            # 활성: 온점/느낌표/물음표 없으면 온점 추가
+                            if text[-1] not in "。.!?!?":
+                                text += "."
+                        else:
+                            # 비활성: Whisper가 자동으로 붙인 온점만 제거
+                            # (물음표·느낌표는 의미가 있으므로 유지)
+                            if text[-1] in ".。":
+                                text = text[:-1].rstrip()
+                    srt_lines.append(str(i))
+                    srt_lines.append(f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}")
+                    if spk:
+                        srt_lines.append(f"[{spk}] {text}")
+                    else:
+                        srt_lines.append(text)
+                    srt_lines.append("")
+
+                srt_content = "\n".join(srt_lines)
+
+                # 임시 파일로 로드
+                import tempfile
+                with tempfile.NamedTemporaryFile(
+                        mode="w", encoding="utf-8", suffix=".srt",
+                        delete=False) as tf:
+                    tf.write(srt_content)
+                    tmp_path = tf.name
+
+                _pstate["target"] = 100.0
+
+                def _done():
+                    _pstate["run"] = False
+                    try: prog.destroy()
+                    except Exception: pass
+                    self._load_srt(tmp_path)
+                    # 임시파일 경로 → save_path는 미설정 (저장 시 다른이름으로 저장 유도)
+                    self.save_path = None
+                    _base = _os.path.splitext(_os.path.basename(media_path))[0]
+                    self.title(f"{_base} (미저장) - SRT Speaker Editer")
+                self.after(0, _done)
+
+            except ImportError:
+                def _ei():
+                    _pstate["run"] = False
+                    try: prog.destroy()
+                    except Exception: pass
+                    messagebox.showerror("설치 필요",
+                        "whisperx가 설치되어 있지 않습니다.\npip install whisperx",
+                        parent=self)
+                self.after(0, _ei)
+            except Exception as e:
+                err = str(e)
+                def _ee():
+                    _pstate["run"] = False
+                    try: prog.destroy()
+                    except Exception: pass
+                    messagebox.showerror("오류", err, parent=self)
+                self.after(0, _ee)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+        # ── 사이드바 (화자 관리) ──────────────────
     def _build_sidebar(self, parent):
         side = ttk.Frame(parent, style="Side.TFrame", width=220)
         side.pack(side="left", fill="y")
@@ -1766,6 +2604,11 @@ class SRTEditor(tk.Tk):
                 color = self._speaker_color(spk) if spk else "#404055"
                 snapped_s = drag and drag["idx"]==i and drag["mode"]=="head_start"
                 snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
+                moving    = drag and drag["idx"]==i and drag["mode"]=="move"
+                if moving:
+                    # 이동 중인 자막은 테두리로 강조
+                    c.create_rectangle(x1, sub_top+1, x2, sub_bot-1,
+                                       outline="#FFFFFF", width=1)
                 # 핸들은 자막 행 전체 높이에
                 c.create_rectangle(x1,    sub_top, x1+HW, sub_bot,
                                    fill="#FFFFFF" if snapped_s else color, outline="")
@@ -1778,112 +2621,136 @@ class SRTEditor(tk.Tk):
 
         self._wf_hsb_redraw()
 
-    def _wf_on_motion(self, event):
-        """마우스 위치에 따라 커서 변경 + hover 자막 추적."""
-        x, y  = event.x, event.y
+    def _wf_hit_test(self, x, y):
+        """재생바 자막 히트테스트.
+
+        우선순위: 리사이즈 핸들 > 자막 바디 > 빈 타임라인.
+        - 핸들: 두 자막이 맞닿아 핸들이 같은 위치에 겹치는 경우, 커서가 그
+          자막의 '안쪽'(경계를 넘지 않은 쪽)에 있는 핸들을 우선한다.
+          그 다음 가장 가까운 핸들이 이기고, 그래도 동률이면 z-index
+          (리스트 뒤쪽 = 나중에 그려짐)가 높은 쪽이 이긴다.
+        - 바디: 겹치는 자막이 여러 개면 z-index가 가장 높은 것을 우선 히트로
+          반환하되, 겹치는 전체 스택도 함께 돌려줘 클릭 시 순환 선택에 쓴다.
+
+        반환값:
+            {"type": "handle", "idx": i, "mode": "head_start"/"head_end"} |
+            {"type": "body", "idx": i, "stack": [...]} |
+            {"type": "empty"}
+        """
         SUB_H = 26
+        if y > SUB_H:
+            return {"type": "empty"}
+
         dur   = self.player.duration
         cache = getattr(self, "_ts_cache", [])
-
         if dur <= 0:
             ends = [t_e for _, t_e in cache if t_e is not None]
             dur = max(ends) if ends else 0
 
-        self._wf_hovered_idx = None
+        if dur <= 0 or not cache or not self.subtitles:
+            return {"type": "empty"}
 
-        if y <= SUB_H and dur > 0 and cache and self.subtitles:
-            cw = self._pb_canvas.winfo_width()
-            start_r, end_r = self._wf_view_range()
-            HW = max(self._WF_HANDLE_W + 3, 7)
+        cw = self._pb_canvas.winfo_width()
+        start_r, end_r = self._wf_view_range()
+        HW = max(self._WF_HANDLE_W + 3, 7)
 
-            # body 위인지 먼저 확인 — 뒤에서부터 (위에 그려진 자막 우선)
-            # → hovered_idx를 항상 body 기준으로 설정
-            for i in range(len(cache)-1, -1, -1):
-                t_s, t_e = cache[i]
-                if t_s is None or t_e is None:
-                    continue
-                r_s, r_e = t_s/dur, t_e/dur
-                if r_e < start_r or r_s > end_r:
-                    continue
-                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-                if x1 <= x <= x2:
-                    self._wf_hovered_idx = i
-                    break   # 가장 위에 있는 자막으로 확정
+        # 현재 뷰포트에 보이는 자막들의 픽셀 범위
+        visible = []
+        for i, (t_s, t_e) in enumerate(cache):
+            if t_s is None or t_e is None:
+                continue
+            r_s, r_e = t_s / dur, t_e / dur
+            if r_e < start_r or r_s > end_r:
+                continue
+            x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
+            x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
+            visible.append((i, x1, x2))
 
-            # 커서: 핸들 범위면 ←→, 아니면 hand2
-            if self._wf_hovered_idx is not None:
-                t_s, t_e = cache[self._wf_hovered_idx]
-                if t_s is not None and t_e is not None:
-                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
-                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
-                    if abs(x - x1) <= HW or abs(x - x2) <= HW:
-                        self._pb_canvas.configure(cursor="sb_h_double_arrow")
-                        return
-                self._pb_canvas.configure(cursor="hand2")
-            else:
-                self._pb_canvas.configure(cursor="tcross")
+        # 1순위: 리사이즈 핸들
+        # 두 자막이 맞닿아 핸들이 같은 위치에 겹칠 때, 커서가 그 자막의
+        # '안쪽'(경계를 아직 넘지 않은 쪽)에 있는 핸들을 우선 선택한다.
+        # → 앞 자막의 끝 핸들을 잡으려는데 뒷 자막의 시작 핸들이 대신 잡히는
+        #    문제를 방지. 그 다음 가장 가까운 핸들, 그래도 동률이면 z-index
+        #    (인덱스 큰 쪽)가 승리한다.
+        best_key = None
+        best_hit = None
+        for i, x1, x2 in visible:
+            for mode, xh in (("head_start", x1), ("head_end", x2)):
+                d = abs(x - xh)
+                if d <= HW:
+                    if mode == "head_end":
+                        outside = 1 if x > xh else 0   # 경계 넘으면 바깥(다음 자막 쪽)
+                    else:
+                        outside = 1 if x < xh else 0   # 경계 못 미치면 바깥(이전 자막 쪽)
+                    key = (outside, d, -i)   # 안쪽 우선 → 거리 우선 → z-index 큰 쪽 승리
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best_hit = {"type": "handle", "idx": i, "mode": mode}
+        if best_hit is not None:
+            return best_hit
+
+        # 2순위: 자막 바디 — 겹치는 모든 자막 중 z-index(인덱스) 높은 게 최상단
+        stack = sorted((i for i, x1, x2 in visible if x1 <= x <= x2), reverse=True)
+        if stack:
+            return {"type": "body", "idx": stack[0], "stack": stack}
+
+        # 3순위: 빈 타임라인
+        return {"type": "empty"}
+
+    def _wf_cycle_click(self, stack, default_idx):
+        """겹친 자막 바디를 같은 위치에서 반복 클릭하면 z-index 역순으로 순환 선택."""
+        stack = sorted(set(stack), reverse=True)   # z-index 높은 것부터
+        if len(stack) <= 1:
+            return default_idx
+        last_stack = getattr(self, "_wf_last_click_stack", None)
+        last_idx   = getattr(self, "_wf_last_click_idx", None)
+
+        if last_stack == stack and last_idx in stack:
+            pos = stack.index(last_idx)
+            next_idx = stack[(pos + 1) % len(stack)]
         else:
+            next_idx = stack[0]   # 새 위치 클릭 → 최상단(z-index 최상위)부터
+
+        self._wf_last_click_stack = stack
+        self._wf_last_click_idx   = next_idx
+        return next_idx
+
+    def _wf_on_motion(self, event):
+        """마우스 위치에 따라 커서 변경 + hover 자막 추적."""
+        hit = self._wf_hit_test(event.x, event.y)
+        if hit["type"] == "handle":
+            self._wf_hovered_idx = hit["idx"]
+            self._pb_canvas.configure(cursor="sb_h_double_arrow")
+        elif hit["type"] == "body":
+            self._wf_hovered_idx = hit["idx"]
+            self._pb_canvas.configure(cursor="fleur")
+        elif event.y <= 26:
+            self._wf_hovered_idx = None
+            self._pb_canvas.configure(cursor="tcross")
+        else:
+            self._wf_hovered_idx = None
             self._pb_canvas.configure(cursor="hand2")
 
     def _pb_press(self, event):
-        x, y  = event.x, event.y
-        SUB_H = 26
+        x, y = event.x, event.y
         self._pb_press_x = x
+        self._pb_press_y = y
 
-        if y <= SUB_H:
-            dur   = self.player.duration
-            cache = getattr(self, "_ts_cache", [])
-            if dur <= 0:
-                ends = [t_e for _, t_e in cache if t_e is not None]
-                dur  = max(ends) if ends else 1.0
-            cw = self._pb_canvas.winfo_width()
-            start_r, end_r = self._wf_view_range()
-            HW = max(self._WF_HANDLE_W + 3, 7)
-            hovered = getattr(self, "_wf_hovered_idx", None)
+        # ── 드래그 캡처: 이 프레스에서 확정된 타겟을 버튼을 뗄 때까지 고정한다.
+        # 이후 _pb_drag/_pb_release는 hover가 아니라 여기서 만든 drag 상태
+        # (self._wf_sub_drag)만 참조하므로, 드래그 중 커서가 다른 자막 위를
+        # 지나가도 타겟이 바뀌지 않는다.
+        hit = self._wf_hit_test(x, y)
 
-            # ── 1순위: hover 자막의 핸들 (같은 거리 문제 회피) ──
-            if hovered is not None and hovered < len(cache):
-                t_s, t_e = cache[hovered]
-                if t_s is not None and t_e is not None:
-                    x1 = self._wf_ratio_to_x(t_s/dur, cw)
-                    x2 = self._wf_ratio_to_x(t_e/dur, cw)
-                    mid_x = (x1 + x2) / 2
-                    # hover 자막 내 절반 기준으로 시작/끝 결정
-                    mode = "head_start" if x <= mid_x else "head_end"
-                    self._start_handle_drag(mode, hovered)
-                    self._pb_sub_click_idx = hovered
-                    return
-
-            # ── 2순위: hover 없을 때 가장 가까운 핸들 ──
-            best_dist = float("inf")
-            best_mode = None
-            best_idx  = None
-            for i, (t_s, t_e) in enumerate(cache):
-                if t_s is None or t_e is None:
-                    continue
-                r_s, r_e = t_s/dur, t_e/dur
-                if r_e < start_r or r_s > end_r:
-                    continue
-                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-                x2 = self._wf_ratio_to_x(min(r_e, end_r), cw)
-                for mode_, xh in [("head_start", x1), ("head_end", x2)]:
-                    d = abs(x - xh)
-                    if d <= HW and d < best_dist:
-                        best_dist = d
-                        best_mode = mode_
-                        best_idx  = i
-
-            if best_idx is not None:
-                self._start_handle_drag(best_mode, best_idx)
-                return
-
-            # ── 3순위: 빈 공간 ──
-            self._wf_sub_drag = None
-            self._pb_dragging = True
+        if hit["type"] == "handle":
+            self._start_handle_drag(hit["mode"], hit["idx"])
             return
 
-        # ── 파형 영역 ────────────────────────────
+        if hit["type"] == "body":
+            self._start_body_drag(hit["idx"], x, stack=hit["stack"])
+            return
+
+        # ── 빈 타임라인 / 파형 영역 → 재생 위치 스크럽 ──
         self._wf_sub_drag = None
         self._pb_dragging = True
         self._pb_canvas.configure(cursor="hand2")
@@ -1893,7 +2760,7 @@ class SRTEditor(tk.Tk):
         self._pb_redraw()
 
     def _start_handle_drag(self, mode, idx):
-        """핸들 드래그 상태 초기화. undo 스냅샷을 드래그 시작 시점에 찍음."""
+        """리사이즈 핸들 드래그 상태 초기화. undo 스냅샷을 드래그 시작 시점에 찍음."""
         cache = getattr(self, "_ts_cache", [])
         self._push_undo()   # 변경 전 상태를 여기서 snapshot
         self._wf_sub_drag = {
@@ -1905,50 +2772,83 @@ class SRTEditor(tk.Tk):
         self._pb_sub_click_idx = None
         self._pb_canvas.configure(cursor="sb_h_double_arrow")
 
+    def _start_body_drag(self, idx, x, stack=None):
+        """자막 바디 드래그 시작 — 자막 전체를 길이 고정한 채 이동한다.
+        undo 스냅샷은 여기서 찍고(실제 클릭으로 끝나면 release에서 취소)."""
+        cache = getattr(self, "_ts_cache", [])
+        self._push_undo()
+        self._wf_sub_drag = {
+            "mode": "move", "idx": idx,
+            "t_s": cache[idx][0], "t_e": cache[idx][1],
+            "orig_t_s": cache[idx][0], "orig_t_e": cache[idx][1],
+            "press_x": x,
+            "stack": stack or [idx],
+        }
+        self._pb_dragging = False
+        self._pb_sub_click_idx = idx
+        self._pb_canvas.configure(cursor="fleur")
+
     def _pb_drag(self, event):
         drag = getattr(self, "_wf_sub_drag", None)
         if drag:
             dur = self.player.duration
-            if dur <= 0: return
+            if dur <= 0:
+                return
             cw = self._pb_canvas.winfo_width()
-            t  = max(0.0, self._wf_x_to_ratio(event.x, cw) * dur)
 
+            if drag["mode"] == "move":
+                # 자막 전체 이동 — 길이는 고정, 자유 오버랩 허용
+                # (다른 자막을 밀어내거나 스냅/충돌 처리를 하지 않는다)
+                press_ratio = self._wf_x_to_ratio(drag["press_x"], cw)
+                cur_ratio   = self._wf_x_to_ratio(event.x, cw)
+                delta_sec   = (cur_ratio - press_ratio) * dur
+                span = drag["orig_t_e"] - drag["orig_t_s"]
+                new_s = drag["orig_t_s"] + delta_sec
+                new_s = max(0.0, min(new_s, max(0.0, dur - span)))
+                drag["t_s"] = new_s
+                drag["t_e"] = new_s + span
+                self._pb_redraw()
+                return
+
+            # 리사이즈(핸들 드래그) — 최소 길이 강제 + 인접 자막 경계·재생헤드 스냅
+            # (다른 자막과 자유롭게 겹칠 수도 있음 — 스냅 범위 밖이면 그대로 이동)
             idx   = drag["idx"]
             cache = self._ts_cache
+            t = max(0.0, self._wf_x_to_ratio(event.x, cw) * dur)
             # 스냅 임계값: 현재 뷰에서 8px에 해당하는 초
             span_sec = (1.0 / max(1.0, self._wf_zoom)) * dur
             snap_sec = span_sec * 8 / max(cw, 1)
 
             if drag["mode"] == "head_start":
-                t = min(t, drag["t_e"] - 0.05)
-                # 스냅 후보: 앞 자막 종료점 + 재생 헤드
+                t = min(t, drag["t_e"] - self._MIN_SUB_DURATION)
+                # 스냅 후보: 다른 자막의 끝점 + 재생 헤드
                 snap_candidates = []
                 for j, (js, je) in enumerate(cache):
-                    if j == idx or je is None: continue
+                    if j == idx or je is None:
+                        continue
                     if abs(je - t) < snap_sec:
                         snap_candidates.append(je)
                 pos = self.media_progress_var.get()
                 if abs(pos - t) < snap_sec:
                     snap_candidates.append(pos)
                 if snap_candidates:
-                    drag["t_s"] = min(snap_candidates, key=lambda v: abs(v - t))
-                else:
-                    drag["t_s"] = t
+                    t = min(snap_candidates, key=lambda v: abs(v - t))
+                drag["t_s"] = max(0.0, t)
             else:
-                t = max(t, drag["t_s"] + 0.05)
-                # 스냅 후보: 뒤 자막 시작점 + 재생 헤드
+                t = max(t, drag["t_s"] + self._MIN_SUB_DURATION)
+                # 스냅 후보: 다른 자막의 시작점 + 재생 헤드
                 snap_candidates = []
                 for j, (js, je) in enumerate(cache):
-                    if j == idx or js is None: continue
+                    if j == idx or js is None:
+                        continue
                     if abs(js - t) < snap_sec:
                         snap_candidates.append(js)
                 pos = self.media_progress_var.get()
                 if abs(pos - t) < snap_sec:
                     snap_candidates.append(pos)
                 if snap_candidates:
-                    drag["t_e"] = min(snap_candidates, key=lambda v: abs(v - t))
-                else:
-                    drag["t_e"] = t
+                    t = min(snap_candidates, key=lambda v: abs(v - t))
+                drag["t_e"] = t
 
             self._pb_redraw()
             return
@@ -1970,21 +2870,30 @@ class SRTEditor(tk.Tk):
         if drag:
             idx = drag["idx"]
 
-            # 거의 안 움직였으면 → 클릭으로 판정, 자막 시작점 seek
+            # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프 변경 없음)
             if moved <= CLICK_THR:
                 self._wf_sub_drag = None
-                # 드래그 시작 시 찍은 undo 스냅샷 취소 (변경 없으므로)
+                # 드래그 시작 시 찍은 undo 스냅샷 취소 (실제 변경이 없었으므로)
                 if self._undo_stack:
                     self._undo_stack.pop()
-                cache = getattr(self, "_ts_cache", [])
-                t_s = cache[idx][0] if idx < len(cache) else None
-                if t_s is not None:
-                    self._do_seek(t_s)
+
+                if drag["mode"] == "move":
+                    # 자막 바디 클릭 — 같은 위치를 다시 클릭하면 겹친 자막들을 순환 선택
+                    target_idx = self._wf_cycle_click(drag.get("stack") or [idx], idx)
+                    if target_idx < len(self.subtitles):
+                        self._select_row(target_idx)
+                    else:
+                        self._pb_redraw()
                 else:
-                    self._pb_redraw()
+                    cache = getattr(self, "_ts_cache", [])
+                    t_s = cache[idx][0] if idx < len(cache) else None
+                    if t_s is not None:
+                        self._do_seek(t_s)
+                    else:
+                        self._pb_redraw()
                 return
 
-            # 실제 드래그 → 타임스탬프 적용 (undo는 _start_handle_drag에서 이미 찍음)
+            # 실제 드래그 → 타임스탬프 적용 (undo는 드래그 시작 시 이미 찍음)
             if 0 <= idx < len(self.subtitles):
                 t_s = drag.get("t_s", self._ts_cache[idx][0])
                 t_e = drag.get("t_e", self._ts_cache[idx][1])
@@ -2186,11 +3095,8 @@ class SRTEditor(tk.Tk):
         else:
             self._vol_icon.configure(text="🔊")
         self._vol_redraw()
-        # 재생 중이면 즉시 반영
-        if self.player.is_playing:
-            pos = self.player.position
-            self.player._kill_proc()
-            self.player._start_play(pos)
+        # 재생 중이어도 끊김 없이 실시간으로 볼륨만 반영
+        self.player.set_volume(v)
 
     def _toggle_mute(self, event=None):
         """볼륨 아이콘 클릭 → 음소거/복원 토글."""
@@ -2289,8 +3195,8 @@ class SRTEditor(tk.Tk):
         except Exception as e:
             import traceback; traceback.print_exc()
 
-    def _open_settings(self):
-        """설정 창 (탭: 패턴 / 화자 분석)"""
+    def _open_settings(self, tab_idx=0):
+        """설정 창 (탭: 패턴 / 자동자막 / 모델관리)"""
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
         win.title("설정")
@@ -2441,9 +3347,87 @@ class SRTEditor(tk.Tk):
 
         # ── 탭 2: 모델 관리 ────────────────────
         tab2 = tk.Frame(nb, bg=BG)
-        nb.add(tab2, text="  📦 모델 관리  ")
-        self._build_model_mgmt_tab(tab2)
+        nb.add(tab2, text="  ✍  자동 자막  ")
+        self._build_transcribe_settings_tab(tab2)
 
+        tab3 = tk.Frame(nb, bg=BG)
+        nb.add(tab3, text="  📦 모델 관리  ")
+        self._build_model_mgmt_tab(tab3)
+
+
+    def _build_transcribe_settings_tab(self, parent):
+        """자동 자막 생성 설정 탭."""
+        tk.Label(parent, text="자동 자막 설정", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
+        tk.Label(parent,
+                 text="미디어 파일 드래그 시 자동 자막 생성에 사용되는 설정입니다.",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9)).pack(anchor="w", padx=20, pady=(0, 14))
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(0, 14))
+
+        # 문장 당 글자 수 제한 (슬라이더, 10~50, 기본 25)
+        row1 = tk.Frame(parent, bg=BG)
+        row1.pack(fill="x", padx=20, pady=(0, 4))
+        tk.Label(row1, text="문장 당 글자 수 제한", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        if not hasattr(self, "_transcribe_max_chars_var"):
+            self._transcribe_max_chars_var = tk.IntVar(
+                value=getattr(self, "_transcribe_max_chars", 25))
+        _chars_val_lbl = tk.Label(row1, text=f"{self._transcribe_max_chars_var.get()}자",
+                                  bg=BG, fg=FG, font=(FONT_FAMILY, 9), width=5)
+        _chars_val_lbl.pack(side="right")
+        def _on_chars_change(*_):
+            try:
+                v = int(self._transcribe_max_chars_var.get())
+                self._transcribe_max_chars = v
+                _chars_val_lbl.configure(text=f"{v}자")
+                cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
+            except Exception: pass
+        def _chars_slider_cmd(v):
+            self._transcribe_max_chars_var.set(int(v))
+            _on_chars_change()
+        PurpleSlider(parent, from_=10, to=50,
+                     value=self._transcribe_max_chars_var.get(),
+                     width=340, command=_chars_slider_cmd, bg=BG
+                     ).pack(padx=20, anchor="w", pady=(2, 14))
+        self._transcribe_max_chars_var.trace_add("write", _on_chars_change)
+
+        # 문장 끝 마침표
+        row2 = tk.Frame(parent, bg=BG)
+        row2.pack(fill="x", padx=20, pady=(0, 12))
+        tk.Label(row2, text="\ubb38\uc7a5 \ub05d \ub9c8\uce68\ud45c \ucd94\uac00", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        if not hasattr(self, "_transcribe_period_var"):
+            self._transcribe_period_var = tk.BooleanVar(
+                value=getattr(self, "_transcribe_period", False))
+        def _save_period():
+            v = self._transcribe_period_var.get()
+            self._transcribe_period = v
+            cfg = _load_config(); cfg["transcribe_period"] = v; _save_config(cfg)
+        tk.Checkbutton(row2, variable=self._transcribe_period_var,
+                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                       font=(FONT_FAMILY, 9), cursor="hand2",
+                       text="\ud65c\uc131\ud654",
+                       command=_save_period).pack(side="left")
+
+        # 자동 맞춤법 검사 (UI만)
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(4, 14))
+        row3 = tk.Frame(parent, bg=BG)
+        row3.pack(fill="x", padx=20, pady=(0, 4))
+        tk.Label(row3, text="\uc790\ub3d9 \ub9de\ucda4\ubc95 \uac80\uc0ac", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        if not hasattr(self, "_transcribe_spellcheck_var"):
+            self._transcribe_spellcheck_var = tk.BooleanVar(value=False)
+        def _save_spellcheck():
+            v = self._transcribe_spellcheck_var.get()
+            self._transcribe_spellcheck = v
+            cfg = _load_config(); cfg["transcribe_spellcheck"] = v; _save_config(cfg)
+        tk.Checkbutton(row3, variable=self._transcribe_spellcheck_var,
+                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                       font=(FONT_FAMILY, 9), cursor="hand2",
+                       text="\ud65c\uc131\ud654  (\ub124\uc774\ubc84 \ub9de\ucda4\ubc95 \uac80\uc0ac\uae30 \uc0ac\uc6a9)",
+                       command=_save_spellcheck).pack(side="left")
+        tk.Label(row3, text="\u26a0\ufe0f  \uc778\ud130\ub137 \uc5f0\uacb0 \ud544\uc694 / \uc790\ub9c9 \uc0dd\uc131 \uc2dc\uc5d0\ub9cc \uc801\uc6a9",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left", padx=(8, 0))
 
     def _build_model_mgmt_tab(self, parent):
         """다운로드된 모델 캐시 관리 탭."""
@@ -2731,6 +3715,32 @@ class SRTEditor(tk.Tk):
             _tip_lbl.configure(text=_mode_tips.get(self._diarize_mode_var.get(), ""))
         self._diarize_mode_var.trace_add("write", _on_mode_change)
 
+        # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
+        sens_frame = tk.Frame(parent, bg=BG)
+        sens_frame.pack(fill="x", padx=20, pady=(0, 8))
+        tk.Label(sens_frame, text="분리 민감도", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
+                 ).pack(side="left")
+        if not hasattr(self, "_diarize_sensitivity_var"):
+            self._diarize_sensitivity_var = tk.IntVar(
+                value=getattr(self, "_diarize_sensitivity_init", 65))
+        _sens_val_lbl = tk.Label(sens_frame, bg=BG, fg=FG, font=(FONT_FAMILY, 9), width=4)
+        _sens_val_lbl.pack(side="right")
+        def _sens_upd(*_):
+            _sens_val_lbl.configure(text=str(int(self._diarize_sensitivity_var.get())))
+        def _sens_cmd(v):
+            self._diarize_sensitivity_var.set(int(v))
+            _sens_upd()
+        _sens_upd()
+        PurpleSlider(sens_frame, from_=0, to=100,
+                     value=self._diarize_sensitivity_var.get(),
+                     width=220, command=_sens_cmd, bg=BG
+                     ).pack(side="left", padx=(0, 6))
+        tk.Label(parent,
+                 text="  높을수록 화자를 더 잘게(예민하게) 구분, 낮을수록 비슷한 목소리를 같은 화자로 묶음",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
+                 ).pack(fill="x", padx=20, pady=(0, 6))
+
         # 디바이스 선택
         dev_frame = tk.Frame(parent, bg=BG)
         dev_frame.pack(fill="x", padx=20, pady=(4, 8))
@@ -2925,6 +3935,7 @@ class SRTEditor(tk.Tk):
         mode        = _safe_get(getattr(self, "_diarize_mode_var", None), getattr(self, "_diarize_mode_init", "balanced"))
         device_pref = _safe_get(getattr(self, "_diarize_device_var", None), getattr(self, "_diarize_device_init", "auto"))
         batch_idx   = _safe_get(getattr(self, "_diarize_batch_var", None), 3)
+        sensitivity = _safe_get(getattr(self, "_diarize_sensitivity_var", None), getattr(self, "_diarize_sensitivity_init", 65))
 
         _cfg = _load_config()
         if hf_tok:
@@ -2936,10 +3947,44 @@ class SRTEditor(tk.Tk):
         _cfg["diarize_mode"]   = mode
         _cfg["diarize_device"] = device_pref
         _cfg["diarize_batch"]  = batch_idx
+        _cfg["diarize_sensitivity"] = sensitivity
         self._diarize_num_spk_val = num_spk
         self._diarize_mode_init   = mode
         self._diarize_device_init = device_pref
         self._diarize_batch_init  = batch_idx
+        self._diarize_sensitivity_init = sensitivity
+
+    def _get_diarize_sensitivity(self):
+        """현재 설정된 화자 분리 민감도(0~100)를 반환. UI가 아직 없으면 저장된/기본값 사용."""
+        var = getattr(self, "_diarize_sensitivity_var", None)
+        if var is not None:
+            try:
+                return max(0, min(100, int(var.get())))
+            except Exception:
+                pass
+        return max(0, min(100, int(getattr(self, "_diarize_sensitivity_init", 65))))
+
+    def _apply_diarize_sensitivity(self, diarize_model, sensitivity):
+        """화자 분리 민감도(0~100)를 pyannote 파이프라인의 클러스터링 임계값에 반영.
+        민감도가 높을수록 임계값을 낮춰 화자를 더 잘게(예민하게) 구분한다.
+        (clustering.threshold: 값이 작을수록 서로 다른 화자로 더 쉽게 나뉨)
+        whisperx/pyannote 버전에 따라 내부 구조가 다를 수 있으므로, 실패해도
+        조용히 무시하고 파이프라인 기본 설정으로 계속 진행한다."""
+        try:
+            sensitivity = max(0, min(100, int(sensitivity)))
+            pipeline = getattr(diarize_model, "model", None)
+            if pipeline is None or not hasattr(pipeline, "parameters"):
+                return
+            params = pipeline.parameters(instantiated=True)
+            clustering = params.get("clustering") if isinstance(params, dict) else None
+            if not isinstance(clustering, dict) or "threshold" not in clustering:
+                return
+            # 민감도 0(둔감) → 임계값 0.85 / 100(예민) → 임계값 0.45
+            LOW, HIGH = 0.45, 0.85
+            clustering["threshold"] = HIGH - (sensitivity / 100.0) * (HIGH - LOW)
+            pipeline.instantiate(params)
+        except Exception:
+            pass
         _save_config(_cfg)
 
     def _run_diarize_whisperx(self):
@@ -3510,6 +4555,7 @@ class SRTEditor(tk.Tk):
                     token=hf_tok,
                     device=device,
                 )
+                self._apply_diarize_sensitivity(diarize_model, self._get_diarize_sensitivity())
                 kw = {}
                 if num_spk > 0:
                     kw["num_speakers"] = num_spk
@@ -3983,6 +5029,7 @@ class SRTEditor(tk.Tk):
     # ── 자막 테이블 (가상 스크롤) ─────────────
     # 컬럼 정의: num / ts_s / ts_e / content(가변) / speaker / del
     _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
+    _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
     _COL_IDS   = ["num", "ts_s", "ts_e", "speaker"]
     _COL_DEF_W = {"num": 40, "ts_s": 132, "ts_e": 132, "speaker": 220}
     ROW_H      = 34   # 행 높이 (px)
@@ -4308,16 +5355,7 @@ class SRTEditor(tk.Tk):
         MENU_DIM    = FG_DIM
 
         def make_menu(parent=None):
-            return tk.Menu(
-                parent or self, tearoff=0,
-                bg=MENU_BG, fg=MENU_FG,
-                activebackground=MENU_ACT_BG, activeforeground="white",
-                disabledforeground=MENU_DIM,
-                relief="flat", bd=0,
-                font=(FONT_FAMILY, 9),
-                activeborderwidth=0,
-                selectcolor=ACCENT,
-            )
+            return PopupMenu(self)
 
         menu = make_menu()
 
@@ -4361,7 +5399,7 @@ class SRTEditor(tk.Tk):
             spk_menu.add_separator()
             for i, spk in enumerate(self.speakers):
                 spk_menu.add_command(
-                    label=spk,
+                    label=f"{spk}",
                     accelerator=str(i+1) if i < 9 else "",
                     foreground=self._speaker_color(spk),
                     activeforeground=self._speaker_color(spk),
@@ -4378,10 +5416,7 @@ class SRTEditor(tk.Tk):
                          state="normal" if has_media else "disabled",
                          command=lambda: self._ctx_set_timestamp_end(anchor_idx))
 
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root)
 
     def _ctx_set_speaker(self, val):
         """컨텍스트 메뉴에서 화자 설정 — 다중 선택 일괄 적용."""
@@ -4494,6 +5529,9 @@ class SRTEditor(tk.Tk):
         # 슬롯 위젯 위 클릭이면 슬롯 핸들러가 처리 — 여기서는 anchor만 기억
         if not self.subtitles:
             return
+        # 드래그 도중 편집 중이던 Entry가 남아있으면 슬롯 재매핑 시 엉뚱한
+        # 행에 저장될 수 있으므로, 드래그 시작 시 바로 포커스를 풀어 커밋한다.
+        self._blur_all_entries()
         self._drag_sel_anchor = self._canvas_y_to_idx(event.y)
         self._drag_sel_active = False   # motion 이 일어날 때 활성화
 
@@ -4600,10 +5638,19 @@ class SRTEditor(tk.Tk):
         for slot_idx in range(n_slots):
             di = first_idx + slot_idx
             prev_di = self._slot_data[slot_idx]
-            self._slot_data[slot_idx] = di if di < n else -1
 
             wi     = self._slot_widgets[slot_idx]
             win_id = wi["_win_id"]
+            _edit_entries = (wi.get("content"), wi.get("ts_s"), wi.get("ts_e"))
+
+            # 편집 중(포커스 상태)인 Entry(텍스트/타임스탬프)가 있는 슬롯은 매핑을
+            # 바꾸지 않는다. 그렇지 않으면 편집 중 드래그/자동스크롤로 이 슬롯이
+            # 다른 자막 인덱스로 재매핑되고, 편집을 마쳤을 때(FocusOut) 엉뚱한
+            # 행에 값이 저장된다.
+            if prev_di >= 0 and self.focus_get() in _edit_entries:
+                continue
+
+            self._slot_data[slot_idx] = di if di < n else -1
 
             if di >= n:
                 self.canvas.itemconfigure(win_id, state="hidden")
@@ -5325,19 +6372,42 @@ class SRTEditor(tk.Tk):
         self._unsaved = True
 
     def add_speaker(self):
-        name = simpledialog.askstring("화자 추가", "화자 이름을 입력하세요:", parent=self)
-        if not name or not name.strip():
-            return
-        name = name.strip()
-        if name in self.speakers:
-            messagebox.showwarning("중복", f"'{name}' 화자가 이미 있습니다.", parent=self)
-            return
+        # 고유 기본 이름 생성 (새화자1, 새화자2 ...)
+        i = 1
+        while f"새화자{i}" in self.speakers:
+            i += 1
+        name = f"새화자{i}"
         self._push_undo()
         self.speakers.append(name)
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)
         self._render_speakers()
         self._update_count()
+        # 추가된 화자의 entry를 바로 편집 모드로
+        self.after(50, lambda: self._start_speaker_edit(name))
+
+    def _start_speaker_edit(self, name):
+        """화자 이름 레이블을 찾아 entry 편집 모드로 전환."""
+        for child in self.speaker_inner.winfo_children():
+            # 각 row 안에서 name_canvas / entry 찾기
+            for widget in child.winfo_children():
+                for sub in widget.winfo_children():
+                    # name_frame 안의 entry 찾기
+                    if isinstance(sub, tk.Entry):
+                        try:
+                            var = sub.cget("textvariable")
+                            if self.tk.globalgetvar(var) == name:
+                                # canvas 숨기고 entry 표시
+                                for sib in sub.master.winfo_children():
+                                    if isinstance(sib, tk.Canvas):
+                                        sib.pack_forget()
+                                        break
+                                sub.pack(fill="x", expand=True, ipady=2)
+                                sub.focus_set()
+                                sub.select_range(0, "end")
+                                return
+                        except Exception:
+                            pass
 
     def rename_speaker(self, old_name, new_name=None):
         if new_name is None:
@@ -5382,6 +6452,51 @@ class SRTEditor(tk.Tk):
         self._update_count()
 
     # ── 파일 열기 ─────────────────────────────
+    def _close_to_home(self):
+        """현재 파일을 닫고 초기 상태(홈)로 돌아감. 미저장 시 확인."""
+        if self._unsaved:
+            ans = messagebox.askyesnocancel(
+                "저장 확인",
+                "저장하지 않은 변경사항이 있습니다.\n저장 후 닫을까요?",
+                parent=self
+            )
+            if ans is None:   # 취소
+                return
+            if ans:           # 예 → 저장
+                self.save_file()
+                if self._unsaved:  # 저장 실패(경로 없음 등)
+                    self.save_file_as()
+                    if self._unsaved:
+                        return
+
+        # 초기 상태로 리셋
+        self._push_undo()
+        self.subtitles     = []
+        self.speakers      = []
+        self.speaker_colors = {}
+        self.save_path     = None
+        self.media_path    = None
+        self._unsaved      = False
+        self._undo_stack   = []
+        self._redo_stack   = []
+
+        self.player.stop()
+        self.title("SRT Speaker Editer")
+
+        self._rebuild_ts_cache()
+        self._update_scrollregion()
+        self._fill_slots(0)
+        self._render_speakers()
+        self._update_count()
+        self._pb_redraw()
+        # 파형 초기화
+        self._waveform_pts = []
+        self._wf_loading   = False
+        try:
+            self.lbl_media.configure(text="")
+        except Exception:
+            pass
+
     def open_file(self):
         path = filedialog.askopenfilename(
             title="SRT 파일 선택",
@@ -5792,44 +6907,8 @@ class SRTEditor(tk.Tk):
         return f"{h}:{m:02d}:{s:02d}"
 
     # ── 전체 저장 ─────────────────────────────
-    def save_file(self):
-        if not self.subtitles:
-            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
-            return
-        if not self.save_path:
-            self.save_file_as()
-            return
-        try:
-            meta = {}
-            if self.speaker_colors:
-                meta["speaker_colors"] = self.speaker_colors
-            if g_display_pattern != DEFAULT_DISPLAY_PATTERN:
-                meta["display_pattern"] = g_display_pattern
-            write_srt_tagged(self.subtitles, self.save_path, meta or None)
-            self._unsaved = False
-            _fn = os.path.splitext(os.path.basename(self.save_path))[0]
-            self.title(f"{_fn} - SRT Speaker Editer  ✓")
-            self.after(800, lambda fn=_fn: self.title(f"{fn} - SRT Speaker Editer"))
-        except Exception as e:
-            messagebox.showerror("저장 오류", str(e), parent=self)
-
-    def save_file_as(self):
-        if not self.subtitles:
-            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
-            return
-        default = ""
-        if self.filepath:
-            base = os.path.splitext(os.path.basename(self.filepath))[0]
-            default = os.path.join(os.path.dirname(self.filepath), f"{base}_tagged.srt")
-        path = filedialog.asksaveasfilename(
-            title="다른 이름으로 저장",
-            initialfile=os.path.basename(default) if default else "output_tagged.srt",
-            initialdir=os.path.dirname(default) if default else "",
-            defaultextension=".srt",
-            filetypes=[("SRT 파일", "*.srt"), ("모든 파일", "*.*")],
-            parent=self)
-        if not path:
-            return
+    def _do_write_srt(self, path):
+        """실제 SRT 파일 쓰기 + 타이틀/상태 갱신. 성공 시 True 반환."""
         try:
             meta = {}
             if self.speaker_colors:
@@ -5839,11 +6918,65 @@ class SRTEditor(tk.Tk):
             write_srt_tagged(self.subtitles, path, meta or None)
             self._unsaved = False
             self.save_path = path
-            _fn2 = os.path.splitext(os.path.basename(path))[0]
-            self.title(f"{_fn2} - SRT Speaker Editer  ✓")
-            self.after(800, lambda fn=_fn2: self.title(f"{fn} - SRT Speaker Editer"))
+            _fn = os.path.splitext(os.path.basename(path))[0]
+            self.title(f"{_fn} - SRT Speaker Editer  ✓")
+            self.after(800, lambda fn=_fn: self.title(f"{fn} - SRT Speaker Editer"))
+            return True
         except Exception as e:
             messagebox.showerror("저장 오류", str(e), parent=self)
+            return False
+
+    def save_file(self):
+        """저장 — 경로 있으면 바로 덮어쓰기, 없으면 처음 한 번만 경로 묻기."""
+        if not self.subtitles:
+            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
+            return
+        if self.save_path:
+            # 경로 확정 → 바로 덮어쓰기
+            self._do_write_srt(self.save_path)
+        else:
+            # 처음 저장 → 경로 선택
+            self.save_file_as()
+
+    def save_file_as(self):
+        """다른 이름으로 저장 — 항상 파일 선택 창 표시."""
+        if not self.subtitles:
+            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
+            return
+
+        # 기본 디렉터리/파일명 결정
+        # 우선순위: 마지막 저장 경로 > 원본 SRT 경로 > 현재 디렉터리
+        if self.save_path:
+            init_dir  = os.path.dirname(self.save_path)
+            init_file = os.path.basename(self.save_path)
+        elif hasattr(self, "filepath") and self.filepath:
+            base      = os.path.splitext(os.path.basename(self.filepath))[0]
+            init_dir  = os.path.dirname(self.filepath)
+            init_file = f"{base}_tagged.srt"
+        else:
+            init_dir  = ""
+            init_file = "output.srt"
+
+        path = filedialog.asksaveasfilename(
+            title="다른 이름으로 저장",
+            initialfile=init_file,
+            initialdir=init_dir,
+            defaultextension=".srt",
+            filetypes=[("SRT 파일", "*.srt"), ("모든 파일", "*.*")],
+            confirmoverwrite=False,   # OS 다이얼로그 덮어쓰기 확인 비활성
+            parent=self)
+        if not path:
+            return
+
+        # 파일 존재 시 간단한 확인만
+        if os.path.exists(path):
+            if not messagebox.askyesno(
+                    "덮어쓰기 확인",
+                    f"'{os.path.basename(path)}'이(가) 이미 존재합니다.\n덮어쓰시겠습니까?",
+                    parent=self):
+                return
+
+        self._do_write_srt(path)
 
     def _update_count(self):
         total      = len(self.subtitles)
