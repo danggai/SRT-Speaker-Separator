@@ -1188,6 +1188,8 @@ class SRTEditor(tk.Tk):
         self._diarize_mode_init    = _cfg.get("diarize_mode", "balanced")
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")
         self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 65)
+        self._proper_nouns         = dict(_cfg.get("proper_nouns", {}))
+        self._proper_nouns_enabled = _cfg.get("proper_nouns_enabled", True)
         self._recent_tokens        = _cfg.get("recent_tokens", [])
         self._diarize_batch_init  = _cfg.get("diarize_batch", 3)   # index=3 → batch=16 (권장)
 
@@ -1451,7 +1453,12 @@ class SRTEditor(tk.Tk):
 
         # 어디를 클릭해도 content Entry 포커스/하이라이트 해제
         # (단, Entry 자체 클릭은 제외 — tkinter가 자동으로 포커스를 줌)
-        self.bind_all("<Button-1>", self._on_global_click, add=True)
+        self.bind_all("<Button-1>",  self._on_global_click, add=True)
+        # 드래그가 진행되는 동안(B1-Motion)에도 한 번 더 검사 — Entry가 아닌
+        # 위젯 위로 드래그가 넘어가는 첫 순간 확실하게 blur/커밋되도록 하는
+        # 이중 안전장치 (예: 편집 중이던 Entry에서 시작된 드래그가 아니라도
+        # 어떤 경로로든 Entry가 포커스를 유지한 채 드래그가 진행되는 것을 방지)
+        self.bind_all("<B1-Motion>", self._on_global_click, add=True)
 
     # ── 드롭 존 오버레이 ─────────────────────
     def _build_drop_overlay(self):
@@ -1488,6 +1495,7 @@ class SRTEditor(tk.Tk):
 
     def _show_overlay(self):
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
+        self.overlay.lift()
 
     # ── 드래그 앤 드롭 설정 ──────────────────
     def _attach_tooltips(self):
@@ -1646,8 +1654,9 @@ class SRTEditor(tk.Tk):
                            cursor="hand2").pack(side="left", padx=(0,4))
 
         # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
+        # 화자 수를 직접 지정했을 때는 그 값이 우선이므로 민감도는 자동으로
+        # 최대(100)로 고정하고, 화자 수가 0(자동)일 때만 슬라이더를 노출한다.
         _sens_row = tk.Frame(diar_frame, bg=BG)
-        _sens_row.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(_sens_row, text="분리 민감도", bg=BG, fg=FG_DIM,
                  font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
         if not hasattr(self, "_diarize_sensitivity_var"):
@@ -1662,10 +1671,29 @@ class SRTEditor(tk.Tk):
             self._diarize_sensitivity_var.set(int(v))
             _sens_upd()
         _sens_upd()
-        PurpleSlider(_sens_row, from_=0, to=100,
+        _sens_slider = PurpleSlider(_sens_row, from_=0, to=100,
                      value=self._diarize_sensitivity_var.get(),
-                     width=160, height=16, command=_sens_cmd, bg=BG
-                     ).pack(side="left", padx=(6, 0))
+                     width=160, height=16, command=_sens_cmd, bg=BG)
+        _sens_slider.pack(side="left", padx=(6, 0))
+
+        def _sens_visibility_upd(*_):
+            try:
+                spk = int(self._diarize_num_spk.get())
+            except Exception:
+                spk = 0
+            if spk != 0:
+                # 화자 수를 직접 지정 → 민감도는 의미 없으므로 최대치로 고정 후 숨김
+                self._diarize_sensitivity_var.set(100)
+                _sens_slider.set(100, fire=False)
+                _sens_upd()
+                _sens_row.pack_forget()
+            else:
+                _sens_row.pack(fill="x", padx=10, pady=(0, 8))
+        # 이전에 열렸던 다이얼로그의 콜백이 남아있지 않도록 정리 후 등록
+        for _t in self._diarize_num_spk.trace_info():
+            self._diarize_num_spk.trace_remove(_t[0], _t[1])
+        self._diarize_num_spk.trace_add("write", _sens_visibility_upd)
+        _sens_visibility_upd()
 
         # ── 자막 설정 인라인 ──────────────────────────────────
         tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(12, 8))
@@ -1680,23 +1708,42 @@ class SRTEditor(tk.Tk):
         if not hasattr(self, "_transcribe_max_chars_var"):
             self._transcribe_max_chars_var = tk.IntVar(
                 value=getattr(self, "_transcribe_max_chars", 25))
-        _cs_val = tk.Label(_cs_row, bg=BG, fg=FG, font=(FONT_FAMILY, 8), width=4)
-        _cs_val.pack(side="right")
+        _CS_MIN, _CS_MAX = 10, 50
+        tk.Label(_cs_row, text="자", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8)).pack(side="right")
+        _cs_entry_var = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
+        _cs_entry = tk.Entry(_cs_row, textvariable=_cs_entry_var, width=4,
+                              bg=BG3, fg=FG, insertbackground=FG, justify="center",
+                              relief="flat", highlightthickness=1,
+                              highlightbackground=BORDER, highlightcolor=ACCENT,
+                              font=(FONT_FAMILY, 8))
+        _cs_entry.pack(side="right", padx=(0, 2))
         def _cs_upd(*_):
             try:
                 v = int(self._transcribe_max_chars_var.get())
                 self._transcribe_max_chars = v
-                _cs_val.configure(text=f"{v}자")
+                _cs_entry_var.set(str(v))
                 cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
             except Exception: pass
         _cs_upd()
         def _cs_slider_cmd(v):
             self._transcribe_max_chars_var.set(int(v))
             _cs_upd()
-        PurpleSlider(win, from_=10, to=50,
+        _cs_slider = PurpleSlider(win, from_=_CS_MIN, to=_CS_MAX,
                      value=self._transcribe_max_chars_var.get(),
-                     width=360, command=_cs_slider_cmd, bg=BG
-                     ).pack(padx=16, pady=(2, 6))
+                     width=360, command=_cs_slider_cmd, bg=BG)
+        _cs_slider.pack(padx=16, pady=(2, 6))
+        def _cs_entry_commit(*_):
+            try:
+                v = int(_cs_entry_var.get())
+            except Exception:
+                v = self._transcribe_max_chars_var.get()
+            v = max(_CS_MIN, min(_CS_MAX, v))
+            self._transcribe_max_chars_var.set(v)
+            _cs_slider.set(v, fire=False)
+            _cs_upd()
+        _cs_entry.bind("<Return>",   _cs_entry_commit)
+        _cs_entry.bind("<FocusOut>", _cs_entry_commit)
 
         # 연산 디바이스 (화자분리 설정 공유)
         _dev_row = tk.Frame(win, bg=BG)
@@ -1900,9 +1947,10 @@ class SRTEditor(tk.Tk):
                 compute = "float16" if device == "cuda" else "float32"
 
                 _set(f"Whisper 모델 로드 중... ({device})", 5)
+                _pn_hint = self._build_proper_noun_hint()
                 model = whisperx.load_model("large-v3-turbo", device,
                                             compute_type=compute,
-                                            asr_options={"beam_size": 3})
+                                            asr_options={"beam_size": 3, **_pn_hint})
 
                 _set("음성 로드 중...", 15)
                 audio = whisperx.load_audio(media_path)
@@ -1912,6 +1960,11 @@ class SRTEditor(tk.Tk):
                 result = model.transcribe(audio, batch_size=batch_size)
                 del model
                 if device == "cuda": torch.cuda.empty_cache()
+                try:
+                    _full_text = " ".join(s.get("text", "") for s in result.get("segments", []))
+                    self._update_proper_noun_freq(_full_text)
+                except Exception:
+                    pass
 
                 _set("타임스탬프 정렬 중...", 60)
                 model_a, meta = whisperx.load_align_model(
@@ -2216,6 +2269,7 @@ class SRTEditor(tk.Tk):
         self._pb_canvas.bind("<Motion>",          self._wf_on_motion)
         self._pb_canvas.bind("<MouseWheel>",      self._wf_mousewheel)
         self._pb_canvas.bind("<Control-MouseWheel>", self._wf_zoom_wheel)
+        self._pb_canvas.bind("<Button-3>",           self._pb_right_click)
         # panel 생성 완료 후 모든 자식 위젯에 스크롤 바인딩
         self._pb_configure_job = None
 
@@ -2915,6 +2969,28 @@ class SRTEditor(tk.Tk):
             return
         self._do_seek(self._pb_pos_from_x(event.x))
 
+    def _pb_right_click(self, event):
+        """재생바 우클릭.
+        - 자막 바디/핸들 위 → 자막 행과 동일한 컨텍스트 메뉴(선택 포함)
+        - 빈 영역 → 클릭한 위치의 시간으로 새 자막을 만드는 메뉴"""
+        hit = self._wf_hit_test(event.x, event.y)
+
+        if hit["type"] in ("handle", "body"):
+            idx = hit["idx"]
+            if idx not in getattr(self, "_selected_rows", set()):
+                self._select_row(idx)
+            self._show_context_menu(event, idx)
+            return
+
+        # 빈 영역 — 클릭한 위치의 시간으로 새 자막 생성
+        if not self.media_path:
+            return
+        t = self._pb_pos_from_x(event.x)
+        menu = PopupMenu(self)
+        menu.add_command(label=f"+ 새 자막 만들기 ({self._fmt_time(t)})",
+                         command=lambda: self.add_row_at_time(t))
+        menu.tk_popup(event.x_root, event.y_root)
+
     def _do_seek(self, pos, update_selection=True):
         """지정 위치로 seek.
         update_selection=True(기본): 재생바 직접 이동 시, 해당 위치 자막을 선택으로 설정.
@@ -3364,7 +3440,7 @@ class SRTEditor(tk.Tk):
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 9)).pack(anchor="w", padx=20, pady=(0, 14))
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(0, 14))
 
-        # 문장 당 글자 수 제한 (슬라이더, 10~50, 기본 25)
+        # 문장 당 글자 수 제한 (슬라이더 + 직접 입력, 10~50, 기본 25)
         row1 = tk.Frame(parent, bg=BG)
         row1.pack(fill="x", padx=20, pady=(0, 4))
         tk.Label(row1, text="문장 당 글자 수 제한", bg=BG, fg=FG,
@@ -3372,24 +3448,41 @@ class SRTEditor(tk.Tk):
         if not hasattr(self, "_transcribe_max_chars_var"):
             self._transcribe_max_chars_var = tk.IntVar(
                 value=getattr(self, "_transcribe_max_chars", 25))
-        _chars_val_lbl = tk.Label(row1, text=f"{self._transcribe_max_chars_var.get()}자",
-                                  bg=BG, fg=FG, font=(FONT_FAMILY, 9), width=5)
-        _chars_val_lbl.pack(side="right")
+        _CHARS_MIN, _CHARS_MAX = 10, 50
+        tk.Label(row1, text="자", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9)).pack(side="right")
+        _chars_entry_var = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
+        _chars_entry = tk.Entry(row1, textvariable=_chars_entry_var, width=4,
+                                 bg=BG3, fg=FG, insertbackground=FG, justify="center",
+                                 relief="flat", highlightthickness=1,
+                                 highlightbackground=BORDER, highlightcolor=ACCENT,
+                                 font=(FONT_FAMILY, 9))
+        _chars_entry.pack(side="right", padx=(0, 2))
         def _on_chars_change(*_):
             try:
                 v = int(self._transcribe_max_chars_var.get())
                 self._transcribe_max_chars = v
-                _chars_val_lbl.configure(text=f"{v}자")
+                _chars_entry_var.set(str(v))
                 cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
             except Exception: pass
         def _chars_slider_cmd(v):
             self._transcribe_max_chars_var.set(int(v))
             _on_chars_change()
-        PurpleSlider(parent, from_=10, to=50,
+        _chars_slider = PurpleSlider(parent, from_=_CHARS_MIN, to=_CHARS_MAX,
                      value=self._transcribe_max_chars_var.get(),
-                     width=340, command=_chars_slider_cmd, bg=BG
-                     ).pack(padx=20, anchor="w", pady=(2, 14))
+                     width=340, command=_chars_slider_cmd, bg=BG)
+        _chars_slider.pack(padx=20, anchor="w", pady=(2, 14))
         self._transcribe_max_chars_var.trace_add("write", _on_chars_change)
+        def _chars_entry_commit(*_):
+            try:
+                v = int(_chars_entry_var.get())
+            except Exception:
+                v = self._transcribe_max_chars_var.get()
+            v = max(_CHARS_MIN, min(_CHARS_MAX, v))
+            self._transcribe_max_chars_var.set(v)   # trace가 _on_chars_change 호출
+            _chars_slider.set(v, fire=False)
+        _chars_entry.bind("<Return>",   _chars_entry_commit)
+        _chars_entry.bind("<FocusOut>", _chars_entry_commit)
 
         # 문장 끝 마침표
         row2 = tk.Frame(parent, bg=BG)
@@ -3716,7 +3809,11 @@ class SRTEditor(tk.Tk):
         self._diarize_mode_var.trace_add("write", _on_mode_change)
 
         # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
-        sens_frame = tk.Frame(parent, bg=BG)
+        # 화자 수를 직접 지정했을 때는 그 값이 우선이므로 민감도는 자동으로
+        # 최대(100)로 고정하고, 화자 수가 0(자동)일 때만 슬라이더를 노출한다.
+        _sens_container = tk.Frame(parent, bg=BG)
+
+        sens_frame = tk.Frame(_sens_container, bg=BG)
         sens_frame.pack(fill="x", padx=20, pady=(0, 8))
         tk.Label(sens_frame, text="분리 민감도", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
@@ -3732,14 +3829,33 @@ class SRTEditor(tk.Tk):
             self._diarize_sensitivity_var.set(int(v))
             _sens_upd()
         _sens_upd()
-        PurpleSlider(sens_frame, from_=0, to=100,
+        _sens_slider = PurpleSlider(sens_frame, from_=0, to=100,
                      value=self._diarize_sensitivity_var.get(),
-                     width=220, command=_sens_cmd, bg=BG
-                     ).pack(side="left", padx=(0, 6))
-        tk.Label(parent,
+                     width=220, command=_sens_cmd, bg=BG)
+        _sens_slider.pack(side="left", padx=(0, 6))
+        tk.Label(_sens_container,
                  text="  높을수록 화자를 더 잘게(예민하게) 구분, 낮을수록 비슷한 목소리를 같은 화자로 묶음",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
                  ).pack(fill="x", padx=20, pady=(0, 6))
+
+        def _sens_visibility_upd(*_):
+            try:
+                spk = int(self._diarize_num_spk.get())
+            except Exception:
+                spk = 0
+            if spk != 0:
+                # 화자 수를 직접 지정 → 민감도는 의미 없으므로 최대치로 고정 후 숨김
+                self._diarize_sensitivity_var.set(100)
+                _sens_slider.set(100, fire=False)
+                _sens_upd()
+                _sens_container.pack_forget()
+            else:
+                _sens_container.pack(fill="x")
+        # 이전에 열렸던 탭의 콜백이 남아있지 않도록 정리 후 등록
+        for _t in self._diarize_num_spk.trace_info():
+            self._diarize_num_spk.trace_remove(_t[0], _t[1])
+        self._diarize_num_spk.trace_add("write", _sens_visibility_upd)
+        _sens_visibility_upd()
 
         # 디바이스 선택
         dev_frame = tk.Frame(parent, bg=BG)
@@ -3985,7 +4101,6 @@ class SRTEditor(tk.Tk):
             pipeline.instantiate(params)
         except Exception:
             pass
-        _save_config(_cfg)
 
     def _run_diarize_whisperx(self):
         """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
@@ -4490,10 +4605,11 @@ class SRTEditor(tk.Tk):
                         _time.sleep(0.5)
 
                 _set_status(f"Whisper 모델 로드 중... ({device} / {wmodel})", "model")
+                _pn_hint = self._build_proper_noun_hint()
                 model = whisperx.load_model(
                     wmodel, device,
                     compute_type=compute,
-                    asr_options={"beam_size": beam},
+                    asr_options={"beam_size": beam, **_pn_hint},
                 )
 
                 _set_status("음성 로드 중...", "audio")
@@ -4529,6 +4645,11 @@ class SRTEditor(tk.Tk):
                 del model
                 if device == "cuda":
                     torch.cuda.empty_cache()
+                try:
+                    _full_text = " ".join(s.get("text", "") for s in result.get("segments", []))
+                    self._update_proper_noun_freq(_full_text)
+                except Exception:
+                    pass
 
                 _set_status("타임스탬프 정렬 중...", "align")
                 _t = _threading.Thread(
@@ -5637,19 +5758,17 @@ class SRTEditor(tk.Tk):
 
         for slot_idx in range(n_slots):
             di = first_idx + slot_idx
-            prev_di = self._slot_data[slot_idx]
 
             wi     = self._slot_widgets[slot_idx]
             win_id = wi["_win_id"]
-            _edit_entries = (wi.get("content"), wi.get("ts_s"), wi.get("ts_e"))
 
-            # 편집 중(포커스 상태)인 Entry(텍스트/타임스탬프)가 있는 슬롯은 매핑을
-            # 바꾸지 않는다. 그렇지 않으면 편집 중 드래그/자동스크롤로 이 슬롯이
-            # 다른 자막 인덱스로 재매핑되고, 편집을 마쳤을 때(FocusOut) 엉뚱한
-            # 행에 값이 저장된다.
-            if prev_di >= 0 and self.focus_get() in _edit_entries:
-                continue
-
+            # 참고: 이전엔 여기서 편집 중인(포커스된) Entry가 있는 슬롯 전체를
+            # 통째로 건너뛰어(freeze) 재매핑을 막았었다. 하지만 그 방식은
+            # 드래그/스크롤 중 편집 중이던 행이 화면에 '고정'되어 다른 행들과
+            # 함께 움직이지 않는 것처럼 보이는 부작용이 있었다.
+            # 지금은 _blur_all_entries()가 어떤 드래그/클릭이든 시작되기 전에
+            # 즉시(동기) 포커스를 해제하고 커밋하므로, 이 시점에는 이미 어떤
+            # Entry도 포커스를 갖고 있지 않아 안전하게 매핑을 갱신할 수 있다.
             self._slot_data[slot_idx] = di if di < n else -1
 
             if di >= n:
@@ -5673,12 +5792,15 @@ class SRTEditor(tk.Tk):
             parts    = ts_full.split("-->")
             ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
             ts_end   = parts[1].strip() if len(parts) >= 2 else ""
-            wi["ts_s_var"].set(ts_start)
-            wi["ts_e_var"].set(ts_end)
+            # 편집 중(포커스 상태)인 타임스탬프 Entry는 덮어쓰지 않음 (안전장치)
+            if wi.get("ts_s") is None or self.focus_get() is not wi.get("ts_s"):
+                wi["ts_s_var"].set(ts_start)
+            if wi.get("ts_e") is None or self.focus_get() is not wi.get("ts_e"):
+                wi["ts_e_var"].set(ts_end)
             self._ts_style(wi["ts_s"], ts_start)
             self._ts_style(wi["ts_e"], ts_end)
 
-            # 편집 중인 Entry는 덮어쓰지 않음
+            # 편집 중(포커스 상태)인 텍스트 Entry는 덮어쓰지 않음 (안전장치)
             txt_entry = wi.get("content")
             if txt_entry is None or self.focus_get() is not txt_entry:
                 wi["txt_var"].set(sub.get("text", ""))
@@ -5997,7 +6119,10 @@ class SRTEditor(tk.Tk):
         self._blur_all_entries()
 
     def _blur_all_entries(self):
-        """모든 슬롯의 Entry에서 포커스를 제거하고 selection을 즉시 지움."""
+        """모든 슬롯의 Entry에서 포커스를 제거하고 selection을 즉시 지움.
+        when=\"now\"로 즉시(동기) 처리해야, 바로 이어지는 드래그/스크롤이
+        커밋이 끝나기 전에 진행되어 편집 중이던 행이 화면에 '고정'되어
+        보이는 문제가 생기지 않는다."""
         cur = self.focus_get()
         if not isinstance(cur, tk.Entry):
             return
@@ -6006,9 +6131,9 @@ class SRTEditor(tk.Tk):
             cur.selection_clear()
         except Exception:
             pass
-        # FocusOut 발생시켜 변경사항 저장
+        # FocusOut을 즉시(동기) 발생시켜 변경사항을 그 자리에서 바로 저장
         try:
-            cur.event_generate("<FocusOut>")
+            cur.event_generate("<FocusOut>", when="now")
         except Exception:
             pass
         self.focus_set()
@@ -6339,6 +6464,47 @@ class SRTEditor(tk.Tk):
         return "break"
 
     # ── 자막 추가 ─────────────────────────────
+    def add_row_at_time(self, t_sec, duration=2.0):
+        """재생바의 빈(자막 없는) 영역을 우클릭해 새 자막을 만들 때 사용.
+        클릭한 위치의 시간을 시작점으로 하는 새 자막을 시간 순서에 맞는
+        위치에 삽입한다."""
+        t_sec = max(0.0, t_sec)
+        cache = getattr(self, "_ts_cache", [])
+
+        # 시간 순서상 삽입될 위치 계산 (시작 시간이 t_sec보다 뒤인 첫 자막 앞)
+        insert_at = len(self.subtitles)
+        for i, (s, _e) in enumerate(cache):
+            if s is not None and s > t_sec:
+                insert_at = i
+                break
+
+        # 길이는 duration만큼, 단 다음 자막 시작 전까지만 (겹침 방지용 기본값일 뿐,
+        # 사용자가 이후 자유롭게 드래그해 길이를 조절/겹칠 수 있음)
+        t_end = t_sec + duration
+        if insert_at < len(cache) and cache[insert_at][0] is not None:
+            t_end = min(t_end, cache[insert_at][0])
+        if t_end <= t_sec:
+            t_end = t_sec + 0.5
+
+        def _fmt_ts(sec):
+            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
+            ms = int(round((sec % 1) * 1000))
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        new_sub = {"timestamp": f"{_fmt_ts(t_sec)} --> {_fmt_ts(t_end)}",
+                   "text": "", "speaker": ""}
+        self._push_undo()
+        self.subtitles.insert(insert_at, new_sub)
+        self._rebuild_ts_cache()
+        self._renumber_rows(insert_at)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        self._select_row(insert_at)
+        self.after(50, lambda: self._scroll_to_row(insert_at))
+        self._wf_img_cache = None
+        self._pb_redraw()
+
     def add_row(self, after_idx=None):
         if after_idx is None:
             after_idx = len(self.subtitles) - 1
@@ -6496,6 +6662,9 @@ class SRTEditor(tk.Tk):
             self.lbl_media.configure(text="")
         except Exception:
             pass
+
+        # 진짜 홈 화면(드래그앤드롭 안내 오버레이)을 다시 표시
+        self._show_overlay()
 
     def open_file(self):
         path = filedialog.askopenfilename(
