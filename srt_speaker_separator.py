@@ -4131,8 +4131,18 @@ class SRTEditor(tk.Tk):
         self._diarize_sensitivity_init = sensitivity
 
     # ── 고유명사 사전 (자동 자막 인식 가중치, 수동 등록/관리) ─────────
+    def _ensure_proper_nouns_init(self):
+        """self._proper_nouns / _proper_nouns_enabled가 어떤 이유로든 아직
+        없다면 안전한 기본값으로 지연 초기화한다 (구버전 파일 등과의 호환용
+        방어 코드 — 정상적으로는 __init__에서 이미 설정되어 있다)."""
+        if not hasattr(self, "_proper_nouns") or self._proper_nouns is None:
+            self._proper_nouns = []
+        if not hasattr(self, "_proper_nouns_enabled"):
+            self._proper_nouns_enabled = True
+
     def _save_proper_nouns(self):
         """고유명사 사전을 config에 저장."""
+        self._ensure_proper_nouns_init()
         cfg = _load_config()
         cfg["proper_nouns"] = self._proper_nouns
         cfg["proper_nouns_enabled"] = getattr(self, "_proper_nouns_enabled", True)
@@ -4140,6 +4150,7 @@ class SRTEditor(tk.Tk):
 
     def _add_proper_noun(self, word):
         """고유명사를 사전에 등록 (수동 등록 전용, 이미 있으면 무시)."""
+        self._ensure_proper_nouns_init()
         word = (word or "").strip()
         if not word or word in self._proper_nouns:
             return False
@@ -4148,14 +4159,15 @@ class SRTEditor(tk.Tk):
         return True
 
     def _remove_proper_noun(self, word):
+        self._ensure_proper_nouns_init()
         if word in self._proper_nouns:
             self._proper_nouns.remove(word)
             self._save_proper_nouns()
 
     def _build_proper_noun_hint(self):
-        """등록된 고유명사 사전을 Whisper asr_options(hotwords/initial_prompt)로 변환."""
-        if not getattr(self, "_proper_nouns_enabled", True):
-            return {}
+        """등록된 고유명사 사전을 Whisper asr_options(hotwords/initial_prompt)로 변환.
+        등록된 단어는 항상(무조건) 반영된다."""
+        self._ensure_proper_nouns_init()
         words = list(getattr(self, "_proper_nouns", None) or [])
         if not words:
             return {}
@@ -4165,6 +4177,7 @@ class SRTEditor(tk.Tk):
 
     def _open_proper_noun_manager(self, on_close=None):
         """고유명사 사전 관리 다이얼로그."""
+        self._ensure_proper_nouns_init()
         win = tk.Toplevel(self)
         win.title("고유명사 사전")
         win.configure(bg=BG)
@@ -4189,6 +4202,7 @@ class SRTEditor(tk.Tk):
         lb = tk.Listbox(list_frame, bg=BG3, fg=FG, selectbackground=ACCENT,
                          relief="flat", highlightthickness=1, highlightbackground=BORDER,
                          font=(FONT_FAMILY, 9), activestyle="none",
+                         selectmode="extended",   # Shift/Ctrl 클릭으로 범위/다중 선택
                          yscrollcommand=scrollbar.set)
         lb.pack(side="left", fill="both", expand=True)
         scrollbar.configure(command=lb.yview)
@@ -4224,19 +4238,37 @@ class SRTEditor(tk.Tk):
                   cursor="hand2", font=(FONT_FAMILY, 9, "bold"), padx=10,
                   activebackground="#7B5FB4", command=_add).pack(side="left", padx=(6, 0))
 
+        del_row = tk.Frame(win, bg=BG)
+        del_row.pack(fill="x", padx=16, pady=(0, 10))
+
         def _delete(*_):
             sel = lb.curselection()
             if not sel:
                 return
             items = _sorted_items()
-            idx = sel[0]
-            if idx < len(items):
-                self._remove_proper_noun(items[idx])
+            words = [items[i] for i in sel if i < len(items)]
+            for w in words:
+                self._remove_proper_noun(w)
             _refresh()
-        tk.Button(win, text="선택 삭제", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+        tk.Button(del_row, text="선택 삭제", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
                   cursor="hand2", font=(FONT_FAMILY, 9), padx=10, pady=4,
                   activebackground="#333333", command=_delete
-                  ).pack(anchor="w", padx=16, pady=(0, 10))
+                  ).pack(side="left")
+
+        def _delete_all(*_):
+            if not self._proper_nouns:
+                return
+            if not messagebox.askyesno("전부 삭제",
+                                        "등록된 고유명사를 모두 삭제할까요?",
+                                        parent=win):
+                return
+            self._proper_nouns.clear()
+            self._save_proper_nouns()
+            _refresh()
+        tk.Button(del_row, text="전부 삭제", bg="#2A2A2A", fg="#E08080", relief="flat", bd=0,
+                  cursor="hand2", font=(FONT_FAMILY, 9), padx=10, pady=4,
+                  activebackground="#3A2A2A", command=_delete_all
+                  ).pack(side="left", padx=(6, 0))
 
         def _close():
             if on_close:
@@ -4252,30 +4284,20 @@ class SRTEditor(tk.Tk):
                   ).pack(pady=(0, 14))
 
     def _build_proper_noun_section(self, parent):
-        """'고유명사 사전' 요약 + 켜기/끄기 + 관리 버튼 (자동자막 설정 탭 /
-        자막 생성 팝업 공용). 새 Frame을 만들어 parent에 pack하고 반환한다."""
+        """'고유명사 사전' 요약 + 관리 버튼 (자동자막 설정 탭 / 자막 생성
+        팝업 공용). 등록된 단어는 항상 자동 반영된다. 새 Frame을 만들어
+        parent에 pack하고 반환한다."""
+        self._ensure_proper_nouns_init()
         pn_frame = tk.Frame(parent, bg=BG)
         pn_frame.pack(fill="x", padx=20, pady=(4, 2))
 
-        if not hasattr(self, "_proper_nouns_enabled_var"):
-            self._proper_nouns_enabled_var = tk.BooleanVar(
-                value=getattr(self, "_proper_nouns_enabled", True))
-
-        def _save_pn_enabled():
-            v = self._proper_nouns_enabled_var.get()
-            self._proper_nouns_enabled = v
-            cfg = _load_config(); cfg["proper_nouns_enabled"] = v; _save_config(cfg)
-
-        tk.Checkbutton(pn_frame, variable=self._proper_nouns_enabled_var,
-                       bg=BG, activebackground=BG, selectcolor=BG3,
-                       command=_save_pn_enabled).pack(side="left")
-        tk.Label(pn_frame, text="고유명사 사전 자동 반영", bg=BG, fg=FG,
+        tk.Label(pn_frame, text="고유명사 사전", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 9, "bold")).pack(side="left")
 
         _pn_count_lbl = tk.Label(pn_frame, bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8))
         _pn_count_lbl.pack(side="left", padx=(6, 0))
         def _refresh_count():
-            _pn_count_lbl.configure(text=f"({len(self._proper_nouns)}개 등록됨)")
+            _pn_count_lbl.configure(text=f"({len(getattr(self, '_proper_nouns', None) or [])}개 등록됨)")
         _refresh_count()
 
         tk.Button(pn_frame, text="사전 관리", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
@@ -4285,8 +4307,8 @@ class SRTEditor(tk.Tk):
                   ).pack(side="right")
         tk.Label(parent,
                  text="  자주 나오는 이름·지명·전문용어를 직접 등록하면 자동 자막\n"
-                      "  생성 시 인식 가중치가 높아집니다. (자동으로 추가되지 않으며,\n"
-                      "  등록/삭제는 아래 '사전 관리'에서 직접 합니다)",
+                      "  생성 시 인식 가중치가 항상 반영됩니다. (자동으로 추가되지\n"
+                      "  않으며, 등록/삭제는 아래 '사전 관리'에서 직접 합니다)",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), justify="left", anchor="w"
                  ).pack(fill="x", padx=20, pady=(0, 6))
         return pn_frame
