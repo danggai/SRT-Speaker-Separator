@@ -1188,7 +1188,11 @@ class SRTEditor(tk.Tk):
         self._diarize_mode_init    = _cfg.get("diarize_mode", "balanced")
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")
         self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 65)
-        self._proper_nouns         = dict(_cfg.get("proper_nouns", {}))
+        _pn_raw = _cfg.get("proper_nouns", [])
+        if isinstance(_pn_raw, dict):
+            self._proper_nouns = list(_pn_raw.keys())     # 이전 버전(빈도 dict) 호환
+        else:
+            self._proper_nouns = list(dict.fromkeys(_pn_raw))   # 중복 제거, 순서 유지
         self._proper_nouns_enabled = _cfg.get("proper_nouns_enabled", True)
         self._recent_tokens        = _cfg.get("recent_tokens", [])
         self._diarize_batch_init  = _cfg.get("diarize_batch", 3)   # index=3 → batch=16 (권장)
@@ -1960,11 +1964,6 @@ class SRTEditor(tk.Tk):
                 result = model.transcribe(audio, batch_size=batch_size)
                 del model
                 if device == "cuda": torch.cuda.empty_cache()
-                try:
-                    _full_text = " ".join(s.get("text", "") for s in result.get("segments", []))
-                    self._update_proper_noun_freq(_full_text)
-                except Exception:
-                    pass
 
                 _set("타임스탬프 정렬 중...", 60)
                 model_a, meta = whisperx.load_align_model(
@@ -2150,9 +2149,15 @@ class SRTEditor(tk.Tk):
                     try: prog.destroy()
                     except Exception: pass
                     self._load_srt(tmp_path)
-                    # 임시파일 경로 → save_path는 미설정 (저장 시 다른이름으로 저장 유도)
-                    self.save_path = None
+                    # 저장 경로를 원본 미디어 파일과 같은 이름/위치로 미리 지정
+                    # (예: movie.mp4 → movie.srt). 아직 그 경로에 실제로 쓰여진
+                    # 것은 아니므로 미저장 상태로 표시해, 저장(Ctrl+S) 한 번이면
+                    # 바로 그 이름으로 저장되도록 한다.
+                    _media_dir  = _os.path.dirname(media_path)
                     _base = _os.path.splitext(_os.path.basename(media_path))[0]
+                    self.save_path = _os.path.join(_media_dir, _base + ".srt")
+                    self.filepath  = self.save_path
+                    self._unsaved  = True
                     self.title(f"{_base} (미저장) - SRT Speaker Editer")
                 self.after(0, _done)
 
@@ -3271,6 +3276,44 @@ class SRTEditor(tk.Tk):
         except Exception as e:
             import traceback; traceback.print_exc()
 
+    def _make_scrollable(self, parent):
+        """parent 안에 세로 스크롤 가능한 영역을 만든다.
+        반환값 (outer, inner):
+        - outer: parent에 pack/nb.add로 배치할 컨테이너
+        - inner: 실제 내용물을 채울 프레임 (기존 코드에서 parent로 쓰던 자리)
+        내용이 창 높이보다 길어져도 잘리지 않고 스크롤로 볼 수 있게 한다."""
+        outer = tk.Frame(parent, bg=BG)
+        canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
+        vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        inner = tk.Frame(canvas, bg=BG)
+        win_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+        def _sync_scrollregion(_e=None):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        inner.bind("<Configure>", _sync_scrollregion)
+
+        def _sync_width(e):
+            canvas.itemconfigure(win_id, width=e.width)
+        canvas.bind("<Configure>", _sync_width)
+
+        def _wheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        def _bind_wheel(_e=None):
+            canvas.bind_all("<MouseWheel>", _wheel)
+        def _unbind_wheel(_e=None):
+            # 다이얼로그를 벗어나면 메인 테이블의 원래 휠 스크롤 핸들러로 복원
+            canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+        inner.bind("<Enter>", _bind_wheel)
+        inner.bind("<Leave>", _unbind_wheel)
+
+        return outer, inner
+
     def _open_settings(self, tab_idx=0):
         """설정 창 (탭: 패턴 / 자동자막 / 모델관리)"""
         global g_speaker_pattern, g_display_pattern
@@ -3278,7 +3321,8 @@ class SRTEditor(tk.Tk):
         win.title("설정")
         win.configure(bg=BG)
         win.geometry("580x540")
-        win.resizable(False, False)
+        win.minsize(500, 380)
+        win.resizable(True, True)
         win.transient(self)
         win.grab_set()
 
@@ -3348,8 +3392,8 @@ class SRTEditor(tk.Tk):
         nb.pack(fill="both", expand=True, padx=0, pady=0)
 
         # ── 탭 1: 화자 구분 패턴 ──────────────────
-        tab1 = tk.Frame(nb, bg=BG)
-        nb.add(tab1, text="  화자 구분 패턴  ")
+        tab1_outer, tab1 = self._make_scrollable(nb)
+        nb.add(tab1_outer, text="  화자 구분 패턴  ")
 
         tk.Label(tab1, text="화자 구분 패턴", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
@@ -3422,12 +3466,12 @@ class SRTEditor(tk.Tk):
                   command=win.destroy).pack(side="right", padx=(0, 8))
 
         # ── 탭 2: 모델 관리 ────────────────────
-        tab2 = tk.Frame(nb, bg=BG)
-        nb.add(tab2, text="  ✍  자동 자막  ")
+        tab2_outer, tab2 = self._make_scrollable(nb)
+        nb.add(tab2_outer, text="  ✍  자동 자막  ")
         self._build_transcribe_settings_tab(tab2)
 
-        tab3 = tk.Frame(nb, bg=BG)
-        nb.add(tab3, text="  📦 모델 관리  ")
+        tab3_outer, tab3 = self._make_scrollable(nb)
+        nb.add(tab3_outer, text="  📦 모델 관리  ")
         self._build_model_mgmt_tab(tab3)
 
 
@@ -3521,6 +3565,10 @@ class SRTEditor(tk.Tk):
                        command=_save_spellcheck).pack(side="left")
         tk.Label(row3, text="\u26a0\ufe0f  \uc778\ud130\ub137 \uc5f0\uacb0 \ud544\uc694 / \uc790\ub9c9 \uc0dd\uc131 \uc2dc\uc5d0\ub9cc \uc801\uc6a9",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left", padx=(8, 0))
+
+        # 고유명사 사전 (인식 가중치)
+        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(10, 10))
+        self._build_proper_noun_section(parent)
 
     def _build_model_mgmt_tab(self, parent):
         """다운로드된 모델 캐시 관리 탭."""
@@ -3681,8 +3729,11 @@ class SRTEditor(tk.Tk):
 
         _refresh()
 
-    def _build_diarize_tab(self, parent):
-        """설정창 내 화자 자동 분석 탭."""
+    def _build_diarize_tab(self, parent, footer_parent=None):
+        """설정창 내 화자 자동 분석 탭. footer_parent를 주면 실행 버튼 행을
+        그쪽에 배치한다(스크롤 영역 밖에 고정하기 위함)."""
+        if footer_parent is None:
+            footer_parent = parent
         # WhisperX 섹션
         tk.Label(parent, text="WhisperX 화자 분리", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
@@ -4004,8 +4055,8 @@ class SRTEditor(tk.Tk):
                  highlightthickness=1, highlightbackground="#333333",
                  state="disabled").pack(side="left", fill="x", expand=True, ipady=3)
 
-        # 실행 버튼
-        btn_row = tk.Frame(parent, bg=BG)
+        # 실행 버튼 (footer_parent — 스크롤 영역 밖, 창 하단 고정)
+        btn_row = tk.Frame(footer_parent, bg=BG)
         btn_row.pack(fill="x", padx=20, pady=(8, 10))
         tk.Button(btn_row, text="🎙  WhisperX로 화자 분석 시작",
                   bg=ACCENT, fg="white", relief="flat", bd=0, cursor="hand2",
@@ -4028,14 +4079,23 @@ class SRTEditor(tk.Tk):
         win.title("화자 자동 분석")
         win.configure(bg=BG)
         win.geometry("560x540")
-        win.resizable(False, False)
+        win.minsize(460, 380)
+        win.resizable(True, True)
         win.transient(self)
         win.grab_set()
         def _on_diarize_win_close():
             self._save_diarize_settings()
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_diarize_win_close)
-        self._build_diarize_tab(win)
+
+        # 실행 버튼 행은 스크롤 영역 밖에 두고 먼저 하단에 고정 배치
+        _diar_footer = tk.Frame(win, bg=BG)
+        _diar_footer.pack(side="bottom", fill="x")
+        tk.Frame(win, bg=BORDER, height=1).pack(side="bottom", fill="x")
+
+        _diar_outer, _diar_inner = self._make_scrollable(win)
+        _diar_outer.pack(fill="both", expand=True)
+        self._build_diarize_tab(_diar_inner, footer_parent=_diar_footer)
 
     def _save_diarize_settings(self):
         """현재 화자 분석 설정을 파일에 저장."""
@@ -4070,8 +4130,179 @@ class SRTEditor(tk.Tk):
         self._diarize_batch_init  = batch_idx
         self._diarize_sensitivity_init = sensitivity
 
+    # ── 고유명사 사전 (자동 자막 인식 가중치, 수동 등록/관리) ─────────
+    def _save_proper_nouns(self):
+        """고유명사 사전을 config에 저장."""
+        cfg = _load_config()
+        cfg["proper_nouns"] = self._proper_nouns
+        cfg["proper_nouns_enabled"] = getattr(self, "_proper_nouns_enabled", True)
+        _save_config(cfg)
+
+    def _add_proper_noun(self, word):
+        """고유명사를 사전에 등록 (수동 등록 전용, 이미 있으면 무시)."""
+        word = (word or "").strip()
+        if not word or word in self._proper_nouns:
+            return False
+        self._proper_nouns.append(word)
+        self._save_proper_nouns()
+        return True
+
+    def _remove_proper_noun(self, word):
+        if word in self._proper_nouns:
+            self._proper_nouns.remove(word)
+            self._save_proper_nouns()
+
+    def _build_proper_noun_hint(self):
+        """등록된 고유명사 사전을 Whisper asr_options(hotwords/initial_prompt)로 변환."""
+        if not getattr(self, "_proper_nouns_enabled", True):
+            return {}
+        words = list(getattr(self, "_proper_nouns", None) or [])
+        if not words:
+            return {}
+        opts = {"hotwords": " ".join(words),
+                "initial_prompt": f"다음은 자주 등장하는 고유명사입니다: {', '.join(words)}"}
+        return opts
+
+    def _open_proper_noun_manager(self, on_close=None):
+        """고유명사 사전 관리 다이얼로그."""
+        win = tk.Toplevel(self)
+        win.title("고유명사 사전")
+        win.configure(bg=BG)
+        win.geometry("380x460")
+        win.resizable(False, False)
+        win.transient(self)
+        win.grab_set()
+
+        tk.Label(win, text="고유명사 사전", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
+        tk.Label(win,
+                 text="자주 등장하는 이름·지명·전문용어를 직접 등록하면 다음\n"
+                      "자막 생성부터 인식 가중치가 높아집니다. 자동으로 추가되는\n"
+                      "단어는 없으며, 여기서 등록/삭제한 목록만 반영됩니다.",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), justify="left"
+                 ).pack(anchor="w", padx=16, pady=(0, 8))
+
+        list_frame = tk.Frame(win, bg=BG)
+        list_frame.pack(fill="both", expand=True, padx=16)
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+        lb = tk.Listbox(list_frame, bg=BG3, fg=FG, selectbackground=ACCENT,
+                         relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                         font=(FONT_FAMILY, 9), activestyle="none",
+                         yscrollcommand=scrollbar.set)
+        lb.pack(side="left", fill="both", expand=True)
+        scrollbar.configure(command=lb.yview)
+
+        def _sorted_items():
+            return sorted(self._proper_nouns)
+
+        def _refresh():
+            lb.delete(0, "end")
+            for w in _sorted_items():
+                lb.insert("end", f"  {w}")
+
+        _refresh()
+
+        add_row = tk.Frame(win, bg=BG)
+        add_row.pack(fill="x", padx=16, pady=(8, 4))
+        new_var = tk.StringVar()
+        entry = tk.Entry(add_row, textvariable=new_var, bg=BG3, fg=FG,
+                          insertbackground=FG, relief="flat",
+                          highlightthickness=1, highlightbackground=BORDER,
+                          highlightcolor=ACCENT, font=(FONT_FAMILY, 9))
+        entry.pack(side="left", fill="x", expand=True, ipady=3)
+
+        def _add(*_):
+            w = new_var.get().strip()
+            if not w:
+                return
+            self._add_proper_noun(w)
+            new_var.set("")
+            _refresh()
+        entry.bind("<Return>", _add)
+        tk.Button(add_row, text="+ 추가", bg=ACCENT, fg="white", relief="flat", bd=0,
+                  cursor="hand2", font=(FONT_FAMILY, 9, "bold"), padx=10,
+                  activebackground="#7B5FB4", command=_add).pack(side="left", padx=(6, 0))
+
+        def _delete(*_):
+            sel = lb.curselection()
+            if not sel:
+                return
+            items = _sorted_items()
+            idx = sel[0]
+            if idx < len(items):
+                self._remove_proper_noun(items[idx])
+            _refresh()
+        tk.Button(win, text="선택 삭제", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+                  cursor="hand2", font=(FONT_FAMILY, 9), padx=10, pady=4,
+                  activebackground="#333333", command=_delete
+                  ).pack(anchor="w", padx=16, pady=(0, 10))
+
+        def _close():
+            if on_close:
+                try:
+                    on_close()
+                except Exception:
+                    pass
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _close)
+        tk.Button(win, text="닫기", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+                  cursor="hand2", font=(FONT_FAMILY, 10), padx=16, pady=6,
+                  activebackground="#333333", command=_close
+                  ).pack(pady=(0, 14))
+
+    def _build_proper_noun_section(self, parent):
+        """'고유명사 사전' 요약 + 켜기/끄기 + 관리 버튼 (자동자막 설정 탭 /
+        자막 생성 팝업 공용). 새 Frame을 만들어 parent에 pack하고 반환한다."""
+        pn_frame = tk.Frame(parent, bg=BG)
+        pn_frame.pack(fill="x", padx=20, pady=(4, 2))
+
+        if not hasattr(self, "_proper_nouns_enabled_var"):
+            self._proper_nouns_enabled_var = tk.BooleanVar(
+                value=getattr(self, "_proper_nouns_enabled", True))
+
+        def _save_pn_enabled():
+            v = self._proper_nouns_enabled_var.get()
+            self._proper_nouns_enabled = v
+            cfg = _load_config(); cfg["proper_nouns_enabled"] = v; _save_config(cfg)
+
+        tk.Checkbutton(pn_frame, variable=self._proper_nouns_enabled_var,
+                       bg=BG, activebackground=BG, selectcolor=BG3,
+                       command=_save_pn_enabled).pack(side="left")
+        tk.Label(pn_frame, text="고유명사 사전 자동 반영", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold")).pack(side="left")
+
+        _pn_count_lbl = tk.Label(pn_frame, bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8))
+        _pn_count_lbl.pack(side="left", padx=(6, 0))
+        def _refresh_count():
+            _pn_count_lbl.configure(text=f"({len(self._proper_nouns)}개 등록됨)")
+        _refresh_count()
+
+        tk.Button(pn_frame, text="사전 관리", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
+                  cursor="hand2", font=(FONT_FAMILY, 8), padx=8, pady=2,
+                  activebackground="#333333",
+                  command=lambda: self._open_proper_noun_manager(on_close=_refresh_count)
+                  ).pack(side="right")
+        tk.Label(parent,
+                 text="  자주 나오는 이름·지명·전문용어를 직접 등록하면 자동 자막\n"
+                      "  생성 시 인식 가중치가 높아집니다. (자동으로 추가되지 않으며,\n"
+                      "  등록/삭제는 아래 '사전 관리'에서 직접 합니다)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), justify="left", anchor="w"
+                 ).pack(fill="x", padx=20, pady=(0, 6))
+        return pn_frame
+
     def _get_diarize_sensitivity(self):
-        """현재 설정된 화자 분리 민감도(0~100)를 반환. UI가 아직 없으면 저장된/기본값 사용."""
+        """현재 설정된 화자 분리 민감도(0~100)를 반환. UI가 아직 없으면 저장된/기본값 사용.
+        화자 수를 직접 지정한 경우(0이 아님)는 민감도가 무의미하므로 항상 100(최대)."""
+        num_spk_var = getattr(self, "_diarize_num_spk", None)
+        try:
+            num_spk = int(num_spk_var.get()) if num_spk_var is not None \
+                      else int(getattr(self, "_diarize_num_spk_val", 0))
+        except Exception:
+            num_spk = 0
+        if num_spk != 0:
+            return 100
+
         var = getattr(self, "_diarize_sensitivity_var", None)
         if var is not None:
             try:
@@ -4645,11 +4876,6 @@ class SRTEditor(tk.Tk):
                 del model
                 if device == "cuda":
                     torch.cuda.empty_cache()
-                try:
-                    _full_text = " ".join(s.get("text", "") for s in result.get("segments", []))
-                    self._update_proper_noun_freq(_full_text)
-                except Exception:
-                    pass
 
                 _set_status("타임스탬프 정렬 중...", "align")
                 _t = _threading.Thread(
@@ -5403,19 +5629,29 @@ class SRTEditor(tk.Tk):
         spk_frame.bind("<Button-3>",   lambda e, s=slot_idx: self._slot_right_click(s, e))
 
         def _ts_commit(s=slot_idx):
-            di = self._slot_data[s] if s < len(self._slot_data) else -1
+            wi2 = self._slot_widgets[s]
+            # 편집을 시작한 시점에 고정해둔 자막 인덱스를 우선 사용.
+            # (드래그/스크롤로 슬롯 매핑이 바뀌어도 항상 처음 편집하던
+            #  자막에 저장되도록 하여, 다른 행에 잘못 저장/복제되는 문제 방지)
+            di = wi2.get("_edit_di")
+            if di is None or di < 0:
+                di = self._slot_data[s] if s < len(self._slot_data) else -1
             if di < 0 or di >= len(self.subtitles):
                 return
-            sv = self._slot_widgets[s]["ts_s_var"].get().strip()
-            ev = self._slot_widgets[s]["ts_e_var"].get().strip()
-            se = self._slot_widgets[s]["ts_s"]
-            ee = self._slot_widgets[s]["ts_e"]
+            sv = wi2["ts_s_var"].get().strip()
+            ev = wi2["ts_e_var"].get().strip()
+            se = wi2["ts_s"]
+            ee = wi2["ts_e"]
             self._ts_style(se, sv); self._ts_style(ee, ev)
             if self._ts_valid(sv) and self._ts_valid(ev):
-                self.subtitles[di]["timestamp"] = f"{sv} --> {ev}"
-                self._unsaved = True
-                if hasattr(self, "_ts_cache") and di < len(self._ts_cache):
-                    self._ts_cache[di] = (self._ts_to_sec(sv), self._ts_to_sec(ev))
+                new_ts = f"{sv} --> {ev}"
+                if self.subtitles[di].get("timestamp", "") != new_ts:
+                    self._push_undo()   # 실제로 바뀐 경우에만 undo 스냅샷 기록
+                    self.subtitles[di]["timestamp"] = new_ts
+                    self._unsaved = True
+                    if hasattr(self, "_ts_cache") and di < len(self._ts_cache):
+                        self._ts_cache[di] = (self._ts_to_sec(sv), self._ts_to_sec(ev))
+            wi2["_edit_di"] = None
 
         def _ts_key(e, s=slot_idx):
             wi2 = self._slot_widgets[s]
@@ -5426,6 +5662,7 @@ class SRTEditor(tk.Tk):
             ent.bind("<Return>",     lambda e, f=_ts_commit: f())
             ent.bind("<FocusOut>",   lambda e, f=_ts_commit: f())
             ent.bind("<KeyRelease>", _ts_key)
+            ent.bind("<FocusIn>",    lambda e, s=slot_idx: self._slot_focus_in(s))
 
         txt_e.bind("<FocusOut>", lambda e, s=slot_idx: self._slot_save_text(s))
         txt_e.bind("<Return>",   lambda e, s=slot_idx: self._slot_save_text(s))
@@ -5718,17 +5955,45 @@ class SRTEditor(tk.Tk):
         self._redraw_slot_for(idx)
 
     def _slot_save_text(self, slot_idx):
-        di = self._slot_data_idx(slot_idx)
+        wi = self._slot_widgets[slot_idx]
+        # 편집을 시작한 시점에 고정해둔 자막 인덱스를 우선 사용.
+        # (드래그/스크롤로 슬롯 매핑이 바뀌어도 항상 처음 편집하던 자막에
+        #  저장되도록 하여, 다른 행에 텍스트가 잘못 저장/복제되는 문제 방지)
+        di = wi.get("_edit_di")
+        if di is None or di < 0:
+            di = self._slot_data_idx(slot_idx)
         if di < 0 or di >= len(self.subtitles):
             return
-        val = self._slot_widgets[slot_idx]["txt_var"].get()
-        self.subtitles[di]["text"] = val
-        self._unsaved = True
+        val = wi["txt_var"].get()
+        if self.subtitles[di].get("text", "") != val:
+            self._push_undo()   # 실제로 바뀐 경우에만 undo 스냅샷 기록
+            self.subtitles[di]["text"] = val
+            self._unsaved = True
+        wi["_edit_di"] = None
 
     def _slot_focus_in(self, slot_idx):
         di = self._slot_data_idx(slot_idx)
         if di < 0:
             return
+        wi = self._slot_widgets[slot_idx]
+        # 지금 이 슬롯이 가리키는 자막 인덱스를 편집 시작 시점 값으로 고정.
+        wi["_edit_di"] = di
+
+        # ⚠ 핵심 수정: 가상 스크롤 구조상 이 슬롯(화면 자리)은 방금 전까지
+        # 전혀 다른 자막을 보여주고 있었을 수 있다. _fill_slots/_redraw_slot_for는
+        # "지금 포커스된 Entry는 덮어쓰지 않는다"는 가드가 있는데, 이 FocusIn
+        # 콜백이 실행되는 시점엔 이미 포커스가 이 Entry로 넘어와 있으므로 그
+        # 가드에 걸려 새 자막의 실제 텍스트로 채워지지 않고 이전 자막의 텍스트가
+        # 그대로 남아있게 된다. 그 상태로 편집/저장하면 엉뚱한 자막에 이전 자막의
+        # 내용이 복제 저장되는 문제가 생긴다. 그래서 편집을 "시작하는" 이 시점에는
+        # 가드를 우회하고 반드시 지금 자막의 실제 저장값으로 강제 갱신한다.
+        sub = self.subtitles[di] if di < len(self.subtitles) else {}
+        wi["txt_var"].set(sub.get("text", ""))
+        ts_full = sub.get("timestamp", "")
+        parts   = ts_full.split("-->")
+        wi["ts_s_var"].set(parts[0].strip() if len(parts) >= 2 else ts_full.strip())
+        wi["ts_e_var"].set(parts[1].strip() if len(parts) >= 2 else "")
+
         self._last_focused_idx = di
         self._select_row(di)
 
@@ -5750,6 +6015,16 @@ class SRTEditor(tk.Tk):
 
     def _fill_slots(self, first_idx, defer_pills=False):
         """first_idx 행부터 슬롯 수만큼 데이터를 채워 화면에 표시."""
+        # ⚠ 가상 스크롤 재매핑(슬롯 ↔ 자막 인덱스)이 실제로 바뀌기 직전에
+        # 무조건 먼저 편집 중인 입력창을 blur(커밋)한다. 이 함수가 호출된다는
+        # 것 자체가 "화면에 보이는 슬롯-자막 매핑이 곧 바뀐다"는 뜻이므로,
+        # 매핑을 바꾸기 전에 지금 활성화된 입력창의 내용을 그 슬롯이 아직
+        # 가리키고 있는(올바른) 자막에 먼저 반영해 커밋하고 포커스를 없앤다.
+        # 이렇게 하면 매핑이 바뀐 뒤에 커밋되어 엉뚱한 자막에 저장되는 문제와,
+        # 편집 중이던 입력창에 이전/이후 자막의 내용이 잘못 표시되는 문제를
+        # 근본적으로 막을 수 있다.
+        self._blur_all_entries()
+
         n       = len(self.subtitles)
         h       = self.ROW_H
         n_slots = len(self._slot_frames)
@@ -5766,8 +6041,8 @@ class SRTEditor(tk.Tk):
             # 통째로 건너뛰어(freeze) 재매핑을 막았었다. 하지만 그 방식은
             # 드래그/스크롤 중 편집 중이던 행이 화면에 '고정'되어 다른 행들과
             # 함께 움직이지 않는 것처럼 보이는 부작용이 있었다.
-            # 지금은 _blur_all_entries()가 어떤 드래그/클릭이든 시작되기 전에
-            # 즉시(동기) 포커스를 해제하고 커밋하므로, 이 시점에는 이미 어떤
+            # 지금은 위에서 _blur_all_entries()로 이 함수가 실제 매핑을 바꾸기
+            # 전에 항상 먼저 커밋/포커스 해제를 하므로, 이 시점에는 이미 어떤
             # Entry도 포커스를 갖고 있지 않아 안전하게 매핑을 갱신할 수 있다.
             self._slot_data[slot_idx] = di if di < n else -1
 
@@ -6094,8 +6369,11 @@ class SRTEditor(tk.Tk):
         parts    = ts_full.split("-->")
         ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
         ts_end   = parts[1].strip() if len(parts) >= 2 else ""
-        wi["ts_s_var"].set(ts_start)
-        wi["ts_e_var"].set(ts_end)
+        # 편집 중(포커스 상태)인 타임스탬프 Entry는 덮어쓰지 않음 (안전장치)
+        if wi.get("ts_s") is None or self.focus_get() is not wi.get("ts_s"):
+            wi["ts_s_var"].set(ts_start)
+        if wi.get("ts_e") is None or self.focus_get() is not wi.get("ts_e"):
+            wi["ts_e_var"].set(ts_end)
         self._ts_style(wi["ts_s"], ts_start)
         self._ts_style(wi["ts_e"], ts_end)
 
