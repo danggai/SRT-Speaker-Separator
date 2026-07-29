@@ -115,23 +115,70 @@ import time
 import urllib.request
 import json
 import pathlib
+import tempfile
 import colorsys
 
 # ── 앱 설정 저장/불러오기 ─────────────────────────────────
-_CONFIG_PATH = pathlib.Path.home() / ".srt_speaker_editor_config.json"
+# 홈 디렉토리에 쓰기가 실패하는 환경(.py로 직접 실행 시 권한 문제 등)에서도
+# 설정이 저장되도록, 순서대로 시도할 후보 경로 목록을 만든다.
+def _build_config_candidates():
+    paths = []
+    try:
+        paths.append(pathlib.Path.home() / ".srt_speaker_editor_config.json")
+    except Exception:
+        pass
+    try:
+        _script_dir = pathlib.Path(os.path.abspath(
+            getattr(sys.modules.get("__main__"), "__file__", None) or __file__)).parent
+        paths.append(_script_dir / ".srt_speaker_editor_config.json")
+    except Exception:
+        pass
+    try:
+        paths.append(pathlib.Path(tempfile.gettempdir()) / ".srt_speaker_editor_config.json")
+    except Exception:
+        pass
+    # 중복 제거(순서 유지)
+    seen = set(); uniq = []
+    for p in paths:
+        key = str(p)
+        if key not in seen:
+            seen.add(key); uniq.append(p)
+    return uniq or [pathlib.Path(".srt_speaker_editor_config.json")]
+
+_CONFIG_CANDIDATES = _build_config_candidates()
+_CONFIG_PATH        = _CONFIG_CANDIDATES[0]   # 하위 호환용 (표시/참조용)
 _MAX_RECENT_TOKENS = 5
 
 def _load_config() -> dict:
-    try:
-        return json.loads(_CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    for p in _CONFIG_CANDIDATES:
+        try:
+            if p.exists():
+                return json.loads(p.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"[config] 읽기 실패({p}): {e}", file=sys.stderr)
+            continue
+    return {}
 
 def _save_config(cfg: dict):
+    """후보 경로에 순서대로 저장을 시도한다(임시파일에 쓴 뒤 교체 = 원자적 저장).
+    첫 후보(홈 디렉토리)가 쓰기 실패하면 다음 후보(스크립트 폴더, 임시폴더)로
+    자동 대체하므로, .py로 직접 실행해도 설정/고유명사 목록 등이 저장된다."""
     try:
-        _CONFIG_PATH.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
+        data = json.dumps(cfg, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[config] 직렬화 실패: {e}", file=sys.stderr)
+        return False
+    for p in _CONFIG_CANDIDATES:
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            tmp = p.with_name(p.name + ".tmp")
+            tmp.write_text(data, encoding="utf-8")
+            tmp.replace(p)
+            return True
+        except Exception as e:
+            print(f"[config] 저장 실패({p}): {e}", file=sys.stderr)
+            continue
+    return False
 
 def _add_recent_token(cfg: dict, token: str):
     """최근 토큰 목록에 추가 (최대 _MAX_RECENT_TOKENS개, 중복 제거)."""
@@ -2018,31 +2065,84 @@ class SRTEditor(tk.Tk):
                     s=int(sec%60);   ms=int((sec%1)*1000)
                     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
+                # 한국어 종결어미(대략적인 문장/절 경계 판단용).
+                # 정확한 형태소 분석은 아니지만, 흔한 종결 패턴을 폭넓게
+                # 커버해 "글자 수만 꽉 채우고 뚝 끊기"보다 자연스러운
+                # 위치에서 줄을 나누기 위한 실용적 휴리스틱.
+                _KOR_SENTENCE_ENDERS = (
+                    "습니다", "입니다", "합니다", "됩니다", "였습니다", "했습니다",
+                    "였다", "했다", "이었다",
+                    "이에요", "예요", "이네요", "네요", "군요", "구나", "잖아요", "잖아",
+                    "거든요", "거예요", "을까요", "ㄹ까요", "나요", "가요", "까요",
+                    "아요", "어요", "해요", "돼요", "됐어요", "했어요", "이었어요", "였어요",
+                    "습니까", "합니까", "인가요", "인데요", "는데요", "던데요",
+                    "다", "죠", "네", "까", "자", "라", "니",
+                )
+
+                def _clause_break_score(word):
+                    """word(어절)가 문장/절 경계로 적합한지 대략 판단.
+                    2=강함(문장부호로 끝남) / 1=약함(종결어미로 끝남) / 0=경계 아님."""
+                    if not word:
+                        return 0
+                    if word[-1] in ".!?…":
+                        return 2
+                    core = word.rstrip("\"'”’」』)]")
+                    if core and core[-1] in ".!?…":
+                        return 2
+                    for end in _KOR_SENTENCE_ENDERS:
+                        if core.endswith(end):
+                            return 1
+                    return 0
+
                 def _split_by_chars(text, max_chars):
-                    """글자 수 제한으로 텍스트 분리 (한국어 어절/공백 기준)."""
+                    """글자 수 제한 + 문장부호/종결어미 등 의미 단위 경계를 함께
+                    고려해 자막 줄을 나눈다. max_chars에 도달하기 직전이라도,
+                    그 안에 자연스러운 문장/절 경계(마침표·종결어미 등)가 있으면
+                    거기서 먼저 끊어 어색하게 중간에서 잘리는 것을 줄인다."""
                     if len(text) <= max_chars:
                         return [text]
-                    # 공백 기준 어절 분리 시도
                     words = text.split()
                     if not words:
                         return [text]
-                    lines, cur = [], ""
-                    for w in words:
-                        test = (cur + " " + w).strip() if cur else w
-                        if len(test) <= max_chars:
-                            cur = test
-                        else:
-                            if cur:
-                                lines.append(cur)
-                            # 단어 자체가 max_chars 초과 시 강제 분할
-                            if len(w) > max_chars:
-                                for ci in range(0, len(w), max_chars):
-                                    lines.append(w[ci:ci+max_chars])
-                                cur = ""
-                            else:
-                                cur = w
-                    if cur:
-                        lines.append(cur)
+
+                    MIN_RATIO = 0.45   # 이 비율 이상 채워졌을 때만 조기 종결 허용
+                    lines = []
+                    start = 0
+                    n = len(words)
+                    while start < n:
+                        cur_len   = 0
+                        end       = -1   # 여기까지는 확실히 max_chars 안에 들어옴
+                        last_good = -1   # 문장 경계로 적합한 마지막 word index
+                        i = start
+                        while i < n:
+                            w = words[i]
+                            add_len = len(w) + (1 if i > start else 0)
+                            if cur_len + add_len > max_chars:
+                                break
+                            cur_len += add_len
+                            end = i
+                            if (_clause_break_score(w) > 0
+                                    and cur_len >= max_chars * MIN_RATIO):
+                                last_good = i
+                            i += 1
+
+                        if end < start:
+                            # 단어 하나가 max_chars보다 긴 경우: 강제 분할
+                            w = words[start]
+                            for ci in range(0, len(w), max_chars):
+                                lines.append(w[ci:ci+max_chars])
+                            start += 1
+                            continue
+
+                        cut = end
+                        # 아직 더 이어질 단어가 남아있고, 그 전에 자연스러운
+                        # 경계가 있었다면 거기서 끊는다.
+                        if last_good >= 0 and last_good < end and (end + 1 < n):
+                            cut = last_good
+
+                        lines.append(" ".join(words[start:cut+1]))
+                        start = cut + 1
+
                     return lines if lines else [text]
 
                 def _split_seg_with_words(seg, max_chars, spk):
