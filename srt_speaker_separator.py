@@ -2557,7 +2557,8 @@ class SRTEditor(tk.Tk):
                      round(dur_, 2))
 
         cached = getattr(self, "_wf_img_cache", None)
-        if cached and cached[0] == cache_key:
+        cache_hit = bool(cached and cached[0] == cache_key)
+        if cache_hit:
             img_tk = cached[1]
         else:
             img    = Image.new("RGB", (cw, ch), "#0D0D0F")
@@ -2734,14 +2735,31 @@ class SRTEditor(tk.Tk):
             self._wf_img_cache = (cache_key, img_tk)
 
         # ── Canvas 오버레이 ───────────────────
+        # 배경(파형/자막 블록)이 캐시 히트이고 드래그 중도 아니라면 — 즉 이번
+        # 호출이 순전히 재생헤드 이동(재생 중 매 프레임 폴링)뿐이라면 — 캔버스
+        # 전체를 지우고 이미지·핸들을 통째로 다시 그리는 대신 재생헤드 좌표만
+        # 옮긴다. 재생 중 초당 수십 번 호출되는 이 함수에서 매번 delete("all")
+        # 후 전체 아이템을 재생성하는 것이 가장 큰 렉의 원인이었다.
+        drag_active = getattr(self, "_wf_sub_drag", None) is not None
+        fast_path = (cache_hit and not drag_active
+                     and getattr(self, "_wf_last_img", None) is img_tk
+                     and c.find_withtag("bgimg"))
+
+        if fast_path:
+            if dur > 0:
+                c.coords("head_line", head_x, 0, head_x, ch)
+                c.coords("head_poly", head_x-5, sub_top, head_x+5, sub_top, head_x, sub_top+7)
+            return
+
         c.delete("all")
-        c.create_image(0, 0, anchor="nw", image=img_tk)
+        c.create_image(0, 0, anchor="nw", image=img_tk, tags="bgimg")
+        self._wf_last_img = img_tk
 
         # 재생 헤드
         if dur > 0:
-            c.create_line(head_x, 0, head_x, ch, fill="white", width=1, tags="head")
+            c.create_line(head_x, 0, head_x, ch, fill="white", width=1, tags=("head", "head_line"))
             c.create_polygon(head_x-5, sub_top, head_x+5, sub_top, head_x, sub_top+7,
-                             fill="white", outline="", tags="head")
+                             fill="white", outline="", tags=("head", "head_poly"))
 
         # 드래그 핸들 (파형 영역 기준)
         if cache and self.subtitles:
@@ -5291,8 +5309,16 @@ class SRTEditor(tk.Tk):
 
             def _trim_name(canvas=name_canvas, text_id=_name_text_id,
                            full=name, c=color):
-                """캔버스 너비에 맞게 이름을 잘라 … 로 표시."""
-                w = canvas.winfo_width()
+                """캔버스 너비에 맞게 이름을 잘라 … 로 표시.
+                화자 목록이 새로고침되며 위젯이 이미 파괴된 뒤에도 지연된
+                <Configure> 이벤트가 들어올 수 있으므로, 위젯 존재 여부를
+                먼저 확인하고 모든 Tk 호출을 예외 처리로 감싼다."""
+                try:
+                    if not canvas.winfo_exists():
+                        return
+                    w = canvas.winfo_width()
+                except Exception:
+                    return
                 if w <= 4:
                     return
                 avail = max(10, w - 8)
@@ -5311,7 +5337,10 @@ class SRTEditor(tk.Tk):
                             hi = mid - 1
                     canvas.itemconfigure(text_id, text=full[:lo] + "…" if lo < len(full) else full)
                 except Exception:
-                    canvas.itemconfigure(text_id, text=full)
+                    try:
+                        canvas.itemconfigure(text_id, text=full)
+                    except Exception:
+                        pass
 
             name_canvas.bind("<Configure>", lambda e, fn=_trim_name: fn())
 
