@@ -5994,16 +5994,6 @@ class SRTEditor(tk.Tk):
                     activeforeground=self._speaker_color(spk),
                     command=lambda s=spk: self._ctx_set_speaker(s))
             menu.add_cascade(label=f"화자 변경{s}", menu=spk_menu)
-            menu.add_separator()
-
-        # ── 타임스탬프 ────────────────────────
-        has_media = bool(self.media_path)
-        menu.add_command(label="재생 위치 → 시작점",
-                         state="normal" if has_media else "disabled",
-                         command=lambda: self._ctx_set_timestamp_start(anchor_idx))
-        menu.add_command(label="재생 위치 → 종료점",
-                         state="normal" if has_media else "disabled",
-                         command=lambda: self._ctx_set_timestamp_end(anchor_idx))
 
         menu.tk_popup(event.x_root, event.y_root)
 
@@ -6019,57 +6009,6 @@ class SRTEditor(tk.Tk):
                 self._redraw_slot_for(idx)
         self._unsaved = True
         self._render_speakers()
-
-    def _ctx_set_timestamp_start(self, idx):
-        """재생 위치를 해당 자막의 시작 타임스탬프로 설정."""
-        if not self.media_path or idx >= len(self.subtitles):
-            return
-        pos = self.media_progress_var.get()
-        ts  = self.subtitles[idx]["timestamp"]
-        parts = ts.split("-->")
-        if len(parts) != 2:
-            return
-        def _fmt(sec):
-            h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
-            ms=int(round((sec%1)*1000))
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-        self._push_undo()
-        self.subtitles[idx]["timestamp"] = f"{_fmt(pos)} --> {parts[1].strip()}"
-        self._ts_cache[idx] = (pos, self._ts_cache[idx][1])
-        self._unsaved = True
-        self._redraw_slot_for(idx)
-        self._wf_img_cache = None
-        self._pb_redraw()
-
-    def _ctx_set_timestamp_end(self, idx):
-        """재생 위치를 해당 자막의 종료 타임스탬프로 설정."""
-        if not self.media_path or idx >= len(self.subtitles):
-            return
-        pos = self.media_progress_var.get()
-        ts  = self.subtitles[idx]["timestamp"]
-        parts = ts.split("-->")
-        if len(parts) != 2:
-            return
-        def _fmt(sec):
-            h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
-            ms=int(round((sec%1)*1000))
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-        self._push_undo()
-        self.subtitles[idx]["timestamp"] = f"{parts[0].strip()} --> {_fmt(pos)}"
-        self._ts_cache[idx] = (self._ts_cache[idx][0], pos)
-        self._unsaved = True
-        self._redraw_slot_for(idx)
-        self._wf_img_cache = None
-        self._pb_redraw()
-        di = self._slot_data_idx(slot_idx)
-        if di < 0:
-            return
-        # Ctrl+클릭: 토글 추가/제거
-        if event and (event.state & 0x4):
-            self._toggle_select(di)
-        else:
-            self._select_row(di)
-        self._blur_all_entries()
 
     def _slot_shift_click(self, slot_idx):
         """Shift+클릭: anchor부터 현재까지 범위 선택."""
