@@ -1947,7 +1947,28 @@ class SRTEditor(tk.Tk):
                                        fill=FG_DIM, font=(FONT_FAMILY, 7, "bold"))
 
         _BG3R = int(BG3[1:3],16); _BG3G = int(BG3[3:5],16); _BG3B = int(BG3[5:7],16)
-        _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True}
+        _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True, "cancelled": False}
+
+        def _cancel(*_):
+            """중단 버튼 또는 창 닫기(X) — 음성인식을 취소한다.
+            실행 중인 whisper 연산 자체를 즉시 강제 종료할 수는 없지만
+            (라이브러리가 중간에 끊는 기능을 제공하지 않음), 취소 플래그를
+            세워 결과가 나와도 화면에 반영하지 않고, 진행 창을 바로 닫아
+            사용자가 더 기다리지 않도록 한다."""
+            if _pstate.get("cancelled"):
+                return
+            _pstate["cancelled"] = True
+            _pstate["run"] = False
+            try: prog.destroy()
+            except Exception: pass
+
+        prog.protocol("WM_DELETE_WINDOW", _cancel)
+
+        tk.Button(prog, text="중단", bg="#3A2A2A", fg="#E08080",
+                  relief="flat", bd=0, cursor="hand2",
+                  font=(FONT_FAMILY, 9), padx=14, pady=4,
+                  activebackground="#4A3232",
+                  command=_cancel).pack(pady=(8, 4))
 
         def _draw():
             if not _pstate["run"]: return
@@ -2002,15 +2023,21 @@ class SRTEditor(tk.Tk):
                 model = whisperx.load_model("large-v3-turbo", device,
                                             compute_type=compute,
                                             asr_options={"beam_size": 3, **_pn_hint})
+                if _pstate.get("cancelled"):
+                    return
 
                 _set("음성 로드 중...", 15)
                 audio = whisperx.load_audio(media_path)
+                if _pstate.get("cancelled"):
+                    return
 
                 _set("음성 인식 중...", 20)
                 batch_size = 8 if device == "cuda" else 1
                 result = model.transcribe(audio, batch_size=batch_size)
                 del model
                 if device == "cuda": torch.cuda.empty_cache()
+                if _pstate.get("cancelled"):
+                    return
 
                 _set("타임스탬프 정렬 중...", 60)
                 model_a, meta = whisperx.load_align_model(
@@ -2019,6 +2046,8 @@ class SRTEditor(tk.Tk):
                                         audio, device, return_char_alignments=False)
                 del model_a
                 if device == "cuda": torch.cuda.empty_cache()
+                if _pstate.get("cancelled"):
+                    return
 
                 segments = result["segments"]
 
@@ -2053,6 +2082,9 @@ class SRTEditor(tk.Tk):
                     diar_segs  = diar_model(audio, **_diar_kw)
                     result2    = assign_word_speakers(diar_segs, result)
                     segments   = result2["segments"]
+
+                if _pstate.get("cancelled"):
+                    return
 
                 # segments → SRT 텍스트 생성
                 if _spellcheck and _spell_checker:
@@ -2245,6 +2277,10 @@ class SRTEditor(tk.Tk):
                 _pstate["target"] = 100.0
 
                 def _done():
+                    if _pstate.get("cancelled"):
+                        try: _os.remove(tmp_path)
+                        except Exception: pass
+                        return
                     _pstate["run"] = False
                     try: prog.destroy()
                     except Exception: pass
@@ -2263,6 +2299,8 @@ class SRTEditor(tk.Tk):
 
             except ImportError:
                 def _ei():
+                    if _pstate.get("cancelled"):
+                        return
                     _pstate["run"] = False
                     try: prog.destroy()
                     except Exception: pass
@@ -2273,6 +2311,8 @@ class SRTEditor(tk.Tk):
             except Exception as e:
                 err = str(e)
                 def _ee():
+                    if _pstate.get("cancelled"):
+                        return
                     _pstate["run"] = False
                     try: prog.destroy()
                     except Exception: pass
@@ -4561,8 +4601,29 @@ class SRTEditor(tk.Tk):
         _prog_state = {
             "target": 0.0, "current": 0.0, "wave_phase": 0.0, "running": True,
             "step_key": None, "step_start": _time.time(), "global_start": _time.time(),
-            "dot_tick": 0,
+            "dot_tick": 0, "cancelled": False,
         }
+
+        def _cancel_diarize(*_):
+            """중단 버튼 또는 창 닫기(X) — 화자 분석을 취소한다.
+            실행 중인 whisper/pyannote 연산 자체를 즉시 강제 종료할 수는
+            없지만(라이브러리가 중간에 끊는 기능을 제공하지 않음), 취소
+            플래그를 세워 결과가 나와도 화면에 반영하지 않고, 진행 창을
+            바로 닫아 사용자가 더 기다리지 않도록 한다."""
+            if _prog_state.get("cancelled"):
+                return
+            _prog_state["cancelled"] = True
+            _prog_state["running"] = False
+            try: prog_win.destroy()
+            except Exception: pass
+
+        prog_win.protocol("WM_DELETE_WINDOW", _cancel_diarize)
+
+        tk.Button(prog_win, text="중단", bg="#3A2A2A", fg="#E08080",
+                  relief="flat", bd=0, cursor="hand2",
+                  font=(FONT_FAMILY, 9), padx=14, pady=4,
+                  activebackground="#4A3232",
+                  command=_cancel_diarize).pack(pady=(10, 0))
 
         # 단계별 누적 % (예상시간 제거 — 실측 기반으로 계산)
         _STEPS = {
@@ -4982,9 +5043,13 @@ class SRTEditor(tk.Tk):
                     compute_type=compute,
                     asr_options={"beam_size": beam, **_pn_hint},
                 )
+                if _prog_state.get("cancelled"):
+                    return
 
                 _set_status("음성 로드 중...", "audio")
                 audio = whisperx.load_audio(self.media_path)
+                if _prog_state.get("cancelled"):
+                    return
 
                 import threading as _threading
 
@@ -5016,6 +5081,8 @@ class SRTEditor(tk.Tk):
                 del model
                 if device == "cuda":
                     torch.cuda.empty_cache()
+                if _prog_state.get("cancelled"):
+                    return
 
                 _set_status("타임스탬프 정렬 중...", "align")
                 _t = _threading.Thread(
@@ -5031,6 +5098,8 @@ class SRTEditor(tk.Tk):
                 del model_a
                 if device == "cuda":
                     torch.cuda.empty_cache()
+                if _prog_state.get("cancelled"):
+                    return
 
                 _set_status("화자 분리 중...", "diarize")
                 _t = _threading.Thread(
@@ -5047,12 +5116,19 @@ class SRTEditor(tk.Tk):
                 if num_spk > 0:
                     kw["num_speakers"] = num_spk
                 diarize_segments = diarize_model(audio, **kw)
+                if _prog_state.get("cancelled"):
+                    return
 
                 _set_status("화자 매핑 중...", "map")
                 result = assign_word_speakers(diarize_segments, result)
 
+                if _prog_state.get("cancelled"):
+                    return
+
                 # 결과를 기존 자막에 매핑
                 def _apply():
+                    if _prog_state.get("cancelled"):
+                        return
                     try:
                         _set_status("완료!", "done")
                         prog_win.after(300, prog_win.destroy)
@@ -5064,6 +5140,8 @@ class SRTEditor(tk.Tk):
 
             except ImportError:
                 def _err_import():
+                    if _prog_state.get("cancelled"):
+                        return
                     try: prog_win.destroy()
                     except Exception: pass
                     messagebox.showerror("설치 필요",
@@ -5074,6 +5152,8 @@ class SRTEditor(tk.Tk):
             except Exception as e:
                 err_msg = str(e)
                 def _err():
+                    if _prog_state.get("cancelled"):
+                        return
                     try: prog_win.destroy()
                     except Exception: pass
                     messagebox.showerror("화자 분석 오류", err_msg, parent=self)
