@@ -1269,6 +1269,8 @@ class SRTEditor(tk.Tk):
         self.bind("<Control-d>", self._on_delete)
         self.bind("<Up>",        self._on_arrow_up)
         self.bind("<Down>",      self._on_arrow_down)
+        self.bind("<Prior>",     self._on_page_up)     # Page Up
+        self.bind("<Next>",      self._on_page_down)   # Page Down
         self.bind("<grave>",     self._on_speaker_key)
         for _k in "123456789":
             self.bind(_k, self._on_speaker_key)
@@ -7355,6 +7357,36 @@ class SRTEditor(tk.Tk):
             self._scroll_to_row(new_idx)
         return "break"
 
+    def _page_size(self):
+        """현재 창(테이블 뷰포트) 높이에 맞춘 '한 페이지'당 행 수.
+        창 크기가 바뀌면 winfo_height()가 그때그때 반영되므로 자동으로
+        같이 변한다."""
+        return max(1, self.canvas.winfo_height() // self.ROW_H)
+
+    def _on_page_up(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if not self.subtitles:
+            return "break"
+        idx = self._current_nav_idx()
+        new_idx = max(0, idx - self._page_size())
+        if new_idx != idx:
+            self._select_row(new_idx)
+            self._scroll_to_row(new_idx)
+        return "break"
+
+    def _on_page_down(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if not self.subtitles:
+            return "break"
+        idx = self._current_nav_idx()
+        new_idx = min(len(self.subtitles) - 1, idx + self._page_size())
+        if new_idx != idx:
+            self._select_row(new_idx)
+            self._scroll_to_row(new_idx)
+        return "break"
+
     def _current_nav_idx(self):
         """위아래 이동의 기준 인덱스.
         재생 중이든 아니든 항상 현재 선택/포커스 행 기준으로 동작."""
@@ -7751,6 +7783,8 @@ def main():
                 self.bind("<Control-d>", self._on_delete)
                 self.bind("<Up>",        self._on_arrow_up)
                 self.bind("<Down>",      self._on_arrow_down)
+                self.bind("<Prior>",     self._on_page_up)     # Page Up
+                self.bind("<Next>",      self._on_page_down)   # Page Down
                 self.bind("<grave>",     self._on_speaker_key)
                 for _k in "123456789":
                     self.bind(_k, self._on_speaker_key)
