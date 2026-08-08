@@ -1003,7 +1003,7 @@ class _ColorPickerDialog:
 #  버전 정보
 # ─────────────────────────────────────────────
 APP_VERSION      = "0.1.0"   # 현재 버전 (릴리즈 태그와 맞춰 관리)
-GITHUB_TAGS_URL  = "https://github.com/danggai/SRT-Speaker-Separator/tags"
+GITHUB_TAGS_URL  = "https://github.com/danggai/SRT-Speaker-Separator/releases"
 GITHUB_LATEST_API = "https://api.github.com/repos/danggai/SRT-Speaker-Separator/tags"
 
 # ─────────────────────────────────────────────
@@ -1500,6 +1500,8 @@ class SRTEditor(tk.Tk):
         self._build_table(right_col)
         self._build_media_panel(right_col)
         self.after(200, self._attach_tooltips)
+        # 시작 후 잠시 뒤 업데이트 확인 (백그라운드, UI 렌더링을 막지 않음)
+        self.after(1500, self._check_update_async)
 
         # 파일 없을 때 드롭 오버레이
         self._build_drop_overlay()
