@@ -3433,18 +3433,33 @@ class SRTEditor(tk.Tk):
             btn = self._update_btn
             btn.configure(command=_on_click)
             if not btn.winfo_ismapped():
-                btn.pack(side="left", padx=(4, 0), pady=8)
+                # 우측 버튼 그룹들(설정/내보내기/화자분석)이 이미 side="right"로
+                # 채워진 뒤에 마지막으로 packing되므로, 그 왼쪽(화자 분석 버튼
+                # 바로 왼쪽 빈 공간)에 자연스럽게 자리잡는다.
+                btn.pack(side="right", padx=(0, 6), pady=10)
                 btn.lift()
         except Exception as e:
             import traceback; traceback.print_exc()
 
-    def _make_scrollable(self, parent):
+    def _make_scrollable(self, parent, with_footer=False):
         """parent 안에 세로 스크롤 가능한 영역을 만든다.
-        반환값 (outer, inner):
+        with_footer=False (기본): 반환값 (outer, inner)
+        with_footer=True:        반환값 (outer, inner, footer)
+            footer는 outer 하단에 스크롤과 무관하게 항상 고정되는 프레임.
+            (버튼 행처럼 스크롤해도 안 보이면 안 되는 UI에 사용)
         - outer: parent에 pack/nb.add로 배치할 컨테이너
         - inner: 실제 내용물을 채울 프레임 (기존 코드에서 parent로 쓰던 자리)
-        내용이 창 높이보다 길어져도 잘리지 않고 스크롤로 볼 수 있게 한다."""
+        내용이 창 높이보다 길어져도 잘리지 않고 스크롤로 볼 수 있게 하되,
+        내용이 뷰포트보다 짧으면(스크롤할 필요가 없으면) 휠을 굴려도 위로
+        빈 공간이 더 스크롤되지 않도록 막는다."""
         outer = tk.Frame(parent, bg=BG)
+
+        footer = None
+        if with_footer:
+            footer = tk.Frame(outer, bg=BG)
+            footer.pack(side="bottom", fill="x")
+            tk.Frame(outer, bg=BORDER, height=1).pack(side="bottom", fill="x")
+
         canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
         vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
@@ -3456,13 +3471,34 @@ class SRTEditor(tk.Tk):
 
         def _sync_scrollregion(_e=None):
             canvas.configure(scrollregion=canvas.bbox("all"))
+            # 내용(inner의 실제 wrap된 높이)이 뷰포트(캔버스에 남은 실질
+            # 영역)보다 작거나 같으면 — 즉 스크롤할 필요가 전혀 없으면 —
+            # 스크롤바 자체를 숨기고 뷰를 맨 위로 고정한다. 스크롤이 실제로
+            # 필요해지는 순간(내용이 늘어나거나 창이 작아지는 순간)에만
+            # 스크롤바가 다시 나타난다.
+            bbox = canvas.bbox("all")
+            content_h = (bbox[3] - bbox[1]) if bbox else 0
+            if content_h <= canvas.winfo_height():
+                if vsb.winfo_ismapped():
+                    vsb.pack_forget()
+                canvas.yview_moveto(0)
+            elif not vsb.winfo_ismapped():
+                vsb.pack(side="right", fill="y")
         inner.bind("<Configure>", _sync_scrollregion)
 
         def _sync_width(e):
             canvas.itemconfigure(win_id, width=e.width)
+            _sync_scrollregion()
         canvas.bind("<Configure>", _sync_width)
 
         def _wheel(event):
+            # 내용이 캔버스 뷰포트보다 짧으면(스크롤할 필요가 없으면) 휠을
+            # 굴려도 아무 것도 하지 않는다 — 빈 공간이 스크롤되어 보이는
+            # 문제 방지.
+            bbox = canvas.bbox("all")
+            content_h = (bbox[3] - bbox[1]) if bbox else 0
+            if content_h <= canvas.winfo_height():
+                return
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
         def _bind_wheel(_e=None):
             canvas.bind_all("<MouseWheel>", _wheel)
@@ -3474,6 +3510,8 @@ class SRTEditor(tk.Tk):
         inner.bind("<Enter>", _bind_wheel)
         inner.bind("<Leave>", _unbind_wheel)
 
+        if with_footer:
+            return outer, inner, footer
         return outer, inner
 
     def _open_settings(self, tab_idx=0):
@@ -3493,9 +3531,44 @@ class SRTEditor(tk.Tk):
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_settings_close)
 
-        nb = ttk.Notebook(win)
+        # ── 커스텀 탭바 (플랫 디자인: 점 표시 + 강조색, ttk.Notebook 대체) ──
+        tab_bar = tk.Frame(win, bg=BG)
+        tab_bar.pack(fill="x", side="top")
+        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", side="top")
 
-        # ── 하단 버전 정보 (먼저 pack해야 Notebook에 가려지지 않음)
+        _tabs = []
+        _active = {"idx": -1}
+
+        def _select_tab(idx):
+            if idx == _active["idx"]:
+                return
+            for i, t in enumerate(_tabs):
+                active = (i == idx)
+                if active:
+                    t["outer"].pack(in_=content_host, fill="both", expand=True)
+                else:
+                    t["outer"].pack_forget()
+                t["label"].configure(
+                    fg=FG if active else FG_DIM,
+                    font=(FONT_FAMILY, 10, "bold" if active else "normal"))
+                t["underline"].configure(bg=ACCENT if active else BG)
+            _active["idx"] = idx
+
+        def _add_tab(title, outer):
+            idx = len(_tabs)
+            cell = tk.Frame(tab_bar, bg=BG, cursor="hand2")
+            cell.pack(side="left", padx=(18 if idx == 0 else 16, 0))
+            lbl = tk.Label(cell, text=title, bg=BG, fg=FG_DIM,
+                          font=(FONT_FAMILY, 10), cursor="hand2")
+            lbl.pack(side="top", pady=(11, 8))
+            underline = tk.Frame(cell, bg=BG, height=3)
+            underline.pack(side="top", fill="x")
+            for w in (cell, lbl, underline):
+                w.bind("<Button-1>", lambda e, i=idx: _select_tab(i))
+            _tabs.append({"outer": outer, "label": lbl, "underline": underline})
+            return idx
+
+        # ── 하단 버전 정보 (content_host보다 먼저 pack해야 가려지지 않음)
         _ver_frame = tk.Frame(win, bg=BG2)
         _ver_frame.pack(fill="x", side="bottom")
         tk.Frame(_ver_frame, bg=BORDER, height=1).pack(fill="x")
@@ -3551,11 +3624,12 @@ class SRTEditor(tk.Tk):
                 self.after(0, lambda: _update_latest_lbl("확인 실패"))
             threading.Thread(target=_fetch_for_settings, daemon=True).start()
 
-        nb.pack(fill="both", expand=True, padx=0, pady=0)
+        content_host = tk.Frame(win, bg=BG)
+        content_host.pack(fill="both", expand=True)
 
         # ── 탭 1: 화자 구분 패턴 ──────────────────
-        tab1_outer, tab1 = self._make_scrollable(nb)
-        nb.add(tab1_outer, text="  화자 구분 패턴  ")
+        tab1_outer, tab1, tab1_footer = self._make_scrollable(content_host, with_footer=True)
+        _add_tab("화자 구분 패턴", tab1_outer)
 
         tk.Label(tab1, text="화자 구분 패턴", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
@@ -3609,8 +3683,8 @@ class SRTEditor(tk.Tk):
             info_lbl.configure(text="✔ 적용되었습니다.", fg=ACCENT)
             win.after(1200, win.destroy)
 
-        btn_row = tk.Frame(tab1, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(14, 10))
+        btn_row = tk.Frame(tab1_footer, bg=BG)
+        btn_row.pack(fill="x", padx=20, pady=(10, 10))
         tk.Button(btn_row, text="기본값",
                   bg="#2A2A2A", fg=FG_DIM, relief="flat", bd=0, cursor="hand2",
                   font=(FONT_FAMILY, 10), padx=10, pady=5,
@@ -3627,14 +3701,16 @@ class SRTEditor(tk.Tk):
                   activebackground="#333333",
                   command=win.destroy).pack(side="right", padx=(0, 8))
 
-        # ── 탭 2: 모델 관리 ────────────────────
-        tab2_outer, tab2 = self._make_scrollable(nb)
-        nb.add(tab2_outer, text="  ✍  자동 자막  ")
+        # ── 탭 2: 자동 자막 ────────────────────
+        tab2_outer, tab2 = self._make_scrollable(content_host)
+        _add_tab("자동 자막", tab2_outer)
         self._build_transcribe_settings_tab(tab2)
 
-        tab3_outer, tab3 = self._make_scrollable(nb)
-        nb.add(tab3_outer, text="  📦 모델 관리  ")
+        tab3_outer, tab3 = self._make_scrollable(content_host)
+        _add_tab("모델 관리", tab3_outer)
         self._build_model_mgmt_tab(tab3)
+
+        _select_tab(tab_idx if 0 <= tab_idx < len(_tabs) else 0)
 
 
     def _build_transcribe_settings_tab(self, parent):
