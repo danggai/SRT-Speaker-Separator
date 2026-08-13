@@ -200,6 +200,37 @@ def _apply_dark_titlebar(window):
     except Exception:
         pass
 
+
+def _friendly_transcribe_error(err_text: str) -> str:
+    """whisperx/pyannote/torch에서 올라오는 원시 예외 메시지를 사용자가
+    바로 대응할 수 있는 한국어 안내로 변환한다. 알려진 패턴이 아니면
+    원본 메시지를 그대로 보여준다."""
+    low = (err_text or "").lower()
+
+    if "out of memory" in low or "cuda oom" in low:
+        return ("GPU 메모리가 부족합니다 (CUDA out of memory).\n\n"
+                "다음을 시도해 보세요:\n"
+                "  • 다른 GPU 사용 프로그램(게임, 다른 AI 도구 등)을 끄고 재시도\n"
+                "  • 설정 → 화자 분석 탭에서 처리 장치를 CPU로 변경\n"
+                "  • 배치 크기를 더 낮은 값으로 변경\n"
+                "  • 화자 분리 모드를 '빠름'으로 변경(더 작은 모델 사용)\n\n"
+                f"(원본 오류: {err_text[:200]})")
+    if "cudnn" in low or "cublas" in low or "cuda error" in low:
+        return ("GPU(CUDA) 드라이버/라이브러리 오류가 발생했습니다.\n\n"
+                "그래픽 드라이버를 최신으로 업데이트하거나, 설정에서 처리\n"
+                "장치를 CPU로 변경한 뒤 다시 시도해 보세요.\n\n"
+                f"(원본 오류: {err_text[:200]})")
+    if ("401" in err_text or "gated" in low or
+            ("access" in low and "token" in low) or "unauthorized" in low):
+        return ("HuggingFace 토큰 인증에 실패했습니다.\n\n"
+                "화자 분리 모델(pyannote)은 HuggingFace에서 별도 이용 약관\n"
+                "동의가 필요합니다. 토큰이 올바른지, 그리고 아래 모델 페이지에서\n"
+                "'Access repository'를 눌러 약관에 동의했는지 확인해 주세요:\n"
+                "  huggingface.co/pyannote/speaker-diarization-3.1\n\n"
+                f"(원본 오류: {err_text[:200]})")
+    return err_text
+
+
 def _add_recent_token(cfg: dict, token: str):
     """최근 토큰 목록에 추가 (최대 _MAX_RECENT_TOKENS개, 중복 제거)."""
     if not token:
@@ -2338,7 +2369,12 @@ class SRTEditor(tk.Tk):
                         parent=self)
                 self.after(0, _ei)
             except Exception as e:
-                err = str(e)
+                err = _friendly_transcribe_error(str(e))
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 def _ee():
                     if _pstate.get("cancelled"):
                         return
@@ -2347,6 +2383,34 @@ class SRTEditor(tk.Tk):
                     except Exception: pass
                     messagebox.showerror("오류", err, parent=self)
                 self.after(0, _ee)
+            finally:
+                # 작업이 성공/실패/취소 어떤 경우로 끝나든, 여기서 쓰던
+                # 무거운 객체(모델·오디오·인식결과)들을 일괄 해제한다.
+                try: del model
+                except Exception: pass
+                try: del model_a
+                except Exception: pass
+                try: del diar_model
+                except Exception: pass
+                try: del audio
+                except Exception: pass
+                try: del result
+                except Exception: pass
+                try: del result2
+                except Exception: pass
+                try: del segments
+                except Exception: pass
+                try: del diar_segs
+                except Exception: pass
+                try:
+                    import gc
+                    gc.collect()
+                    import torch as _torch
+                    if _torch.cuda.is_available():
+                        _torch.cuda.empty_cache()
+                        _torch.cuda.ipc_collect()
+                except Exception:
+                    pass
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -5245,6 +5309,13 @@ class SRTEditor(tk.Tk):
                     except Exception:
                         pass
                     self._apply_diarize_result(result["segments"])
+                    # 메인 스레드에서 실제로 다 사용한 뒤 여기서 해제
+                    # (워커 스레드의 finally보다 먼저 실행되면 안 되므로
+                    #  워커의 일괄 정리 목록에는 result를 넣지 않는다)
+                    try:
+                        del result
+                    except Exception:
+                        pass
 
                 self.after(0, _apply)
 
@@ -5260,7 +5331,12 @@ class SRTEditor(tk.Tk):
                         "설치 후 다시 시도하세요.", parent=self)
                 self.after(0, _err_import)
             except Exception as e:
-                err_msg = str(e)
+                err_msg = _friendly_transcribe_error(str(e))
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
                 def _err():
                     if _prog_state.get("cancelled"):
                         return
@@ -5268,6 +5344,30 @@ class SRTEditor(tk.Tk):
                     except Exception: pass
                     messagebox.showerror("화자 분석 오류", err_msg, parent=self)
                 self.after(0, _err)
+            finally:
+                # 작업이 성공/실패/취소 어떤 경우로 끝나든, 여기서 쓰던
+                # 무거운 객체(모델·오디오·인식결과)들을 일괄 해제한다.
+                try: del model
+                except Exception: pass
+                try: del model_a
+                except Exception: pass
+                try: del meta
+                except Exception: pass
+                try: del diarize_model
+                except Exception: pass
+                try: del audio
+                except Exception: pass
+                try: del diarize_segments
+                except Exception: pass
+                try:
+                    import gc
+                    gc.collect()
+                    import torch as _torch
+                    if _torch.cuda.is_available():
+                        _torch.cuda.empty_cache()
+                        _torch.cuda.ipc_collect()
+                except Exception:
+                    pass
 
         threading.Thread(target=_worker, daemon=True).start()
 
