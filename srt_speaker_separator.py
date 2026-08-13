@@ -180,6 +180,26 @@ def _save_config(cfg: dict):
             continue
     return False
 
+# ── Windows 다크 타이틀바 강제 적용 ─────────────────────────
+# Toplevel(설정/대화상자 등) 창은 Windows에서 메인 창과 달리 시스템 다크
+# 테마가 자동으로 적용되지 않아 흰색 타이틀바로 튀는 경우가 있다.
+# DWM API로 명시적으로 다크 모드를 지정해 항상 앱 배경과 어울리게 한다.
+def _apply_dark_titlebar(window):
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        window.update_idletasks()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
+        value = ctypes.c_int(1)
+        for attr in (20, 19):   # 20=최신 Windows, 19=구버전 빌드 호환
+            res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd, attr, ctypes.byref(value), ctypes.sizeof(value))
+            if res == 0:
+                break
+    except Exception:
+        pass
+
 def _add_recent_token(cfg: dict, token: str):
     """최근 토큰 목록에 추가 (최대 _MAX_RECENT_TOKENS개, 중복 제거)."""
     if not token:
@@ -804,6 +824,7 @@ class _ColorPickerDialog:
     # ── UI 빌드 ──────────────────────────────
     def _build(self):
         win = tk.Toplevel(self._parent)
+        _apply_dark_titlebar(win)
         self._win = win
         win.title(self._title)
         win.resizable(False, False)
@@ -1044,6 +1065,7 @@ class PopupMenu:
     def _show(self, x, y):
         self._destroy()
         win = tk.Toplevel(self._root)
+        _apply_dark_titlebar(win)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BG3)
@@ -1195,6 +1217,7 @@ class SRTEditor(tk.Tk):
         self.geometry("1200x820")
         self.minsize(900, 620)
         self.configure(bg=BG)
+        _apply_dark_titlebar(self)
 
         # 앱 창이 생성된 후 정확한 폰트 탐지 (빈 창 없음)
         global FONT_FAMILY
@@ -1631,6 +1654,7 @@ class SRTEditor(tk.Tk):
     def _ask_auto_transcribe(self, media_path):
         """자막 자동 생성 여부 및 방식 선택 팝업."""
         win = tk.Toplevel(self)
+        _apply_dark_titlebar(win)
         win.title("자막 자동 생성")
         win.configure(bg=BG)
         win.geometry("420x430")
@@ -1926,6 +1950,7 @@ class SRTEditor(tk.Tk):
 
         # ── 진행 창 ──────────────────────────────────────────────
         prog = tk.Toplevel(self)
+        _apply_dark_titlebar(prog)
         prog.title("자막 자동 생성 중...")
         prog.configure(bg=BG)
         prog.geometry("440x240")
@@ -3518,6 +3543,7 @@ class SRTEditor(tk.Tk):
         """설정 창 (탭: 패턴 / 자동자막 / 모델관리)"""
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
+        _apply_dark_titlebar(win)
         win.title("설정")
         win.configure(bg=BG)
         win.geometry("580x540")
@@ -4314,6 +4340,7 @@ class SRTEditor(tk.Tk):
             return
         global g_speaker_pattern, g_display_pattern
         win = tk.Toplevel(self)
+        _apply_dark_titlebar(win)
         win.title("화자 자동 분석")
         win.configure(bg=BG)
         win.geometry("560x540")
@@ -4417,6 +4444,7 @@ class SRTEditor(tk.Tk):
         """고유명사 사전 관리 다이얼로그."""
         self._ensure_proper_nouns_init()
         win = tk.Toplevel(self)
+        _apply_dark_titlebar(win)
         win.title("고유명사 사전")
         win.configure(bg=BG)
         win.geometry("380x460")
@@ -4628,6 +4656,7 @@ class SRTEditor(tk.Tk):
         # 진행 다이얼로그
         import math as _math, time as _time
         prog_win = tk.Toplevel(self)
+        _apply_dark_titlebar(prog_win)
         prog_win.title("화자 분석 중...")
         prog_win.configure(bg=BG)
         prog_win.geometry("440x260")
@@ -4930,6 +4959,7 @@ class SRTEditor(tk.Tk):
 
                         # 설치 진행 (별도 창)
                         inst_win = tk.Toplevel(self)
+                        _apply_dark_titlebar(inst_win)
                         inst_win.title("torch 설치 중...")
                         inst_win.configure(bg=BG)
                         inst_win.geometry("400x120")
@@ -5574,6 +5604,7 @@ class SRTEditor(tk.Tk):
         self._spk_drag_y0  = event.y_root
         # 고스트: 반투명 Toplevel
         g = tk.Toplevel(self)
+        _apply_dark_titlebar(g)
         g.overrideredirect(True)
         g.attributes("-alpha", 0.7)
         g.attributes("-topmost", True)
@@ -7817,6 +7848,7 @@ def main():
                 self.geometry("1200x820")
                 self.minsize(900, 620)
                 self.configure(bg=BG)
+                _apply_dark_titlebar(self)
 
                 global FONT_FAMILY
                 FONT_FAMILY = _pick_font(root=self)
