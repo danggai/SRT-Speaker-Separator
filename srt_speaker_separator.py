@@ -1480,15 +1480,11 @@ class SRTEditor(tk.Tk):
             Tooltip(b, tip, delay=500)
             return b
 
-        # 콤팩트 버튼 그룹 (자막추가 / 실행취소 / 다시실행)
+        # 콤팩트 버튼 그룹 (실행취소 / 다시실행)
         _btn_group = tk.Frame(top, bg=BG3,
                               highlightthickness=1, highlightbackground=BORDER)
         _btn_group.pack(side="left", padx=(0, 4), pady=10)
 
-        _mini_btn(_btn_group, "＋",
-                  _defocus(lambda: self.add_row(getattr(self, "_last_focused_idx", None))),
-                  "자막 추가  [Ctrl+Enter]")
-        tk.Frame(_btn_group, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
         _mini_btn(_btn_group, "↩",
                   _defocus(self._undo),
                   "실행 취소  [Ctrl+Z]")
@@ -7335,13 +7331,28 @@ class SRTEditor(tk.Tk):
         self._show_overlay()
 
     def open_file(self):
+        """자막(.srt) 또는 음성/영상 파일을 선택해 연다.
+        확장자를 보고 자동으로 자막 불러오기/미디어 불러오기로 분기한다."""
+        _media_exts = (".mp3", ".mp4", ".wav", ".m4a", ".aac",
+                       ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm")
         path = filedialog.askopenfilename(
-            title="SRT 파일 선택",
-            filetypes=[("SRT 파일", "*.srt"), ("모든 파일", "*.*")],
+            title="자막(.srt) 또는 음성/영상 파일 선택",
+            filetypes=[
+                ("자막 및 미디어 파일",
+                 "*.srt *.mp3 *.mp4 *.wav *.m4a *.aac *.ogg *.flac *.mkv *.avi *.mov *.webm"),
+                ("SRT 자막 파일", "*.srt"),
+                ("음성/영상 파일",
+                 "*.mp3 *.mp4 *.wav *.m4a *.aac *.ogg *.flac *.mkv *.avi *.mov *.webm"),
+                ("모든 파일", "*.*"),
+            ],
             parent=self)
         if not path:
             return
-        self._load_srt(path)
+        ext = os.path.splitext(path)[1].lower()
+        if ext in _media_exts:
+            self._load_media(path)
+        else:
+            self._load_srt(path)
 
     def _load_srt(self, path):
         try:
