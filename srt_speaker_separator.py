@@ -1261,6 +1261,7 @@ class SRTEditor(tk.Tk):
         self.save_path  = None
         self.edited_row = None
         self._last_focused_idx = None
+        self._selection_anchor = None   # Shift+방향키 다중선택 앵커
         self._unsaved   = False   # 미저장 변경사항 추적
 
         # Undo / Redo 스택  (각 항목: (subtitles_deepcopy, speakers_copy))
@@ -1323,6 +1324,8 @@ class SRTEditor(tk.Tk):
         self.bind("<Control-d>", self._on_delete)
         self.bind("<Up>",        self._on_arrow_up)
         self.bind("<Down>",      self._on_arrow_down)
+        self.bind("<Shift-Up>",  self._on_shift_arrow_up)
+        self.bind("<Shift-Down>", self._on_shift_arrow_down)
         self.bind("<Prior>",     self._on_page_up)     # Page Up
         self.bind("<Next>",      self._on_page_down)   # Page Down
         self.bind("<grave>",     self._on_speaker_key)
@@ -2476,14 +2479,18 @@ class SRTEditor(tk.Tk):
         _med_wrap = tk.Frame(top_row, bg="#1A1A2A",
                              highlightthickness=1, highlightbackground="#252535")
         _med_wrap.pack(side="right", padx=(8, 0))
-        _med_btn = tk.Button(_med_wrap, text="♪  음성 파일 열기",
+        def _add_row_and_defocus():
+            self.add_row(getattr(self, "_last_focused_idx", None))
+            self.focus_set()   # 스페이스바로 버튼이 재실행되는 것 방지
+
+        _med_btn = tk.Button(_med_wrap, text="＋  자막 추가",
                              bg="#1A1A2A", fg=FG, relief="flat", bd=0,
                              font=(FONT_FAMILY, 10), padx=8, pady=2,
                              cursor="hand2", takefocus=0,
                              activebackground=BG2, activeforeground=FG,
-                             command=self.open_media)
+                             command=_add_row_and_defocus)
         _med_btn.pack()
-        Tooltip(_med_btn, "음성/영상 파일 열기", delay=500)
+        Tooltip(_med_btn, "자막 추가", delay=500)
 
         # ── 파형 Canvas (100px) ────────────────
         self.media_progress_var = tk.DoubleVar(value=0)
@@ -5301,6 +5308,7 @@ class SRTEditor(tk.Tk):
 
                 # 결과를 기존 자막에 매핑
                 def _apply():
+                    nonlocal result
                     if _prog_state.get("cancelled"):
                         return
                     try:
@@ -6808,6 +6816,7 @@ class SRTEditor(tk.Tk):
         self._selected_row_idx = idx
         self._last_focused_idx = idx
         self._selected_rows    = {idx}
+        self._selection_anchor = idx   # Shift+방향키 확장의 새 기준점
         # 이전 선택들 재렌더
         for old_idx in old_multi:
             if old_idx != idx:
@@ -7541,6 +7550,56 @@ class SRTEditor(tk.Tk):
         self._media_seek(+step)
         return "break"
 
+    def _extend_selection(self, delta):
+        """Shift+방향키: 선택을 시작한 앵커(_selection_anchor)는 계속 고정한
+        채, 커서를 delta만큼 옮겨 범위 선택을 확장/축소한다.
+        마지막으로 이동한 행은 _selected_row_idx(= '현재 선택한 행')로
+        기억해서, 이후 Shift 없는 조작(방향키 이동, 자막 추가 등)은 이
+        행을 기준으로 이어지도록 한다. 앵커 자체는 이후 새로 단독 선택을
+        하기 전까지 바뀌지 않는다."""
+        if not self.subtitles:
+            return
+        anchor = getattr(self, "_selection_anchor", None)
+        if anchor is None:
+            anchor = getattr(self, "_selected_row_idx", None)
+        if anchor is None:
+            # 아직 아무 것도 선택된 게 없으면 일반 이동과 동일하게 동작
+            # (이 행이 다음 Shift 확장의 새 앵커가 됨)
+            idx = self._current_nav_idx()
+            new_idx = max(0, min(len(self.subtitles) - 1, idx + delta))
+            self._select_row(new_idx)
+            self._scroll_to_row(new_idx)
+            return
+
+        cur = getattr(self, "_selected_row_idx", None)
+        if cur is None:
+            cur = anchor
+        new_cur = max(0, min(len(self.subtitles) - 1, cur + delta))
+        if new_cur == cur:
+            return
+
+        self._selection_anchor = anchor   # 앵커는 계속 고정
+        lo, hi = min(anchor, new_cur), max(anchor, new_cur)
+        old = set(self._selected_rows) | {anchor, cur}
+        self._selected_rows    = set(range(lo, hi + 1))
+        self._selected_row_idx = new_cur   # '현재 선택한 행' = 마지막 이동 위치
+        self._last_focused_idx = new_cur
+        for idx in old.symmetric_difference(self._selected_rows):
+            self._redraw_slot_for(idx)
+        self._scroll_to_row(new_cur)
+
+    def _on_shift_arrow_up(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        self._extend_selection(-1)
+        return "break"
+
+    def _on_shift_arrow_down(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        self._extend_selection(1)
+        return "break"
+
     def _on_arrow_up(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
@@ -7963,6 +8022,7 @@ def main():
                 self.media_path = None
                 self._seek_job  = None
                 self._last_focused_idx = None
+                self._selection_anchor = None   # Shift+방향키 다중선택 앵커
                 self._unsaved   = False
                 self._playing_rows: set = set()
                 self._ts_cache: list = []
@@ -7993,6 +8053,8 @@ def main():
                 self.bind("<Control-d>", self._on_delete)
                 self.bind("<Up>",        self._on_arrow_up)
                 self.bind("<Down>",      self._on_arrow_down)
+                self.bind("<Shift-Up>",  self._on_shift_arrow_up)
+                self.bind("<Shift-Down>", self._on_shift_arrow_down)
                 self.bind("<Prior>",     self._on_page_up)     # Page Up
                 self.bind("<Next>",      self._on_page_down)   # Page Down
                 self.bind("<grave>",     self._on_speaker_key)
