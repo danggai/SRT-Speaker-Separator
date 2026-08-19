@@ -1331,6 +1331,8 @@ class SRTEditor(tk.Tk):
         self.bind("<grave>",     self._on_speaker_key)
         for _k in "123456789":
             self.bind(_k, self._on_speaker_key)
+        self.bind("s", self._split_subtitle_shortcut)
+        self.bind("S", self._split_subtitle_shortcut)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── 스타일 ────────────────────────────────
@@ -6194,6 +6196,22 @@ class SRTEditor(tk.Tk):
                          command=lambda: self._on_delete())
         menu.add_separator()
 
+        menu.add_separator()
+
+        # ── 자막 나누기 (재생 위치가 이 자막 구간 안에 있을 때만 표시) ──
+        if self.media_path and n == 1:
+            cache = getattr(self, "_ts_cache", [])
+            if anchor_idx < len(cache):
+                t_s, t_e = cache[anchor_idx]
+                pos = self.media_progress_var.get()
+                if (t_s is not None and t_e is not None
+                        and t_s + self._MIN_SUB_DURATION <= pos <= t_e - self._MIN_SUB_DURATION):
+                    menu.add_command(
+                        label=f"자막 나누기 ({self._fmt_time(pos)} 기준)",
+                        accelerator="S",
+                        command=lambda: self.split_subtitle_at(anchor_idx, pos))
+                    menu.add_separator()
+
         # ── 화자 변경 ─────────────────────────
         if self.speakers:
             spk_menu = make_menu(menu)
@@ -7169,6 +7187,73 @@ class SRTEditor(tk.Tk):
         self._wf_img_cache = None
         self._pb_redraw()
 
+    def split_subtitle_at(self, idx, pos):
+        """idx번 자막을 현재 재생 위치(pos, 초)를 기준으로 앞/뒤 두 개로
+        나눈다. 양쪽 다 원래 텍스트·화자를 그대로 유지한다."""
+        if idx < 0 or idx >= len(self.subtitles):
+            return False
+        cache = getattr(self, "_ts_cache", [])
+        if idx >= len(cache):
+            return False
+        t_s, t_e = cache[idx]
+        if t_s is None or t_e is None:
+            return False
+        # 양쪽 다 최소 길이는 넘어야 분리 가능
+        if not (t_s + self._MIN_SUB_DURATION <= pos <= t_e - self._MIN_SUB_DURATION):
+            return False
+
+        def _fmt_ts(sec):
+            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
+            ms = int(round((sec % 1) * 1000))
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        self._push_undo()
+        sub     = self.subtitles[idx]
+        text    = sub.get("text", "")
+        speaker = sub.get("speaker", "")
+
+        sub["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(pos)}"
+        new_sub = {"timestamp": f"{_fmt_ts(pos)} --> {_fmt_ts(t_e)}",
+                   "text": text, "speaker": speaker}
+        self.subtitles.insert(idx + 1, new_sub)
+
+        self._rebuild_ts_cache()
+        self._renumber_rows(idx)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        self._select_row(idx + 1)
+        self.after(50, lambda: self._scroll_to_row(idx))
+        self._wf_img_cache = None
+        self._pb_redraw()
+        return True
+
+    def _subtitle_idx_at_playhead(self):
+        """현재 재생 위치를 포함하는 자막 인덱스 하나를 고른다.
+        여러 개가 겹쳐 있으면 현재 선택된 행을 우선하고, 없으면 z-index가
+        가장 높은(리스트 뒤쪽) 것을 고른다."""
+        if not self.media_path:
+            return None, None
+        pos = self.media_progress_var.get()
+        rows = self._get_rows_at(pos)
+        if not rows:
+            return None, pos
+        sel = getattr(self, "_selected_row_idx", None)
+        if sel in rows:
+            return sel, pos
+        return max(rows), pos
+
+    def _split_subtitle_shortcut(self, event=None):
+        """단축키 S: 현재 재생 위치를 포함하는 자막을 그 위치 기준으로
+        둘로 나눈다."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        idx, pos = self._subtitle_idx_at_playhead()
+        if idx is None:
+            return "break"
+        self.split_subtitle_at(idx, pos)
+        return "break"
+
     def add_row(self, after_idx=None):
         if after_idx is None:
             after_idx = len(self.subtitles) - 1
@@ -8071,6 +8156,8 @@ def main():
                 self.bind("<grave>",     self._on_speaker_key)
                 for _k in "123456789":
                     self.bind(_k, self._on_speaker_key)
+                self.bind("s", self._split_subtitle_shortcut)
+                self.bind("S", self._split_subtitle_shortcut)
                 self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         app = SRTEditorDnD()
