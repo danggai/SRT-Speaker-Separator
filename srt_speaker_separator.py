@@ -840,6 +840,28 @@ class _ColorPickerDialog:
     SZ   = 200   # 팔레트 크기
     BH   = 20    # 밝기 슬라이더 높이
 
+    # 프리셋 색상 — 채도를 낮춘 무지개(빨주노초파남보) + 추가 색상, 총 16개.
+    # 파스텔보다는 진하고 원색보다는 연한 톤. 어두운 UI 배경 위에서도
+    # 서로 잘 구분되도록 색상마다 채도/명도를 개별 보정했다.
+    PRESET_COLORS = [
+        "#D24B4B",  # 빨강
+        "#DA944E",  # 주황
+        "#D8BF5A",  # 노랑
+        "#99CD51",  # 연두
+        "#40BF60",  # 초록
+        "#37BEA7",  # 청록
+        "#51A3CD",  # 하늘
+        "#597CCF",  # 파랑
+        "#6D5EC9",  # 남색
+        "#905EC9",  # 보라
+        "#BC59C5",  # 자주
+        "#D36995",  # 핑크
+        "#DA7E6C",  # 코랄
+        "#945E38",  # 갈색
+        "#88813A",  # 올리브
+        "#6282A7",  # 슬레이트
+    ]
+
     def __init__(self, parent, initial_color="#9B7FD4", title="색상 선택"):
         self._parent  = parent
         self._result  = None
@@ -863,8 +885,11 @@ class _ColorPickerDialog:
         win.grab_set()
         win.transient(self._parent)
 
-        pad = tk.Frame(win, bg=BG2)
-        pad.pack(padx=16, pady=14)
+        pad_outer = tk.Frame(win, bg=BG2)
+        pad_outer.pack()
+
+        pad = tk.Frame(pad_outer, bg=BG2)
+        pad.pack(side="left", padx=16, pady=14)
 
         # HSV 팔레트 캔버스
         sz = self.SZ
@@ -924,6 +949,24 @@ class _ColorPickerDialog:
                   font=(FONT_FAMILY, 10), padx=14, pady=6,
                   cursor="hand2", activebackground=BORDER,
                   command=win.destroy).pack(side="right")
+
+        # ── 프리셋 색상 (오른쪽) ──────────────────
+        preset_col = tk.Frame(pad_outer, bg=BG2)
+        preset_col.pack(side="left", padx=(0, 16), pady=14, fill="y")
+        tk.Label(preset_col, text="프리셋", bg=BG2, fg=FG_DIM,
+                 font=(FONT_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 6))
+        preset_grid = tk.Frame(preset_col, bg=BG2)
+        preset_grid.pack()
+        _SW = 22       # 스와치 한 변 크기(px)
+        _COLS = 4      # 그리드 열 수
+        for i, _hexcol in enumerate(self.PRESET_COLORS):
+            r, c = divmod(i, _COLS)
+            sw = tk.Canvas(preset_grid, width=_SW, height=_SW,
+                          highlightthickness=1, highlightbackground=BORDER,
+                          cursor="hand2", bg=_hexcol)
+            sw.grid(row=r, column=c, padx=3, pady=3)
+            sw.bind("<Button-1>", lambda e, hc=_hexcol: self._pick_preset(hc))
+            Tooltip(sw, _hexcol, delay=300)
 
         self._refresh()
 
@@ -1004,6 +1047,16 @@ class _ColorPickerDialog:
 
     def _on_hex_commit(self):
         self._on_hex_type()
+
+    def _pick_preset(self, hexcol):
+        """프리셋 스와치 클릭 — 그 색상으로 팔레트/슬라이더/미리보기/Hex 갱신."""
+        val = hexcol.lstrip("#")
+        r = int(val[0:2], 16)
+        g = int(val[2:4], 16)
+        b = int(val[4:6], 16)
+        self._h, self._s, self._v = self._rgb2hsv(r, g, b)
+        self._draw_palette()
+        self._refresh()
 
     def _ok(self):
         r, g, b = self._hsv2rgb(self._h, self._s, self._v)
