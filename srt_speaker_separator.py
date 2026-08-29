@@ -2030,6 +2030,70 @@ class SRTEditor(tk.Tk):
                   activebackground=BG2,
                   command=win.destroy).pack(side="left", padx=6)
 
+    def _offer_whisperx_autoinstall(self, retry_fn):
+        """whisperx가 설치되어 있지 않을 때 자동 설치를 제안하고, 동의해서
+        설치가 완료되면 원래 하려던 작업(retry_fn)을 자동으로 이어서
+        실행한다. 거부하거나 설치에 실패하면 조용히 끝난다(별도 안내는
+        설치 실패 메시지로 대체)."""
+        ans = messagebox.askyesno(
+            "설치 필요",
+            "자동 자막 생성/화자 분석에 필요한 whisperx 패키지가\n"
+            "설치되어 있지 않습니다.\n\n"
+            "지금 자동으로 설치할까요?\n"
+            "(인터넷 연결 필요, 수 분 소요될 수 있습니다)\n\n"
+            "설치가 끝나면 하던 작업을 자동으로 이어서 진행합니다.",
+            parent=self)
+        if not ans:
+            return
+
+        inst_win = tk.Toplevel(self)
+        _apply_dark_titlebar(inst_win)
+        inst_win.title("whisperx 설치 중...")
+        inst_win.configure(bg=BG)
+        inst_win.geometry("420x120")
+        inst_win.resizable(False, False)
+        inst_win.transient(self)
+        inst_win.grab_set()
+        tk.Label(inst_win, text="⏳  whisperx 설치 중...",
+                 bg=BG, fg=FG, font=(FONT_FAMILY, 10, "bold")).pack(pady=(24, 6))
+        tk.Label(inst_win, text="pip install 실행 중 (수 분 소요될 수 있습니다)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack()
+        inst_win.update()
+
+        def _do_install():
+            ok = False
+            err_text = ""
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "whisperx", "-q"])
+                ok = True
+            except subprocess.CalledProcessError:
+                try:
+                    subprocess.check_call(
+                        [sys.executable, "-m", "pip", "install", "whisperx", "-q", "--user"])
+                    ok = True
+                except subprocess.CalledProcessError as e2:
+                    err_text = str(e2)
+            except Exception as e:
+                err_text = str(e)
+
+            def _finish():
+                try: inst_win.destroy()
+                except Exception: pass
+                if ok:
+                    # 감지된 설치 완료 → 하던 작업을 자동으로 이어서 실행
+                    retry_fn()
+                else:
+                    messagebox.showerror(
+                        "설치 실패",
+                        "whisperx 자동 설치에 실패했습니다.\n\n"
+                        "수동으로 설치 후 다시 시도해주세요:\n"
+                        "pip install whisperx\n\n"
+                        f"(오류: {err_text[:200]})", parent=self)
+            self.after(0, _finish)
+
+        threading.Thread(target=_do_install, daemon=True).start()
+
     def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
         import threading, tempfile, math as _math, time as _time
@@ -2133,11 +2197,25 @@ class SRTEditor(tk.Tk):
                 device = "cuda" if (torch.cuda.is_available() and _dev_pref != "cpu") else "cpu"
                 compute = "float16" if device == "cuda" else "float32"
 
+                _model_t0 = _time.time()
+                _model_loading = {"on": True}
+                def _model_load_tick():
+                    if not _model_loading["on"] or _pstate.get("cancelled"):
+                        return
+                    elapsed = int(_time.time() - _model_t0)
+                    hint = (" (최초 실행 시 모델 다운로드로 수 분 정도 걸릴 수"
+                            " 있습니다. 계속 이 문구가 보여도 정상입니다)"
+                            if elapsed >= 8 else "")
+                    _set(f"Whisper 모델 로드 중... ({device}) · {elapsed}초 경과{hint}", 5)
+                    self.after(1000, _model_load_tick)
+                self.after(1000, _model_load_tick)
+
                 _set(f"Whisper 모델 로드 중... ({device})", 5)
                 _pn_hint = self._build_proper_noun_hint()
                 model = whisperx.load_model("large-v3-turbo", device,
                                             compute_type=compute,
                                             asr_options={"beam_size": 3, **_pn_hint})
+                _model_loading["on"] = False
                 if _pstate.get("cancelled"):
                     return
 
@@ -2419,9 +2497,8 @@ class SRTEditor(tk.Tk):
                     _pstate["run"] = False
                     try: prog.destroy()
                     except Exception: pass
-                    messagebox.showerror("설치 필요",
-                        "whisperx가 설치되어 있지 않습니다.\npip install whisperx",
-                        parent=self)
+                    self._offer_whisperx_autoinstall(
+                        lambda: self._auto_transcribe(media_path, with_diarize, hf_token))
                 self.after(0, _ei)
             except Exception as e:
                 err = _friendly_transcribe_error(str(e))
@@ -2528,21 +2605,81 @@ class SRTEditor(tk.Tk):
             text="🎵  음성/영상 파일을 여기에 드래그하거나 버튼으로 여세요",
             bg=MEDIA_BG, fg=FG_DIM, font=(FONT_FAMILY, 9), anchor="w")
         self.lbl_media.pack(side="left", fill="x", expand=True)
-        _med_wrap = tk.Frame(top_row, bg="#1A1A2A",
-                             highlightthickness=1, highlightbackground="#252535")
-        _med_wrap.pack(side="right", padx=(8, 0))
+
         def _add_row_and_defocus():
-            self.add_row(getattr(self, "_last_focused_idx", None))
+            if self.media_path:
+                # 현재 재생 위치를 시작점으로, 5초 이내에 다음 자막이 있으면
+                # 그 시작점을, 없으면 5초 뒤를 종료점으로 하는 자막 추가.
+                self.add_row_at_time(self.media_progress_var.get(), duration=5.0)
+            else:
+                self.add_row(getattr(self, "_last_focused_idx", None))
             self.focus_set()   # 스페이스바로 버튼이 재실행되는 것 방지
 
-        _med_btn = tk.Button(_med_wrap, text="＋  자막 추가",
-                             bg="#1A1A2A", fg=FG, relief="flat", bd=0,
-                             font=(FONT_FAMILY, 10), padx=8, pady=2,
-                             cursor="hand2", takefocus=0,
-                             activebackground=BG2, activeforeground=FG,
-                             command=_add_row_and_defocus)
-        _med_btn.pack()
-        Tooltip(_med_btn, "자막 추가", delay=500)
+        def _split_and_defocus():
+            idx, pos = self._subtitle_idx_at_playhead()
+            if idx is not None:
+                self.split_subtitle_at(idx, pos)
+            self.focus_set()
+
+        def _add_layer_and_defocus():
+            self._wf_add_layer()
+            self.focus_set()
+            _refresh_layer_btn_state()
+
+        def _remove_layer_and_defocus():
+            if getattr(self, "_wf_manual_lanes", 1) > 1:
+                self._wf_remove_layer()
+                self.focus_set()
+            _refresh_layer_btn_state()
+
+        _IDLE, _HOVER, _DIM_FG = "#1A1A2A", BG2, "#45454F"
+
+        def _btn_group(parent, caption):
+            """캡션 + 아이콘 버튼들을 담는 그룹 프레임(하나의 테두리 공유)."""
+            wrap = tk.Frame(parent, bg=_IDLE,
+                            highlightthickness=1, highlightbackground="#252535")
+            row = tk.Frame(wrap, bg=_IDLE)
+            row.pack(side="top", padx=4, pady=(4, 0))
+            tk.Label(wrap, text=caption, bg=_IDLE, fg=FG_DIM,
+                     font=(FONT_FAMILY, 7)).pack(side="top", pady=(1, 3))
+            return wrap, row
+
+        def _icon_only_btn(parent, icon, command, tooltip):
+            """그룹 안에 들어가는 테두리 없는 작은 아이콘 버튼."""
+            lbl = tk.Label(parent, text=icon, bg=_IDLE, fg=FG,
+                           font=(FONT_FAMILY, 13, "bold"), cursor="hand2", padx=7)
+            lbl.bind("<Button-1>", lambda e: command())
+            lbl.bind("<Enter>", lambda e: lbl.configure(bg=_HOVER)
+                     if getattr(lbl, "_enabled", True) else None)
+            lbl.bind("<Leave>", lambda e: lbl.configure(bg=_IDLE))
+            Tooltip(lbl, tooltip, delay=500)
+            return lbl
+
+        # ── '레이어' 그룹: 레이어 추가 / 제거 ──
+        layer_wrap, layer_row = _btn_group(top_row, "레이어")
+        _layer_minus_lbl = _icon_only_btn(layer_row, "－", _remove_layer_and_defocus,
+                                          "레이어 제거")
+        _layer_minus_lbl.pack(side="left")
+        _icon_only_btn(layer_row, "＋", _add_layer_and_defocus,
+                      "레이어 추가").pack(side="left")
+        layer_wrap.pack(side="right", padx=(6, 0))
+
+        def _refresh_layer_btn_state():
+            can_remove = getattr(self, "_wf_manual_lanes", 1) > 1
+            _layer_minus_lbl._enabled = can_remove
+            _layer_minus_lbl.configure(
+                fg=FG if can_remove else _DIM_FG,
+                cursor="hand2" if can_remove else "arrow",
+                bg=_IDLE)
+        _refresh_layer_btn_state()
+
+        # ── '자막' 그룹: 자막 추가 / 나누기 ──
+        sub_wrap, sub_row = _btn_group(top_row, "자막")
+        _icon_only_btn(sub_row, "✂", _split_and_defocus,
+                      "자막 나누기  [S]").pack(side="left")
+        _icon_only_btn(sub_row, "＋", _add_row_and_defocus,
+                      "자막 추가").pack(side="left")
+        sub_wrap.pack(side="right", padx=(6, 0))
 
         # ── 파형 Canvas (100px) ────────────────
         self.media_progress_var = tk.DoubleVar(value=0)
