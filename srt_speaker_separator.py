@@ -2724,8 +2724,11 @@ class SRTEditor(tk.Tk):
         ctrl.pack(fill="x", pady=(5, 0))
 
         self.lbl_pos = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=ACCENT,
-                                font=(FONT_FAMILY, 9, "bold"), width=8, anchor="w")
+                                font=(FONT_FAMILY, 9, "bold"), width=8, anchor="w",
+                                cursor="hand2")
         self.lbl_pos.pack(side="left")
+        self.lbl_pos.bind("<Button-1>", self._copy_current_time)
+        Tooltip(self.lbl_pos, "클릭: 현재 시간을 자막 타임스탬프 형식으로 복사", delay=400)
 
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
         btn_group.pack(side="left", expand=True)
@@ -5334,9 +5337,12 @@ class SRTEditor(tk.Tk):
                 _torch_ver    = torch.__version__
 
                 # 디바이스 결정
+                _force_cpu_once = getattr(self, "_force_cpu_once", False)
+                self._force_cpu_once = False   # 1회성 — 바로 소모
                 _dev_pref = getattr(self, "_diarize_device_var", None)
                 _dev_pref = _dev_pref.get() if _dev_pref else "auto"
                 if _force_cpu_once:
+                    _dev_pref = "cpu"   # GPU 설치 제안을 "아니오"로 답한 직후 재시도
                 if _dev_pref == "cpu":
                     device = "cpu"
                     _dev_reason = "CPU 강제 모드"
@@ -5368,9 +5374,22 @@ class SRTEditor(tk.Tk):
                         except Exception:
                             return "cu121"  # 기본값
 
-                    _do_install = self.after(0, lambda: None)  # dummy
-
                     def _ask_and_install():
+                        # ⚠ 핵심 수정: prog_win이 모달(grab_set)로 떠있는 상태에서
+                        # 그 위에 또 다른 모달 대화상자(askyesno)를 띄우면, 새
+                        # 대화상자가 포커스를 제대로 받지 못해 사실상 응답 불가능한
+                        # 상태로 멈춰버린다 — "모델 체크하다가 진행이 안 되는" 것처럼
+                        # 보이던 원인이 바로 이것. 새 대화상자를 띄우기 전에 먼저
+                        # prog_win의 grab을 반드시 풀어준다.
+                        try:
+                            prog_win.grab_release()
+                        except Exception:
+                            pass
+                        try:
+                            prog_win.destroy()
+                        except Exception:
+                            pass
+
                         cuda_tag = _detect_cuda_tag()
                         ans = _mb.askyesno(
                             "GPU torch 자동 설치",
@@ -5381,7 +5400,10 @@ class SRTEditor(tk.Tk):
                             parent=self
                         )
                         if not ans:
-                            return  # CPU로 그냥 진행
+                            # 실제로 CPU 모드로 분석을 재시작한다 (안내 문구대로 동작하도록).
+                            self._force_cpu_once = True
+                            self._run_diarize_whisperx()
+                            return
 
                         # 설치 진행 (별도 창)
                         inst_win = tk.Toplevel(self)
@@ -6588,20 +6610,6 @@ class SRTEditor(tk.Tk):
 
         menu.add_separator()
 
-        # ── 자막 나누기 (재생 위치가 이 자막 구간 안에 있을 때만 표시) ──
-        if self.media_path and n == 1:
-            cache = getattr(self, "_ts_cache", [])
-            if anchor_idx < len(cache):
-                t_s, t_e = cache[anchor_idx]
-                pos = self.media_progress_var.get()
-                if (t_s is not None and t_e is not None
-                        and t_s + self._MIN_SUB_DURATION <= pos <= t_e - self._MIN_SUB_DURATION):
-                    menu.add_command(
-                        label=f"자막 나누기 ({self._fmt_time(pos)} 기준)",
-                        accelerator="S",
-                        command=lambda: self.split_subtitle_at(anchor_idx, pos))
-                    menu.add_separator()
-
         # ── 화자 변경 ─────────────────────────
         if self.speakers:
             spk_menu = make_menu(menu)
@@ -7544,9 +7552,9 @@ class SRTEditor(tk.Tk):
 
     # ── 자막 추가 ─────────────────────────────
     def add_row_at_time(self, t_sec, duration=2.0):
-        """재생바의 빈(자막 없는) 영역을 우클릭해 새 자막을 만들 때 사용.
-        클릭한 위치의 시간을 시작점으로 하는 새 자막을 시간 순서에 맞는
-        위치에 삽입한다."""
+        """지정한 시간(t_sec)을 시작점으로 하는 새 자막을 시간 순서에 맞는
+        위치에 삽입한다. 재생바의 빈 영역 우클릭, '자막 추가' 버튼(현재
+        재생 위치 기준) 모두에서 재사용된다."""
         t_sec = max(0.0, t_sec)
         cache = getattr(self, "_ts_cache", [])
 
@@ -8320,6 +8328,35 @@ class SRTEditor(tk.Tk):
         s = seconds % 60
         return f"{h}:{m:02d}:{s:02d}"
 
+    @staticmethod
+    def _sec_to_srt_ts(sec):
+        """초 단위 시간을 자막 시작/종료시간과 동일한 SRT 타임스탬프
+        형식(00:00:00,000)으로 변환."""
+        sec = max(0.0, sec)
+        h = int(sec // 3600)
+        m = int((sec % 3600) // 60)
+        s = int(sec % 60)
+        ms = int(round((sec % 1) * 1000))
+        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+    def _copy_current_time(self, event=None):
+        """현재 재생 위치 라벨 클릭 — 자막 시작/종료시간과 동일한 형식으로
+        클립보드에 복사."""
+        pos = self.media_progress_var.get()
+        ts = self._sec_to_srt_ts(pos)
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(ts)
+        except Exception:
+            return
+        # 짧은 시각 피드백(잠깐 흰색으로 반짝)
+        try:
+            orig_fg = self.lbl_pos.cget("fg")
+            self.lbl_pos.configure(fg="#FFFFFF")
+            self.after(200, lambda: self.lbl_pos.configure(fg=orig_fg))
+        except Exception:
+            pass
+
     # ── 전체 저장 ─────────────────────────────
     def _do_write_srt(self, path):
         """실제 SRT 파일 쓰기 + 타이틀/상태 갱신. 성공 시 True 반환."""
@@ -8559,6 +8596,10 @@ def main():
                     self.bind(_k, self._on_speaker_key)
                 self.bind("s", self._split_subtitle_shortcut)
                 self.bind("S", self._split_subtitle_shortcut)
+                try:
+                    self.bind("ㄴ", self._split_subtitle_shortcut)
+                except tk.TclError:
+                    pass
                 self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         app = SRTEditorDnD()
