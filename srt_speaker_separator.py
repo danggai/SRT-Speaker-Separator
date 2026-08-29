@@ -5336,6 +5336,7 @@ class SRTEditor(tk.Tk):
                 # 디바이스 결정
                 _dev_pref = getattr(self, "_diarize_device_var", None)
                 _dev_pref = _dev_pref.get() if _dev_pref else "auto"
+                if _force_cpu_once:
                 if _dev_pref == "cpu":
                     device = "cpu"
                     _dev_reason = "CPU 강제 모드"
@@ -5853,20 +5854,56 @@ class SRTEditor(tk.Tk):
     # ── 자막 행 렌더 ────────────────────────
 
     # ── 화자 색상 헬퍼 ───────────────────────
+    def _ensure_global_speaker_colors(self):
+        """전역(로컬 스토리지) 화자 색상 맵을 지연 초기화해서 반환.
+        __init__ 경로(DnD 서브클래스 등)에 따라 아직 로드되지 않았을 수
+        있으므로, 여기서 최초 접근 시 config에서 안전하게 불러온다."""
+        if not hasattr(self, "_global_speaker_colors"):
+            try:
+                self._global_speaker_colors = dict(_load_config().get("speaker_colors", {}))
+            except Exception:
+                self._global_speaker_colors = {}
+        return self._global_speaker_colors
+
     def _speaker_color(self, name):
+        """화자 색상 결정 우선순위: 1) 현재 파일(세션)에 지정된 색상
+        2) 로컬 스토리지(다른 파일에서도 이 이름으로 지정했던 색상)
+        3) 자동 배정 팔레트."""
         if name in self.speaker_colors:
             return self.speaker_colors[name]
+        gsc = self._ensure_global_speaker_colors()
+        if name in gsc:
+            return gsc[name]
         idx = self.speakers.index(name) if name in self.speakers else 0
         return SPEAKER_COLORS[idx % len(SPEAKER_COLORS)]
+
+    def _save_global_speaker_color(self, name, color):
+        """화자 색상을 로컬 스토리지(config)에도 저장 — 다른 자막 파일을
+        열었을 때도 같은 이름의 화자면 이 색상이 기본으로 쓰이도록 한다."""
+        gsc = self._ensure_global_speaker_colors()
+        gsc[name] = color
+        cfg = _load_config()
+        cfg_colors = dict(cfg.get("speaker_colors", {}))
+        cfg_colors[name] = color
+        cfg["speaker_colors"] = cfg_colors
+        _save_config(cfg)
 
     # ── 커스텀 컬러피커 ──────────────────────
     def _pick_speaker_color(self, name, dot_canvas, row_frame):
         current_color = self._speaker_color(name)
         result = _ColorPickerDialog(self, current_color, title=f"{name} 색상 선택").show()
-        if result:
-            self.speaker_colors[name] = result
+        if result and result != current_color:
+            self._push_undo()
+            self.speaker_colors[name] = result   # 1순위: 현재 파일에 반영
+            self._save_global_speaker_color(name, result)  # 2순위: 로컬 스토리지에도 반영
+            self._unsaved = True
             self._render_speakers()
             self._fill_slots(self._vscroll_top)
+            # 재생바(타임라인)의 자막 색상도 즉시 반영. cache_key는 화자
+            # "이름"·타임스탬프만 보고 실제 색상 매핑까지는 보지 않으므로,
+            # 색만 바뀐 경우엔 명시적으로 캐시를 지워줘야 한다.
+            self._wf_img_cache = None
+            self._pb_redraw()
 
     # ── 화자 사이드바 렌더 ───────────────────
     def _render_speakers(self):
@@ -7286,6 +7323,9 @@ class SRTEditor(tk.Tk):
         self._unsaved = True
         self._refresh_row(sub_idx)
         self._render_speakers()
+        # 재생바(타임라인)의 자막 색상도 즉시 반영
+        self._wf_img_cache = None
+        self._pb_redraw()
 
     # ── 데이터 저장 콜백 ──────────────────────
     def _save_ts(self, idx, var):
@@ -7705,6 +7745,8 @@ class SRTEditor(tk.Tk):
         self._fill_slots(self._vscroll_top)
         self._render_speakers()
         self._update_count()
+        self._wf_img_cache = None
+        self._pb_redraw()
 
     def delete_speaker(self, name):
         if not messagebox.askyesno(
@@ -7721,6 +7763,8 @@ class SRTEditor(tk.Tk):
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)
         self._render_speakers()
+        self._wf_img_cache = None
+        self._pb_redraw()
         self._update_count()
 
     # ── 파일 열기 ─────────────────────────────
