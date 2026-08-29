@@ -2695,6 +2695,7 @@ class SRTEditor(tk.Tk):
         # 줌/스크롤 상태: _wf_zoom=1.0~10.0, _wf_offset=0.0~1.0 (좌측 비율)
         self._wf_zoom   = 1.0
         self._wf_offset = 0.0   # 보이는 구간의 시작 비율
+        self._wf_manual_lanes = 1   # 자막 레인(레이어) 수 — 사용자가 우클릭으로 직접 조절
 
         self._pb_canvas.bind("<ButtonPress-1>",   self._pb_press)
         self._pb_canvas.bind("<B1-Motion>",        self._pb_drag)
@@ -2843,6 +2844,60 @@ class SRTEditor(tk.Tk):
         self._wf_img_cache = None
         self._pb_redraw()
 
+    # 재생바 자막 영역에 표시할 최대 레인(줄) 수. 그 이상 겹치면 마지막
+    # 레인을 공유(겹쳐 그려짐)한다.
+    _WF_ABS_MAX_LANES = 6   # 수동으로 추가할 수 있는 레인 수의 절대 상한
+    _WF_LANE_H    = 22    # 자막 레인(줄) 하나의 높이
+    _PB_BASE_CANVAS_H = 100   # 자막 1레인 기준 재생바 캔버스 기본 높이
+
+    def _compute_subtitle_lanes(self, cache):
+        """자막들의 시간 겹침을 분석해 각 자막을 레인(줄) 번호(0부터)에
+        배정한다. 그리디 구간 스케줄링: 시작 시간 순으로 훑으며, 그 시점에
+        비어있는(이미 끝난 자막이 있던) 가장 앞쪽 레인에 배정한다.
+        레인 수는 자동으로 늘어나지 않고, 사용자가 우클릭 메뉴의 '레이어
+        추가'로 직접 설정한 개수(self._wf_manual_lanes, 기본 1)만큼만
+        사용한다. 그보다 많이 겹치면 초과분은 마지막 레인을 함께 쓴다
+        (그 경우에만 서로 겹쳐 보임).
+        자막을 드래그해서 특정 레인으로 직접 옮긴 경우(subtitle["_lane"])는
+        그 지정을 최우선으로 존중하고, 나머지만 자동 배치한다.
+        반환: (lanes: {자막idx: 레인번호}, 레인 수 — 항상 수동 설정값)"""
+        max_lanes = max(1, min(getattr(self, "_wf_manual_lanes", 1),
+                               self._WF_ABS_MAX_LANES))
+        items = [(i, t_s, t_e) for i, (t_s, t_e) in enumerate(cache)
+                 if t_s is not None and t_e is not None]
+        if not items:
+            return {}, max_lanes
+        items.sort(key=lambda x: x[1])
+
+        lane_end = [0.0] * max_lanes
+        lanes = {}
+
+        # 1차: 사용자가 드래그로 직접 지정한 레인을 우선 배치
+        for idx, t_s, t_e in items:
+            pinned = self.subtitles[idx].get("_lane") if idx < len(self.subtitles) else None
+            if isinstance(pinned, int) and 0 <= pinned < max_lanes:
+                lanes[idx] = pinned
+                lane_end[pinned] = max(lane_end[pinned], t_e)
+
+        # 2차: 나머지는 기존처럼 빈 레인을 찾아 그리디하게 배치
+        for idx, t_s, t_e in items:
+            if idx in lanes:
+                continue
+            placed = False
+            for lane in range(max_lanes):
+                if lane_end[lane] <= t_s:
+                    lane_end[lane] = t_e
+                    lanes[idx] = lane
+                    placed = True
+                    break
+            if not placed:
+                # 최대 레인 초과 → 마지막 레인에 강제 배정(그 경우만 겹쳐 보임)
+                last = max_lanes - 1
+                lane_end[last] = max(lane_end[last], t_e)
+                lanes[idx] = last
+
+        return lanes, max_lanes
+
     def _pb_redraw(self, event=None):
         c  = self._pb_canvas
         cw = c.winfo_width()
@@ -2857,17 +2912,6 @@ class SRTEditor(tk.Tk):
         pos    = self.media_progress_var.get()
         start_r, end_r = self._wf_view_range()
 
-        # ── 레이아웃 상수 ──────────────────────
-        SUB_H  = 26          # 자막 행 높이
-        GAP    = 1           # 자막/파형 구분선
-        TICK_H = 16          # 하단 시간 눈금 영역
-        sub_top = 0
-        sub_bot = SUB_H
-        wf_top  = SUB_H + GAP
-        wf_bot  = ch - TICK_H
-        wf_h    = wf_bot - wf_top
-        wf_mid  = wf_top + wf_h // 2   # 파형 중앙 (두 채널 경계)
-
         # dur=0이면 캐시에서 산출
         cache = getattr(self, "_ts_cache", [])
         if dur > 0:
@@ -2876,7 +2920,46 @@ class SRTEditor(tk.Tk):
             ends = [t_e for _, t_e in cache if t_e is not None]
             dur_ = max(ends) if ends else 1.0
 
-        head_x = self._wf_ratio_to_x(pos / dur if dur > 0 else 0, cw)
+        # ── 자막 레인(줄) 배정 ──────────────────
+        # 레인 수는 자동으로 늘어나지 않고, 우클릭 메뉴의 '레이어 추가/
+        # 제거'로 사용자가 직접 설정한 개수(_wf_manual_lanes, 기본 1)를
+        # 그대로 쓴다. 시간대가 겹치는 자막은 그 레인 수 안에서 서로 다른
+        # 줄에 배치된다. 이 계산은 자막 타이밍(cache) 또는 레인 수 자체가
+        # 바뀔 때만 다시 하면 되므로 — 이미지 캐시 히트 여부와는 무관하게 —
+        # ts_cache 객체가 바뀌었는지(identity)만 저렴하게 확인해 재사용한다.
+        # (재생헤드만 움직이는 매 프레임에는 그대로 캐시된 값을 씀)
+        if getattr(self, "_wf_lanes_src", None) is cache:
+            lanes     = self._wf_lanes
+            num_lanes = self._wf_num_lanes
+        else:
+            lanes, num_lanes = self._compute_subtitle_lanes(cache)
+            self._wf_lanes     = lanes
+            self._wf_num_lanes = num_lanes
+            self._wf_lanes_src = cache
+
+        # ── 레이아웃 상수 ──────────────────────
+        LANE_H = self._WF_LANE_H
+        SUB_H  = LANE_H * num_lanes   # 자막 영역 전체 높이(겹치면 최대 3줄)
+        GAP    = 1           # 자막/파형 구분선
+        TICK_H = 16          # 하단 시간 눈금 영역
+
+        # 겹치는 자막이 많아 레인이 늘어나도 파형이 보이는 높이는 항상
+        # 일정하게 유지되도록, 늘어난 레인만큼 캔버스 전체 높이를 늘린다
+        # (그렇지 않으면 파형 영역이 레인 수만큼 눌려서 거의 안 보이게 됨).
+        # cache_key를 만들기 전에 확정해야 리사이즈된 높이로 이미지 캐시가
+        # 올바르게 갱신된다.
+        target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H
+        if abs(ch - target_ch) > 1:
+            c.configure(height=target_ch)
+        ch = target_ch
+
+        sub_top = 0
+        sub_bot = SUB_H
+        wf_top  = SUB_H + GAP
+        wf_bot  = ch - TICK_H
+        wf_h    = wf_bot - wf_top
+        wf_mid  = wf_top + wf_h // 2   # 파형 중앙 (두 채널 경계)
+        self._wf_sub_h = SUB_H   # 히트테스트 등 다른 곳에서도 참조
 
         # ── 캐시 키 ───────────────────────────
         cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
@@ -2887,6 +2970,9 @@ class SRTEditor(tk.Tk):
 
         cached = getattr(self, "_wf_img_cache", None)
         cache_hit = bool(cached and cached[0] == cache_key)
+
+        head_x = self._wf_ratio_to_x(pos / dur if dur > 0 else 0, cw)
+
         if cache_hit:
             img_tk = cached[1]
         else:
@@ -2923,6 +3009,13 @@ class SRTEditor(tk.Tk):
             except Exception:
                 font = None
 
+            # 레인 구분선 + 왼쪽에 레인 번호(1,2,3...) 표시
+            for _lane_i in range(num_lanes):
+                _ly = _lane_i * LANE_H
+                if _lane_i > 0:
+                    draw.line([0, _ly, cw, _ly], fill="#20202A", width=1)
+                draw.text((3, _ly + 5), str(_lane_i + 1), fill="#55555F", font=font)
+
             if cache and self.subtitles:
                 drag = getattr(self, "_wf_sub_drag", None)
                 for i, (t_s, t_e) in enumerate(cache):
@@ -2937,6 +3030,13 @@ class SRTEditor(tk.Tk):
                     x1 = int(self._wf_ratio_to_x(max(r_s, start_r), cw))
                     x2 = int(self._wf_ratio_to_x(min(r_e, end_r), cw))
                     x2 = max(x1 + 2, x2)
+
+                    lane = lanes.get(i, 0)
+                    if drag and drag["idx"] == i and "target_lane" in drag:
+                        lane = drag["target_lane"]
+                    ln_top = lane * LANE_H
+                    ln_bot = ln_top + LANE_H
+
                     spk   = self.subtitles[i].get("speaker", "")
                     raw   = self._speaker_color(spk) if spk else "#404055"
                     h_hex = raw.lstrip("#")
@@ -2948,9 +3048,9 @@ class SRTEditor(tk.Tk):
                                 int(fb*0.30+BG_B*0.70))
                     fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
                     # 블록 채우기 (1px 위아래 여백)
-                    draw.rectangle([x1+1, sub_top+3, x2, sub_bot-3], fill=fill_hex)
+                    draw.rectangle([x1+1, ln_top+3, x2, ln_bot-3], fill=fill_hex)
                     # 좌측 색상 강조선 (1px)
-                    draw.line([x1+1, sub_top+3, x1+1, sub_bot-3], fill=raw, width=1)
+                    draw.line([x1+1, ln_top+3, x1+1, ln_bot-3], fill=raw, width=1)
 
                     # 텍스트 (폭이 허용되는 만큼)
                     box_w = x2 - x1 - 6
@@ -2961,12 +3061,18 @@ class SRTEditor(tk.Tk):
                             max_ch = max(1, box_w // CHAR_W)
                             if len(text) > max_ch:
                                 text = text[:max_ch - 1] + "…"
-                            ty = sub_top + (SUB_H - 12) // 2
+                            ty = ln_top + (LANE_H - 12) // 2
                             text_col = f"#{min(255,fr+80):02x}{min(255,fg_+80):02x}{min(255,fb+80):02x}"
                             if font:
                                 draw.text((x1 + 5, ty), text, fill=text_col, font=font)
                             else:
                                 draw.text((x1 + 5, ty), text, fill=text_col)
+
+                # 레인 구분선 (2줄 이상일 때만, 겹침을 시각적으로 구분)
+                if num_lanes > 1:
+                    for ln in range(1, num_lanes):
+                        y = ln * LANE_H
+                        draw.line([0, y, cw, y], fill="#232330", width=1)
 
             # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
             draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
@@ -3111,14 +3217,17 @@ class SRTEditor(tk.Tk):
                 snapped_s = drag and drag["idx"]==i and drag["mode"]=="head_start"
                 snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
                 moving    = drag and drag["idx"]==i and drag["mode"]=="move"
+                ln = lanes.get(i, 0)
+                ln_top = ln * LANE_H
+                ln_bot = ln_top + LANE_H
                 if moving:
                     # 이동 중인 자막은 테두리로 강조
-                    c.create_rectangle(x1, sub_top+1, x2, sub_bot-1,
+                    c.create_rectangle(x1, ln_top+1, x2, ln_bot-1,
                                        outline="#FFFFFF", width=1)
-                # 핸들은 자막 행 전체 높이에
-                c.create_rectangle(x1,    sub_top, x1+HW, sub_bot,
+                # 핸들은 그 자막이 있는 레인 높이에
+                c.create_rectangle(x1,    ln_top, x1+HW, ln_bot,
                                    fill="#FFFFFF" if snapped_s else color, outline="")
-                c.create_rectangle(x2-HW, sub_top, x2,    sub_bot,
+                c.create_rectangle(x2-HW, ln_top, x2,    ln_bot,
                                    fill="#FFFFFF" if snapped_e else color, outline="")
 
         if getattr(self, "_wf_loading", False):
@@ -3143,9 +3252,13 @@ class SRTEditor(tk.Tk):
             {"type": "body", "idx": i, "stack": [...]} |
             {"type": "empty"}
         """
-        SUB_H = 26
+        LANE_H    = self._WF_LANE_H
+        lanes     = getattr(self, "_wf_lanes", {})
+        num_lanes = getattr(self, "_wf_num_lanes", 1)
+        SUB_H = LANE_H * num_lanes
         if y > SUB_H:
             return {"type": "empty"}
+        lane_idx = int(y // LANE_H)
 
         dur   = self.player.duration
         cache = getattr(self, "_ts_cache", [])
@@ -3160,10 +3273,13 @@ class SRTEditor(tk.Tk):
         start_r, end_r = self._wf_view_range()
         HW = max(self._WF_HANDLE_W + 3, 7)
 
-        # 현재 뷰포트에 보이는 자막들의 픽셀 범위
+        # 현재 뷰포트에 보이는 자막들의 픽셀 범위 (커서가 있는 레인의
+        # 자막만 대상으로 한다 — 겹쳐서 다른 줄에 그려진 자막은 제외)
         visible = []
         for i, (t_s, t_e) in enumerate(cache):
             if t_s is None or t_e is None:
+                continue
+            if lanes.get(i, 0) != lane_idx:
                 continue
             r_s, r_e = t_s / dur, t_e / dur
             if r_e < start_r or r_s > end_r:
@@ -3230,7 +3346,7 @@ class SRTEditor(tk.Tk):
         elif hit["type"] == "body":
             self._wf_hovered_idx = hit["idx"]
             self._pb_canvas.configure(cursor="fleur")
-        elif event.y <= 26:
+        elif event.y <= getattr(self, "_wf_sub_h", 22):
             self._wf_hovered_idx = None
             self._pb_canvas.configure(cursor="tcross")
         else:
@@ -3253,7 +3369,8 @@ class SRTEditor(tk.Tk):
             return
 
         if hit["type"] == "body":
-            self._start_body_drag(hit["idx"], x, stack=hit["stack"])
+            shift_lock = bool(event.state & 0x0001)   # Shift 키
+            self._start_body_drag(hit["idx"], x, y, shift_lock, stack=hit["stack"])
             return
 
         # ── 빈 타임라인 / 파형 영역 → 재생 위치 스크럽 ──
@@ -3278,16 +3395,22 @@ class SRTEditor(tk.Tk):
         self._pb_sub_click_idx = None
         self._pb_canvas.configure(cursor="sb_h_double_arrow")
 
-    def _start_body_drag(self, idx, x, stack=None):
-        """자막 바디 드래그 시작 — 자막 전체를 길이 고정한 채 이동한다.
-        undo 스냅샷은 여기서 찍고(실제 클릭으로 끝나면 release에서 취소)."""
+    def _start_body_drag(self, idx, x, y, shift_lock, stack=None):
+        """자막 바디 드래그 시작 — 기본적으로 길이 고정한 채 좌우(타이밍)로
+        이동한다. 위아래로 움직이면 자막이 속한 레이어(레인)도 함께 바뀐다.
+        shift_lock=True(Shift 누른 채 드래그)면 타이밍은 전혀 건드리지 않고
+        레이어 이동만 한다. undo 스냅샷은 여기서 찍고(실제 클릭으로 끝나면
+        release에서 취소)."""
         cache = getattr(self, "_ts_cache", [])
+        cur_lane = getattr(self, "_wf_lanes", {}).get(idx, 0)
         self._push_undo()
         self._wf_sub_drag = {
             "mode": "move", "idx": idx,
             "t_s": cache[idx][0], "t_e": cache[idx][1],
             "orig_t_s": cache[idx][0], "orig_t_e": cache[idx][1],
-            "press_x": x,
+            "press_x": x, "press_y": y,
+            "orig_lane": cur_lane, "target_lane": cur_lane,
+            "shift_lock": shift_lock,
             "stack": stack or [idx],
         }
         self._pb_dragging = False
@@ -3303,6 +3426,17 @@ class SRTEditor(tk.Tk):
             cw = self._pb_canvas.winfo_width()
 
             if drag["mode"] == "move":
+                # 세로 위치로 목표 레이어(레인) 계산
+                num_lanes = max(1, getattr(self, "_wf_num_lanes", 1))
+                target_lane = max(0, min(num_lanes - 1,
+                                         int(event.y // self._WF_LANE_H)))
+                drag["target_lane"] = target_lane
+
+                if drag.get("shift_lock"):
+                    # Shift 드래그: 타이밍은 절대 건드리지 않고 레이어만 이동
+                    self._pb_redraw()
+                    return
+
                 # 자막 전체 이동 — 길이는 고정, 자유 오버랩 허용
                 # (다른 자막을 밀어내거나 스냅/충돌 처리를 하지 않는다)
                 press_ratio = self._wf_x_to_ratio(drag["press_x"], cw)
@@ -3368,7 +3502,8 @@ class SRTEditor(tk.Tk):
     def _pb_release(self, event):
         drag      = getattr(self, "_wf_sub_drag", None)
         press_x   = getattr(self, "_pb_press_x", event.x)
-        moved     = abs(event.x - press_x)
+        press_y   = getattr(self, "_pb_press_y", event.y)
+        moved     = max(abs(event.x - press_x), abs(event.y - press_y))
         CLICK_THR = 5   # 이 픽셀 이하 이동이면 클릭으로 판정
 
         self._pb_canvas.configure(cursor="hand2")
@@ -3376,7 +3511,7 @@ class SRTEditor(tk.Tk):
         if drag:
             idx = drag["idx"]
 
-            # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프 변경 없음)
+            # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프/레이어 변경 없음)
             if moved <= CLICK_THR:
                 self._wf_sub_drag = None
                 # 드래그 시작 시 찍은 undo 스냅샷 취소 (실제 변경이 없었으므로)
@@ -3385,9 +3520,10 @@ class SRTEditor(tk.Tk):
 
                 if drag["mode"] == "move":
                     # 자막 바디 클릭 — 같은 위치를 다시 클릭하면 겹친 자막들을 순환 선택
+                    # (재생 위치는 옮기지 않고 '선택'만 한다)
                     target_idx = self._wf_cycle_click(drag.get("stack") or [idx], idx)
                     if target_idx < len(self.subtitles):
-                        self._select_row(target_idx)
+                        self._select_row(target_idx, seek=False)
                     else:
                         self._pb_redraw()
                 else:
@@ -3399,18 +3535,36 @@ class SRTEditor(tk.Tk):
                         self._pb_redraw()
                 return
 
-            # 실제 드래그 → 타임스탬프 적용 (undo는 드래그 시작 시 이미 찍음)
+            # 실제 드래그 → 타임스탬프(Shift 드래그면 생략) + 레이어 적용
+            # (undo는 드래그 시작 시 이미 찍음)
+            changed = False
             if 0 <= idx < len(self.subtitles):
-                t_s = drag.get("t_s", self._ts_cache[idx][0])
-                t_e = drag.get("t_e", self._ts_cache[idx][1])
-                def _fmt_ts(sec):
-                    h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
-                    ms=int(round((sec%1)*1000))
-                    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-                self.subtitles[idx]["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
-                self._ts_cache[idx] = (t_s, t_e)
-                self._unsaved = True
-                self._redraw_slot_for(idx)
+                if drag["mode"] == "move" and drag.get("shift_lock"):
+                    # Shift 드래그: 타이밍은 그대로 두고 레이어만 반영
+                    pass
+                else:
+                    t_s = drag.get("t_s", self._ts_cache[idx][0])
+                    t_e = drag.get("t_e", self._ts_cache[idx][1])
+                    def _fmt_ts(sec):
+                        h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
+                        ms=int(round((sec%1)*1000))
+                        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+                    self.subtitles[idx]["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
+                    self._ts_cache[idx] = (t_s, t_e)
+                    changed = True
+
+                if drag["mode"] == "move" and "target_lane" in drag:
+                    new_lane = drag["target_lane"]
+                    if new_lane != drag.get("orig_lane"):
+                        self.subtitles[idx]["_lane"] = new_lane
+                        self._wf_lanes_src = None   # 레인 재계산 강제
+                        changed = True
+
+                if changed:
+                    self._unsaved = True
+                    self._redraw_slot_for(idx)
+            elif self._undo_stack:
+                self._undo_stack.pop()   # 변경할 게 없었으면 undo 스냅샷도 취소
             self._wf_sub_drag = None
             self._wf_img_cache = None   # 이미지 캐시 무효화
             self._pb_redraw()
@@ -3422,9 +3576,9 @@ class SRTEditor(tk.Tk):
         self._do_seek(self._pb_pos_from_x(event.x))
 
     def _pb_right_click(self, event):
-        """재생바 우클릭.
-        - 자막 바디/핸들 위 → 자막 행과 동일한 컨텍스트 메뉴(선택 포함)
-        - 빈 영역 → 클릭한 위치의 시간으로 새 자막을 만드는 메뉴"""
+        """재생바 우클릭 — 자막 바디/핸들 위일 때만 자막 행과 동일한
+        컨텍스트 메뉴(선택 포함)를 띄운다. (레이어/자막 추가·나누기는
+        타임라인 상단 버튼으로 이동함)"""
         hit = self._wf_hit_test(event.x, event.y)
 
         if hit["type"] in ("handle", "body"):
@@ -3434,14 +3588,25 @@ class SRTEditor(tk.Tk):
             self._show_context_menu(event, idx)
             return
 
-        # 빈 영역 — 클릭한 위치의 시간으로 새 자막 생성
-        if not self.media_path:
+    def _wf_add_layer(self):
+        """재생바 자막 레인을 하나 더 늘린다(수동, 절대 상한까지)."""
+        cur = getattr(self, "_wf_manual_lanes", 1)
+        if cur >= self._WF_ABS_MAX_LANES:
             return
-        t = self._pb_pos_from_x(event.x)
-        menu = PopupMenu(self)
-        menu.add_command(label=f"+ 새 자막 만들기 ({self._fmt_time(t)})",
-                         command=lambda: self.add_row_at_time(t))
-        menu.tk_popup(event.x_root, event.y_root)
+        self._wf_manual_lanes = cur + 1
+        self._wf_lanes_src = None   # 레인 재계산 강제
+        self._wf_img_cache = None
+        self._pb_redraw()
+
+    def _wf_remove_layer(self):
+        """재생바 자막 레인을 하나 줄인다(최소 1)."""
+        cur = getattr(self, "_wf_manual_lanes", 1)
+        if cur <= 1:
+            return
+        self._wf_manual_lanes = cur - 1
+        self._wf_lanes_src = None   # 레인 재계산 강제
+        self._wf_img_cache = None
+        self._pb_redraw()
 
     def _do_seek(self, pos, update_selection=True):
         """지정 위치로 seek.
@@ -6433,6 +6598,10 @@ class SRTEditor(tk.Tk):
                 self._redraw_slot_for(idx)
         self._unsaved = True
         self._render_speakers()
+        # 재생바(타임라인)의 자막 색상도 즉시 반영 — 그렇지 않으면 재생/이동
+        # 등 다른 동작을 해야 뒤늦게 갱신되는 것처럼 보였다.
+        self._wf_img_cache = None
+        self._pb_redraw()
 
     def _slot_shift_click(self, slot_idx):
         """Shift+클릭: anchor부터 현재까지 범위 선택."""
