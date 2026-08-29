@@ -1349,6 +1349,7 @@ class SRTEditor(tk.Tk):
         else:
             self._proper_nouns = list(dict.fromkeys(_pn_raw))   # 중복 제거, 순서 유지
         self._proper_nouns_enabled = _cfg.get("proper_nouns_enabled", True)
+        self._global_speaker_colors = dict(_cfg.get("speaker_colors", {}))
         self._recent_tokens        = _cfg.get("recent_tokens", [])
         self._diarize_batch_init  = _cfg.get("diarize_batch", 3)   # index=3 → batch=16 (권장)
 
