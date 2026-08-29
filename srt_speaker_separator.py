@@ -5687,10 +5687,7 @@ class SRTEditor(tk.Tk):
                         return
                     try: prog_win.destroy()
                     except Exception: pass
-                    messagebox.showerror("설치 필요",
-                        "whisperx가 설치되지 않았습니다.\n\n"
-                        "pip install whisperx\n\n"
-                        "설치 후 다시 시도하세요.", parent=self)
+                    self._offer_whisperx_autoinstall(self._run_diarize_whisperx)
                 self.after(0, _err_import)
             except Exception as e:
                 err_msg = _friendly_transcribe_error(str(e))
