@@ -958,7 +958,7 @@ class _ColorPickerDialog:
         preset_grid = tk.Frame(preset_col, bg=BG2)
         preset_grid.pack()
         _SW = 22       # 스와치 한 변 크기(px)
-        _COLS = 4      # 그리드 열 수
+        _COLS = 2      # 그리드 열 수
         for i, _hexcol in enumerate(self.PRESET_COLORS):
             r, c = divmod(i, _COLS)
             sw = tk.Canvas(preset_grid, width=_SW, height=_SW,
