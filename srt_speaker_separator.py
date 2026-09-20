@@ -2864,14 +2864,16 @@ class SRTEditor(tk.Tk):
 
     def _compute_subtitle_lanes(self, cache):
         """자막들의 시간 겹침을 분석해 각 자막을 레인(줄) 번호(0부터)에
-        배정한다. 그리디 구간 스케줄링: 시작 시간 순으로 훑으며, 그 시점에
-        비어있는(이미 끝난 자막이 있던) 가장 앞쪽 레인에 배정한다.
-        레인 수는 자동으로 늘어나지 않고, 사용자가 우클릭 메뉴의 '레이어
-        추가'로 직접 설정한 개수(self._wf_manual_lanes, 기본 1)만큼만
-        사용한다. 그보다 많이 겹치면 초과분은 마지막 레인을 함께 쓴다
-        (그 경우에만 서로 겹쳐 보임).
-        자막을 드래그해서 특정 레인으로 직접 옮긴 경우(subtitle["_lane"])는
-        그 지정을 최우선으로 존중하고, 나머지만 자동 배치한다.
+        배정한다. 레인 수는 자동으로 늘어나지 않고, 사용자가 우클릭 메뉴의
+        '레이어 추가'로 직접 설정한 개수(self._wf_manual_lanes, 기본 1)만큼만
+        사용한다. 그보다 많이 겹치면 초과분은 마지막 레인을 함께 쓴다.
+
+        ⚠ 안정화: 한 번 배정된 레인은(드래그로 직접 옮겼든, 자동으로 배정
+        됐든) subtitle["_lane"]에 저장해두고 계속 유지한다. 그래서 자막
+        하나를 드래그해서 레인을 옮겨도, 그 자막만 바뀔 뿐 겹쳐있던 다른
+        자막들은 이미 있던 자기 레인에 그대로 남아있는다(우르르 재배치되지
+        않음). 레인이 아직 없는(새로 추가된) 자막만 빈 레인에 새로 배치되고,
+        그 결과도 그대로 저장되어 이후엔 계속 유지된다.
         반환: (lanes: {자막idx: 레인번호}, 레인 수 — 항상 수동 설정값)"""
         max_lanes = max(1, min(getattr(self, "_wf_manual_lanes", 1),
                                self._WF_ABS_MAX_LANES))
@@ -2884,14 +2886,15 @@ class SRTEditor(tk.Tk):
         lane_end = [0.0] * max_lanes
         lanes = {}
 
-        # 1차: 사용자가 드래그로 직접 지정한 레인을 우선 배치
+        # 1차: 이미 레인이 정해진(드래그로 옮겼든 이전에 자동 배정됐든)
+        # 자막은 그 레인을 그대로 유지한다.
         for idx, t_s, t_e in items:
             pinned = self.subtitles[idx].get("_lane") if idx < len(self.subtitles) else None
             if isinstance(pinned, int) and 0 <= pinned < max_lanes:
                 lanes[idx] = pinned
                 lane_end[pinned] = max(lane_end[pinned], t_e)
 
-        # 2차: 나머지는 기존처럼 빈 레인을 찾아 그리디하게 배치
+        # 2차: 레인이 아직 없는(새로 생긴) 자막만 빈 레인을 찾아 배치
         for idx, t_s, t_e in items:
             if idx in lanes:
                 continue
@@ -2907,6 +2910,11 @@ class SRTEditor(tk.Tk):
                 last = max_lanes - 1
                 lane_end[last] = max(lane_end[last], t_e)
                 lanes[idx] = last
+
+        # 이번에 정해진 레인을 자막에 다시 저장 — 다음 재계산 때도 유지되게
+        for idx, lane in lanes.items():
+            if idx < len(self.subtitles):
+                self.subtitles[idx]["_lane"] = lane
 
         return lanes, max_lanes
 
@@ -3473,16 +3481,45 @@ class SRTEditor(tk.Tk):
                     self._pb_redraw()
                     return
 
-                # 자막 전체 이동 — 길이는 고정, 자유 오버랩 허용
-                # (다른 자막을 밀어내거나 스냅/충돌 처리를 하지 않는다)
+                # 자막 전체 이동 — 길이는 고정. 다른 자막(레이어가 달라도
+                # 상관없이 전부 대상) 시작/끝점·재생헤드에 스냅한다.
+                # 후보가 여러 개면 그중 가장 가까운 것에 붙는다.
                 press_ratio = self._wf_x_to_ratio(drag["press_x"], cw)
                 cur_ratio   = self._wf_x_to_ratio(event.x, cw)
                 delta_sec   = (cur_ratio - press_ratio) * dur
                 span = drag["orig_t_e"] - drag["orig_t_s"]
                 new_s = drag["orig_t_s"] + delta_sec
                 new_s = max(0.0, min(new_s, max(0.0, dur - span)))
+                new_e = new_s + span
+
+                idx = drag["idx"]
+                span_sec_view = (1.0 / max(1.0, self._wf_zoom)) * dur
+                snap_sec = span_sec_view * 8 / max(cw, 1)
+
+                # 스냅 후보: 다른 모든 자막의 시작/끝점(레이어 무관) + 재생헤드
+                candidates = []
+                for j, (js, je) in enumerate(self._ts_cache):
+                    if j == idx:
+                        continue
+                    if js is not None:
+                        candidates.append(js)
+                    if je is not None:
+                        candidates.append(je)
+                candidates.append(self.media_progress_var.get())
+
+                # 시작점 또는 끝점 중 후보에 가장 가깝게 붙는 오프셋을 찾는다
+                best_delta = None
+                for c in candidates:
+                    for edge in (new_s, new_e):
+                        d = c - edge
+                        if abs(d) < snap_sec and (best_delta is None or abs(d) < abs(best_delta)):
+                            best_delta = d
+                if best_delta is not None:
+                    new_s += best_delta
+                    new_e += best_delta
+
                 drag["t_s"] = new_s
-                drag["t_e"] = new_s + span
+                drag["t_e"] = new_e
                 self._pb_redraw()
                 return
 
