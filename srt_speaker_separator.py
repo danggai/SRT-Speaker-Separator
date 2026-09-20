@@ -1684,7 +1684,6 @@ class SRTEditor(tk.Tk):
         T(self._vol_icon,   "음소거 토글  (클릭)")
         T(self._vol_canvas, "볼륨 조절  (드래그)\n현재: " + str(self._vol_var) + "%")
         T(self._pb_canvas,  "재생 위치 이동  (클릭/드래그)")
-        T(self.lbl_pos, "현재 재생 위치")
         T(self.lbl_dur, "총 재생 시간")
         T(self.lbl_media, "미디어 파일 드래그 또는 버튼으로 불러오기\n지원: mp3, mp4, wav, m4a 등")
 
@@ -3161,7 +3160,7 @@ class SRTEditor(tk.Tk):
             if dur > 0:
                 span_sec = (end_r - start_r) * dur
                 for tick in [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]:
-                    if span_sec / tick <= 24:
+                    if span_sec / tick <= self._WF_MAX_TICKS_ON_SCREEN:
                         tick_step = tick; break
                 else:
                     tick_step = 600
@@ -3719,6 +3718,22 @@ class SRTEditor(tk.Tk):
         return "break"
 
 
+    # 시간 눈금이 표시할 수 있는 가장 작은 단위(초). _pb_redraw의 눈금
+    # 후보 목록[0.1, 0.5, 1, 2, ...]과 반드시 일치해야 한다.
+    _WF_MIN_TICK_SEC = 0.1
+    _WF_MAX_TICKS_ON_SCREEN = 24   # 한 화면에 보이는 눈금 최대 개수(_pb_redraw와 동일)
+
+    def _wf_max_zoom(self):
+        """더 확대해도 눈금 단위가 0.1초보다 더 세밀해지지 않는(=의미가
+        없어지는) 지점을 기준으로 최대 확대 배율을 정수로 계산한다.
+        고정된 배율(예: 128배) 대신, 미디어 길이에 따라 '한 틱당 길이'가
+        일정 수준(0.1초) 이하로는 내려가지 않도록 동적으로 정한다."""
+        dur = self.player.duration if self.player.duration > 0 else 0
+        if dur <= 0:
+            return 128
+        min_span = self._WF_MIN_TICK_SEC * self._WF_MAX_TICKS_ON_SCREEN
+        return max(1, int(round(dur / min_span)))
+
     def _wf_zoom_wheel(self, e):
         cw = self._pb_canvas.winfo_width()
         # 마우스 위치를 pivot으로
@@ -3729,7 +3744,7 @@ class SRTEditor(tk.Tk):
 
     def _wf_zoom_in(self, pivot=None):
         old_zoom = self._wf_zoom
-        self._wf_zoom = min(128.0, self._wf_zoom * 1.5)
+        self._wf_zoom = min(float(self._wf_max_zoom()), self._wf_zoom * 1.5)
         self._wf_adjust_offset(old_zoom, pivot)
         self._update_zoom_label()
         self._pb_redraw()
