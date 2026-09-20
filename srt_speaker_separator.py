@@ -1380,6 +1380,16 @@ class SRTEditor(tk.Tk):
         self.bind("<Down>",      self._on_arrow_down)
         self.bind("<Shift-Up>",  self._on_shift_arrow_up)
         self.bind("<Shift-Down>", self._on_shift_arrow_down)
+        # 재생바에서 자막을 드래그하는 도중, 마우스를 움직이지 않고 Shift만
+        # 눌렀다 떼도 미리보기(흰 박스)가 그 즉시 갱신되도록 감지
+        self.bind("<KeyPress-Shift_L>",
+                 lambda e: self._on_shift_key_change(e, pressed=True))
+        self.bind("<KeyPress-Shift_R>",
+                 lambda e: self._on_shift_key_change(e, pressed=True))
+        self.bind("<KeyRelease-Shift_L>",
+                 lambda e: self._on_shift_key_change(e, pressed=False))
+        self.bind("<KeyRelease-Shift_R>",
+                 lambda e: self._on_shift_key_change(e, pressed=False))
         self.bind("<Prior>",     self._on_page_up)     # Page Up
         self.bind("<Next>",      self._on_page_down)   # Page Down
         self.bind("<grave>",     self._on_speaker_key)
@@ -3221,6 +3231,8 @@ class SRTEditor(tk.Tk):
                 snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
                 moving    = drag and drag["idx"]==i and drag["mode"]=="move"
                 ln = lanes.get(i, 0)
+                if drag and drag["idx"] == i and "target_lane" in drag:
+                    ln = drag["target_lane"]
                 ln_top = ln * LANE_H
                 ln_bot = ln_top + LANE_H
                 if moving:
@@ -3398,6 +3410,19 @@ class SRTEditor(tk.Tk):
         self._pb_sub_click_idx = None
         self._pb_canvas.configure(cursor="sb_h_double_arrow")
 
+    def _on_shift_key_change(self, event, pressed=None):
+        """재생바에서 자막을 드래그하는 도중, 마우스를 움직이지 않고 Shift
+        키만 눌렀다 떼도 미리보기(흰 박스)가 그 즉시(마우스 이동 없이도)
+        목표 위치로 갱신되도록 한다. pressed=True/False로 명시적으로 호출."""
+        drag = getattr(self, "_wf_sub_drag", None)
+        if not drag or drag.get("mode") != "move":
+            return
+        drag["shift_lock"] = bool(pressed)
+        if pressed:
+            drag["t_s"] = drag["orig_t_s"]
+            drag["t_e"] = drag["orig_t_e"]
+        self._pb_redraw()
+
     def _start_body_drag(self, idx, x, y, shift_lock, stack=None):
         """자막 바디 드래그 시작 — 기본적으로 길이 고정한 채 좌우(타이밍)로
         이동한다. 위아래로 움직이면 자막이 속한 레이어(레인)도 함께 바뀐다.
@@ -3419,6 +3444,7 @@ class SRTEditor(tk.Tk):
         self._pb_dragging = False
         self._pb_sub_click_idx = idx
         self._pb_canvas.configure(cursor="fleur")
+        self._pb_redraw()   # 마우스를 움직이기 전에도 즉시 미리보기(흰 박스)가 보이도록
 
     def _pb_drag(self, event):
         drag = getattr(self, "_wf_sub_drag", None)
@@ -3435,8 +3461,16 @@ class SRTEditor(tk.Tk):
                                          int(event.y // self._WF_LANE_H)))
                 drag["target_lane"] = target_lane
 
-                if drag.get("shift_lock"):
-                    # Shift 드래그: 타이밍은 절대 건드리지 않고 레이어만 이동
+                # Shift 상태는 프레스 시점이 아니라 매 순간 실시간으로 확인한다.
+                # (드래그 중간에 Shift를 누르거나 떼도 즉시 반영되도록)
+                shift_now = bool(event.state & 0x0001)
+                drag["shift_lock"] = shift_now   # release에서도 이 최신 상태를 그대로 씀
+
+                if shift_now:
+                    # Shift 드래그: 지금까지 옮긴 타이밍은 무시하고 드래그를
+                    # "시작하기 전"의 원래 시간으로 되돌린 채 레이어만 이동한다.
+                    drag["t_s"] = drag["orig_t_s"]
+                    drag["t_e"] = drag["orig_t_e"]
                     self._pb_redraw()
                     return
 
@@ -8589,6 +8623,14 @@ def main():
                 self.bind("<Down>",      self._on_arrow_down)
                 self.bind("<Shift-Up>",  self._on_shift_arrow_up)
                 self.bind("<Shift-Down>", self._on_shift_arrow_down)
+                self.bind("<KeyPress-Shift_L>",
+                         lambda e: self._on_shift_key_change(e, pressed=True))
+                self.bind("<KeyPress-Shift_R>",
+                         lambda e: self._on_shift_key_change(e, pressed=True))
+                self.bind("<KeyRelease-Shift_L>",
+                         lambda e: self._on_shift_key_change(e, pressed=False))
+                self.bind("<KeyRelease-Shift_R>",
+                         lambda e: self._on_shift_key_change(e, pressed=False))
                 self.bind("<Prior>",     self._on_page_up)     # Page Up
                 self.bind("<Next>",      self._on_page_down)   # Page Down
                 self.bind("<grave>",     self._on_speaker_key)
