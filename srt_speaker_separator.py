@@ -1397,6 +1397,11 @@ class SRTEditor(tk.Tk):
             self.bind(_k, self._on_speaker_key)
         self.bind("s", self._split_subtitle_shortcut)
         self.bind("S", self._split_subtitle_shortcut)
+        try:
+            # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
+            self.bind("ㄴ", self._split_subtitle_shortcut)
+        except tk.TclError:
+            pass
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── 스타일 ────────────────────────────────
@@ -7706,6 +7711,11 @@ class SRTEditor(tk.Tk):
         sub["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(pos)}"
         new_sub = {"timestamp": f"{_fmt_ts(pos)} --> {_fmt_ts(t_e)}",
                    "text": text, "speaker": speaker}
+        # 뒷부분도 원본과 같은 레이어를 유지하도록 _lane을 그대로 물려준다.
+        # (안 그러면 새 자막은 _lane이 없어 매번 새로 자동 배치되면서
+        #  원본과 다른 레이어로 튀어버리는 버그가 있었다)
+        if "_lane" in sub:
+            new_sub["_lane"] = sub["_lane"]
         self.subtitles.insert(idx + 1, new_sub)
 
         self._rebuild_ts_cache()
