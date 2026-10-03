@@ -352,8 +352,7 @@ class SRTEditor(
         self._update_badge_anchor = top
         self._update_badge_latest = None
 
-        # 하단 타임라인(미디어 패널) — 화자 목록 아래까지 창 전체 폭을 쓰도록
-        # 본문보다 먼저 창 맨 아래에 배치한다.
+        # 하단 타임라인: 창 전체 폭 (본문보다 먼저 배치)
         self._build_media_panel(self)
 
         # 본문 영역 (사이드바 + 테이블)
@@ -597,10 +596,7 @@ def main():
     try:
         from tkinterdnd2 import TkinterDnD
 
-        # SRTEditor를 앞에 두면 SRTEditor.__init__이 실행되고, 그 안의
-        # super().__init__()이 TkinterDnD.Tk.__init__(드래그앤드롭 초기화)을
-        # 호출한다. (예전에는 __init__ 본문을 통째로 복사해 두어, 설정 불러오기·
-        # 업데이트 확인·Shift+←/→ 단축키가 드래그앤드롭 버전에서 빠져 있었다)
+        # SRTEditor.__init__ → super()로 TkinterDnD.Tk 초기화
         class SRTEditorDnD(SRTEditor, TkinterDnD.Tk):
             """tkinterdnd2 기반 드래그앤드롭 지원 버전"""
 

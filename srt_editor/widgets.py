@@ -611,9 +611,7 @@ class PopupMenu:
 
 
 def _gradient_bar_rows(width, height, fill_w, phase, bg_color):
-    """진행 창의 그라데이션 웨이브 진행바 이미지를 PhotoImage.put() 형식으로 만든다.
-    채워진 부분은 보라→파랑→초록 그라데이션에 물결(phase)과 끝부분 광택을 더하고,
-    나머지는 bg_color로 채운다."""
+    """진행바 그라데이션 이미지 데이터 (PhotoImage.put 형식)."""
     import math
     bg = "#{:02x}{:02x}{:02x}".format(int(bg_color[1:3], 16), int(bg_color[3:5], 16),
                                       int(bg_color[5:7], 16))
@@ -643,8 +641,7 @@ def _gradient_bar_rows(width, height, fill_w, phase, bg_color):
 
 
 def show_toast(root, text, duration_ms=1600):
-    """창 위쪽 가운데에 잠깐 나타났다가 서서히 사라지는 알림 (저장 완료 등).
-    확인을 누를 필요가 없고 작업을 막지 않는다. 새 알림이 오면 이전 것은 바로 닫는다."""
+    """창 위쪽 가운데에 잠깐 떴다 사라지는 알림."""
     old = getattr(root, "_toast_win", None)
     if old is not None:
         try:

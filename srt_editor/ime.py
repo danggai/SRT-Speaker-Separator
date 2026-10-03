@@ -1,17 +1,4 @@
-"""Windows 한글 IME 조합 중인 글자 표시.
-
-Tk 8.6은 Windows에서 IME 조합 메시지를 받아 처리하지만 조합 중인 글자를
-화면에 그리지 않는다. 그래서 '궈'를 입력하면 ㄱ → 구 → 궈가 보이지 않다가
-다음 글자를 입력해 '궈'가 확정되는 순간에야 한꺼번에 나타난다.
-
-이를 보완하기 위해, Entry에 포커스가 있는 동안 IME의 조합 문자열을 주기적으로
-읽어 커서 위치에 밑줄 친 레이블로 겹쳐 그린다. 표시용일 뿐 Entry 내용은
-건드리지 않으므로, 실제 입력(확정)은 기존과 똑같이 처리된다.
-
-또 IME가 따로 띄우는 흰 조합창이 이 표시와 겹쳐 '따로 입력되는' 것처럼 보이므로,
-포커스를 가진 창의 메시지를 가로채 IME가 조합을 시작·갱신할 때마다 그 조합창을
-화면 밖으로 옮긴다.
-"""
+"""Windows 한글 IME 조합 중 글자를 입력칸에 표시 (Tk 8.6 미지원 보완), IME 기본 조합창은 화면 밖으로."""
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
@@ -161,9 +148,7 @@ class ImeCompositionOverlay:
         return f
 
     def _caret_box(self, entry, font):
-        """Entry 안에서 커서 위치의 (x, y, 높이).
-        Entry.bbox()가 환경에 따라 (0, 0, 0, 0)을 돌려주는 경우가 있어,
-        화면에 보이는 첫 글자부터 커서까지의 글자 폭을 직접 잰다."""
+        """커서 위치 (x, y, 높이). Entry.bbox()가 0을 주는 환경이 있어 글자 폭으로 계산."""
         text = entry.get()
         first = entry.index("@0")          # 가로 스크롤 시 화면에 보이는 첫 글자
         idx = entry.index("insert")

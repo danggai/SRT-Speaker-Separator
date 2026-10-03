@@ -85,10 +85,7 @@ class FileMixin:
             self._open_paths([path])
 
     def _open_paths(self, paths):
-        """열기 버튼·드래그 앤 드롭 공용 처리.
-        - SRT: 자막을 연다 (같이 넘어온 미디어, 없으면 같은 이름의 미디어도 함께)
-        - 미디어만: 같은 이름의 SRT가 있으면 함께 열고, 없으면 자막 자동 생성을 묻는다
-        - 그 외 확장자: SRT로 열기를 시도한다"""
+        """열기·드래그 앤 드롭 공용: SRT는 바로, 미디어만이면 동명 SRT 또는 자동 생성."""
         srt_paths   = [p for p in paths if p.lower().endswith(".srt")]
         media_paths = [p for p in paths
                        if os.path.splitext(p.lower())[1] in MEDIA_EXTS]

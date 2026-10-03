@@ -32,15 +32,12 @@ def _friendly_transcribe_error(err_text: str) -> str:
 
 
 # ── 음성 인식 / 화자 분리 공통 설정 ─────────────────────────────────
-# 모드별 Whisper 프로필: (모델, beam_size, VAD onset, VAD offset)
-# GPU 환경은 '정확'(large-v3)을 기본/권장으로 한다. CPU에서는 large-v3가
-# 매우 느리므로 turbo 계열('균형')을 권장한다.
+# 모드별 Whisper 프로필: (모델, beam_size, VAD onset, VAD offset). GPU는 '정확', CPU는 '균형' 권장
 _ASR_MODES = {
     "fast":     ("large-v3-turbo", 1, 0.500, 0.363),
     "balanced": ("large-v3-turbo", 3, 0.500, 0.363),
     "accurate": ("large-v3",       5, 0.500, 0.363),
-    # 방송 클립처럼 짧은 추임새·리액션이 많은 경우를 위해 VAD 감도를 높여
-    # 짧은 발화도 놓치지 않도록 한다 (대신 잡음 구간 오인식이 약간 늘 수 있음).
+    # VAD 감도를 높여 짧은 추임새까지 인식
     "best":     ("large-v3",       5, 0.350, 0.250),
 }
 _DEFAULT_ASR_MODE = "accurate"
@@ -49,9 +46,7 @@ _DIARIZE_BATCH_MAP = [2, 4, 8, 16, 32]
 
 
 def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
-    """모드 프로필대로 whisperx 모델을 로드한다. (model, 모델명) 반환.
-    language를 지정하면 앞 30초 기반 언어 자동 감지를 건너뛴다 (인트로에
-    음악·영어가 섞여 언어를 잘못 감지해 전체 인식이 망가지는 것을 방지)."""
+    """모드 프로필대로 whisperx 모델 로드. (model, 모델명) 반환."""
     wmodel, beam, onset, offset = _ASR_MODES.get(mode, _ASR_MODES[_DEFAULT_ASR_MODE])
     # CPU는 int8이 float32 대비 2~3배 빠르고 정확도 차이는 미미하다
     compute = "float16" if device == "cuda" else "int8"
@@ -66,12 +61,7 @@ def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
 
 
 def _diarize_exclusive(diar_model, audio, num_speakers=0, exact=False):
-    """pyannote 화자 분리를 실행해 DataFrame(start, end, speaker)을 반환한다.
-
-    pyannote 4(community-1)의 exclusive 출력을 우선 사용한다. 여러 명이 동시에
-    말하는 구간에서 '가장 우세한 화자 하나'만 남긴 결과라, 자막 한 줄에
-    화자 하나를 붙이는 용도에 일반 출력보다 잘 맞는다.
-    num_speakers > 0일 때 exact면 정확히 N명, 아니면 최대 N명으로 제한한다."""
+    """pyannote 화자 분리 → DataFrame(start, end, speaker). 겹침 구간은 우세 화자 하나만."""
     import torch
     import pandas as pd
     kw = {}
@@ -88,16 +78,7 @@ def _diarize_exclusive(diar_model, audio, num_speakers=0, exact=False):
 
 
 def _apply_diarize_sensitivity(diarize_model, sensitivity):
-    """화자 분리 민감도(0~100)를 pyannote 파이프라인의 클러스터링 파라미터에 반영.
-    50이면 모델 기본값 그대로, 높을수록 화자를 더 잘게(예민하게) 구분한다.
-
-    community-1(VBx 클러스터링)은 threshold를 바꿔도 화자 수가 거의 변하지
-    않고, Fa(화자 간 차이에 대한 민감도)가 화자 수를 결정한다. 실측에서 기본
-    Fa=0.07은 비슷한 음색의 두 화자를 한 명으로 합쳤고 0.1 이상에서 분리됐다.
-    그래서 VBx면 Fa를 로그 스케일(민감도 0 → 기본값/8, 100 → 기본값×8)로,
-    구버전(3.1, 응집 클러스터링)이면 threshold를 ±0.2 범위로 조절한다.
-    whisperx/pyannote 버전에 따라 내부 구조가 다를 수 있으므로, 실패해도
-    조용히 무시하고 파이프라인 기본 설정으로 계속 진행한다."""
+    """민감도(0~100, 50=기본)를 클러스터링에 반영. VBx면 Fa, 구버전이면 threshold 조절."""
     try:
         sensitivity = max(0, min(100, int(sensitivity)))
         if sensitivity == 50:
@@ -124,13 +105,7 @@ def _apply_diarize_sensitivity(diarize_model, sensitivity):
 
 
 def _assign_speakers_by_overlap(intervals, turns):
-    """자막 구간 목록 [(start, end), ...]에 화자 구간 [(start, end, speaker), ...]을
-    매핑해, 자막마다 화자 ID(없으면 None) 리스트를 반환한다.
-
-    자막 구간과 겹치는 모든 화자 구간의 교집합 길이를 화자별로 합산해 가장
-    오래 말한 화자를 고른다. 화자 구간끼리 겹치는 경우(동시 발화)도 모든 구간을
-    보므로 놓치지 않는다. 자막 양 끝 10%는 앞뒤 자막과 경계가 애매한 부분이라
-    가중치를 절반으로 낮춘다. 겹치는 구간이 없으면 중간점이 가장 가까운 화자."""
+    """자막 구간마다 겹친 시간이 가장 긴 화자 ID (없으면 가장 가까운 화자)."""
     import bisect
     diar_sorted = sorted(turns, key=lambda x: x[0])
     diar_starts = [d[0] for d in diar_sorted]
@@ -163,12 +138,7 @@ def _assign_speakers_by_overlap(intervals, turns):
 
 
 def _split_segments_by_speaker(segments, min_run_sec=0.6):
-    """assign_word_speakers로 붙은 '단어별' 화자를 기준으로, 세그먼트를 화자가
-    바뀌는 지점마다 나눈다. Whisper 세그먼트는 수십 초까지 길어질 수 있어
-    세그먼트 대표 화자 하나만 쓰면 주고받는 대화가 한 화자로 뭉개진다.
-
-    단어 2개 이하이면서 min_run_sec보다 짧게 튀는 화자 구간(A A B A A)은
-    오분류일 가능성이 높으므로 이웃 화자로 흡수한다."""
+    """단어별 화자가 바뀌는 지점에서 세그먼트 분할 (짧게 튄 화자는 이웃에 흡수)."""
     out = []
     for seg in segments:
         words = seg.get("words") or []

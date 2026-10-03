@@ -371,9 +371,7 @@ class TimelineMixin:
         # 올바르게 갱신된다.
         target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H
         if abs(ch - target_ch) > 1:
-            # 재생바와 트랙 헤더 높이를 동시에 바꾸고 배치를 즉시 끝낸다.
-            # (따로따로 바뀌면 창 전체 배치가 여러 번 다시 계산되며 하단 영역이
-            #  깜빡이고 버튼이 겹쳐 보이는 중간 상태가 화면에 나타났다)
+            # 재생바·트랙 헤더 높이를 함께 바꾸고 즉시 배치 (깜빡임 방지)
             c.configure(height=target_ch)
             hdr = getattr(self, "_track_hdr", None)
             if hdr is not None:
@@ -476,8 +474,7 @@ class TimelineMixin:
                                 int(fg_*0.22+BG_G*0.78),
                                 int(fb*0.22+BG_B*0.78))
                     fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
-                    # 블록 채우기 — 위아래 2px 여백, 다음 블록과 1px 간격
-                    # (앞쪽 화자 색 막대는 캔버스 위에 따로 그린다)
+                    # 블록 (위아래 2px, 블록 간 1px)
                     draw.rectangle([x1, ln_top+2, max(x1, x2-1), ln_bot-2], fill=fill_hex)
 
                     # 텍스트 — 밝은 회색 한 줄, 실제 글꼴 폭으로 잘라 '…'
@@ -517,9 +514,7 @@ class TimelineMixin:
                 if not pts_vis:
                     pts_vis = wf
 
-                # 데이터 포인트 → x픽셀 매핑 (최대값)
-                # 보이는 구간은 그리는 동안 바뀌지 않으므로 _wf_ratio_to_x와 같은
-                # 식을 한 번 계산한 값으로 바로 적용한다 (점이 수만 개라 함수 호출만으로도 느렸음)
+                # 데이터 포인트 → x픽셀 (최대값, _wf_ratio_to_x 식을 인라인)
                 span_r = end_r - start_r
                 scale = cw / span_r if span_r > 0 else 0.0
                 x_amp_raw = {}
@@ -660,8 +655,7 @@ class TimelineMixin:
                     # 이동 중인 자막은 테두리로 강조
                     c.create_rectangle(x1, ln_top+1, x2, ln_bot-1,
                                        outline="#FFFFFF", width=1)
-                # 앞쪽에만 화자 색 막대(3px). 크기 조절 핸들은 드래그 중일 때만 흰색으로
-                # 보여준다 (잡는 영역은 _wf_hit_test에서 따로 계산하므로 동작은 그대로)
+                # 앞쪽 화자 색 막대, 크기 조절 핸들은 드래그 중에만 표시
                 c.create_rectangle(x1, ln_top+2, x1+3, ln_bot-2,
                                    fill="#FFFFFF" if snapped_s else color, outline="")
                 if snapped_s:
@@ -849,11 +843,7 @@ class TimelineMixin:
         self._pb_redraw()
 
     def _start_body_drag(self, idx, x, y, shift_lock, stack=None):
-        """자막 바디 드래그 시작 — 기본적으로 길이 고정한 채 좌우(타이밍)로
-        이동한다. 위아래로 움직이면 자막이 속한 레이어(레인)도 함께 바뀐다.
-        shift_lock=True(Shift 누른 채 드래그)면 타이밍은 전혀 건드리지 않고
-        레이어 이동만 한다. 변경 전 상태는 여기서 찍어 두고, 실제로 바뀐
-        경우에만 release에서 실행 취소 기록으로 확정한다."""
+        """자막 바디 드래그 시작: 좌우는 타이밍, 위아래는 레이어 (Shift면 레이어만)."""
         cache = getattr(self, "_ts_cache", [])
         cur_lane = getattr(self, "_wf_lanes", {}).get(idx, 0)
         self._wf_sub_drag = {
@@ -1022,8 +1012,7 @@ class TimelineMixin:
                         self._pb_redraw()
                 return
 
-            # 실제 드래그 → 타임스탬프(Shift 드래그면 생략) + 레이어 적용
-            # (실제로 바뀐 경우에만 시작 시점 스냅샷을 실행 취소 기록으로 확정)
+            # 실제 드래그 → 타임스탬프·레이어 적용 (바뀐 경우에만 실행 취소 기록)
             changed = False
             if 0 <= idx < len(self.subtitles):
                 if drag["mode"] == "move" and drag.get("shift_lock"):
@@ -1078,8 +1067,7 @@ class TimelineMixin:
 
     # ── 트랙 헤더 (재생바 왼쪽: 레이어 이름·추가·제거, 파일명) ──
     def _draw_track_header(self, num_lanes, lane_h, ch):
-        """레이어 줄마다 '레이어 N'을, 마지막 레이어에 ×(제거)를, 그 아래에
-        '+ 레이어' 줄과 파일명을 그린다. 재생바 레이어와 같은 높이로 맞춘다."""
+        """트랙 헤더: 레이어 이름·×·'+ 레이어'·파일명."""
         c = getattr(self, "_track_hdr", None)
         if c is None:
             return
@@ -1119,8 +1107,7 @@ class TimelineMixin:
         self._track_hdr_zones = zones
 
     def _set_media_label(self, name=None):
-        """트랙 헤더의 파일명 표시. 헤더 폭에 맞게 한 줄로 줄이고(…),
-        전체 이름은 마우스를 올리면 툴팁으로 보여준다."""
+        """트랙 헤더 파일명 (한 줄로 줄이고 전체 이름은 툴팁)."""
         import tkinter.font as tkfont
         if not getattr(self, "_media_tip", None):
             self._media_tip = Tooltip(self.lbl_media, "", delay=300)

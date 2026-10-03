@@ -147,8 +147,7 @@ class DiarizeMixin:
             _bind_tip(rb)
 
         # 모드 설명 레이블
-        # 인식 모드는 '자동 자막 생성'의 음성 인식에만 쓰인다. 기존 SRT에 화자를
-        # 붙이는 '화자 분석'은 음성 인식 없이 화자 분리만 수행한다.
+        # 인식 모드는 자동 자막 생성에만 적용 (화자 분석은 음성 인식 안 함)
         _mode_tips = {
             "fast":     "⚡ large-v3-turbo, beam 1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
             "balanced": "⚖ large-v3-turbo, beam 3 — CPU 환경 권장",
@@ -165,8 +164,7 @@ class DiarizeMixin:
             _tip_lbl.configure(text=_mode_tips.get(self._diarize_mode_var.get(), ""))
         self._diarize_mode_var.trace_add("write", _on_mode_change)
 
-        # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
-        # 인원을 정확히 고정했을 때는 민감도가 의미 없으므로 슬라이더를 숨긴다.
+        # 화자 분리 민감도 (인원 고정 시 숨김)
         _sens_container = tk.Frame(parent, bg=BG)
 
         sens_frame = tk.Frame(_sens_container, bg=BG)
@@ -442,8 +440,7 @@ class DiarizeMixin:
         self._diarize_sensitivity_init = sensitivity
 
     def _get_diarize_spk_settings(self):
-        """(화자 수, 정확히 고정 여부) 반환. 화자 수 0 = 자동.
-        고정이 아니면 화자 수는 '최대 N명' 상한으로 쓰인다."""
+        """(화자 수, 정확히 고정 여부). 0=자동, 고정 아니면 최대 인원."""
         num_spk_var = getattr(self, "_diarize_num_spk", None)
         try:
             num_spk = int(num_spk_var.get()) if num_spk_var is not None \
@@ -944,8 +941,7 @@ class DiarizeMixin:
                 cpu_count = os.cpu_count() or 4
                 torch.set_num_threads(cpu_count)
 
-                # 기존 SRT의 자막 타이밍에 화자만 붙이는 작업이므로 음성 인식·정렬은
-                # 필요 없다. pyannote의 화자 구간을 자막 구간과 직접 겹쳐 매핑한다.
+                # 음성 인식 없이 화자 구간을 자막에 직접 매핑
                 def _progress_ticker(step_key, est_sec):
                     """0.5초마다 세부 진행률 업데이트."""
                     t0 = _time.time()
@@ -1026,8 +1022,7 @@ class DiarizeMixin:
                     messagebox.showerror("화자 분석 오류", err_msg, parent=self)
                 self.after(0, _err)
             finally:
-                # 작업이 성공/실패/취소 어떤 경우로 끝나든, 여기서 쓰던
-                # 무거운 객체(모델·오디오·분리결과)들을 일괄 해제한다.
+                # 모델·오디오 메모리 해제
                 try: del diarize_model
                 except Exception: pass
                 try: del audio

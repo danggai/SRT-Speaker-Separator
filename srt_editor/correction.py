@@ -1,12 +1,4 @@
-"""자동 자막 오프라인 교정 제안 (AI 없이 규칙·통계 기반). GUI 의존성 없음.
-
-- 반복 단어 통일: 조사를 뗀 단어를 자모 단위로 비교해, 자주 나온 표기와 거의 같은데
-  드물게 나온 표기(오인식 가능성이 높음)를 자주 나온 표기로 바꾸자고 제안한다.
-  예) 루파 12회 · 루바 1회 → '루바'를 '루파'로
-- 고유명사 사전: 사전 단어와 거의 같은 표기를 사전 표기로 바꾸자고 제안한다.
-
-제안은 적용 전에 사용자가 확인하는 것을 전제로 한다.
-"""
+"""자동 자막 오프라인 교정 제안 (반복 단어 통일, 고유명사 사전). GUI 없음."""
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -31,11 +23,10 @@ _COMMON = set("""
 그리고 그래서 그러면 그러니까 하나 둘 셋 오늘 내일 어제 지금 아까 다시 같이 많이 조금 약간 엄청 완전
 """.split())
 
-# 서술어(동사·형용사 활용형)로 끝나는 말은 어미만 다른 정상 표현일 가능성이 높아 제외
+# 서술어 어미로 끝나는 말은 제외
 _PREDICATE_END = set("다요어아지네게고서니까죠냐래데며면자해했던든는은을음요잖나라봐줘")
 
-# 두 글자 단어는 한 자모만 달라도 다른 정상 단어인 경우가 많아(자식/자신, 보이/보기),
-# 이 호칭과 함께 쓰인 적이 있는 '이름 같은' 단어로만 통일한다.
+# 두 글자 단어는 이 호칭과 쓰인 적 있는 이름만 통일 대상
 _NAME_SUFFIX = ("씨", "님")
 
 _TOKEN_RE = re.compile(r"[가-힣]+")
@@ -73,7 +64,7 @@ def _distance(a, b, limit):
     return prev[-1]
 
 
-# 호칭·조사처럼 끝나지만 원래 한 단어인 흔한 말 (떼면 '아가'+'씨'처럼 엉뚱해짐)
+# 조사·호칭으로 끝나 보이지만 한 단어인 말
 _NO_SPLIT = set("""
 아가씨 아저씨 날씨 글씨 솜씨 마음씨 말씨 맵씨 하느님 하나님 선생님 어머님 아버님 형님 누님 손님
 사장님 부장님 팀장님 고객님 여러분 아이 고양이 강아지 거기 여기 저기
@@ -141,17 +132,13 @@ def _occurrences(texts):
 
 
 def suggest(texts, proper_nouns=(), min_right=3, max_wrong=2, ratio=3):
-    """자막 텍스트 목록에서 교정 제안을 만든다.
-    반복 단어 통일: right가 min_right회 이상, wrong이 max_wrong회 이하이면서
-    right가 wrong보다 ratio배 이상 많이 나왔고, 글자 수가 같고 자모 차이가 작을 때."""
+    """교정 제안 목록 생성."""
     counts, whole, lines = _occurrences(texts)
     dict_words = [w.strip() for w in proper_nouns if w and w.strip()]
     dict_set = set(dict_words)
     out, taken = [], set()
 
-    # 1) 고유명사 사전 (사용자가 직접 등록한 표기가 가장 확실하므로 먼저).
-    #    '아홀로'처럼 끝 글자가 조사처럼 보이는 단어가 있으므로, 조사를 떼기
-    #    전의 단어 전체도 함께 비교한다.
+    # 1) 고유명사 사전 (조사 떼기 전 단어 전체도 비교)
     forms = {}
     for word, n in whole.items():
         forms.setdefault(word, n)
@@ -172,7 +159,7 @@ def suggest(texts, proper_nouns=(), min_right=3, max_wrong=2, ratio=3):
                 taken.add(split_josa(form)[0])
                 break
 
-    # 2) 반복 단어 통일 — 세 글자 이상이거나, 두 글자면 호칭과 쓰인 적 있는 이름 같은 단어만
+    # 2) 반복 단어 통일
     def name_like(b):
         return any(w.startswith(b + s) for w in whole for s in _NAME_SUFFIX)
 

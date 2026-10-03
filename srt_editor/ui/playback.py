@@ -248,8 +248,7 @@ class PlaybackMixin:
         new_rows = self._get_rows_at(pos_sec)
         if new_rows == self._playing_rows:
             return
-        # 자막 사이 빈 구간이면 강조도 꺼야 재생바 위치와 목록 강조가 어긋나지 않는다
-        # (예전엔 빈 구간에서 직전 자막이 계속 '재생 중'으로 남아 있었다)
+        # 빈 구간이면 강조 해제
         changed = self._playing_rows.symmetric_difference(new_rows)
         self._playing_rows = new_rows
         for idx in changed:

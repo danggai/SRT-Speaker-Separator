@@ -96,8 +96,7 @@ class TranscribeMixin:
                        bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
                        font=(theme.FONT_FAMILY, 8), cursor="hand2").pack(side="left", padx=(8, 0))
 
-        # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
-        # 인원을 정확히 고정했을 때는 민감도가 의미 없으므로 슬라이더를 숨긴다.
+        # 화자 분리 민감도 (인원 고정 시 숨김)
         _sens_row = tk.Frame(diar_frame, bg=BG)
         tk.Label(_sens_row, text="분리 민감도", bg=BG, fg=FG_DIM,
                  font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
@@ -900,8 +899,7 @@ class TranscribeMixin:
         words = list(getattr(self, "_proper_nouns", None) or [])
         if not words:
             return {}
-        # initial_prompt는 모든 30초 청크 앞에 붙으므로, 문장형 안내문을 넣으면
-        # 그 문장이 자막에 그대로 새어 나오는 환각이 생길 수 있다. 단어만 나열한다.
+        # 문장형 프롬프트는 자막에 새어 나와 단어만 나열
         joined = ", ".join(words)
         opts = {"hotwords": " ".join(words),
                 "initial_prompt": joined}
