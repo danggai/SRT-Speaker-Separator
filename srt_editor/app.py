@@ -320,6 +320,9 @@ class SRTEditor(
                 c.coords("icon", w / 2, h / 2 + 5)
                 c.coords("hint", w - 4, 0)
                 bb = c.bbox("hint") if c.itemcget("hint", "text") else None
+                if bb and bb[0] < 3:   # 버튼 폭을 넘으면 가운데 정렬해 양쪽이 잘리지 않게
+                    c.coords("hint", (w + bb[2] - bb[0]) / 2, 0)
+                    bb = c.bbox("hint")
                 if bb:
                     c.coords("hintbg", bb[0] - 3, bb[1], bb[2] + 2, bb[3])
                 x1 = (bb[0] - 6) if bb else w - 4   # 배지가 있으면 그 왼쪽에 점
@@ -486,7 +489,7 @@ class SRTEditor(
             ic.itemconfigure("dot", state="normal" if value else "hidden")
 
     # 버튼 우상단에 표시할 단축키
-    _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
+    _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+⇧+S",
                      "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y"}
 
     def _toggle_key_hints(self):
