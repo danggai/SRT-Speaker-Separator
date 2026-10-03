@@ -351,12 +351,13 @@ class SpeakerMixin:
         """화자 줄 우클릭 메뉴."""
         name = row._spk_name
         menu = PopupMenu(self)
-        menu.add_command(label="이름 변경", command=lambda: self._begin_name_edit(row))
+        menu.add_command(label="이름 변경", command=lambda: self._begin_name_edit(row),
+                         accelerator="F2")
         menu.add_command(label="색상 변경",
                          command=lambda: self._pick_speaker_color(name, row._dot, row))
         menu.add_separator()
         menu.add_command(label=f"'{name}' 삭제", foreground="#FF6B8A",
-                         command=lambda: self.delete_speaker(name))
+                         command=lambda: self.delete_speaker(name), accelerator="Delete")
         menu.tk_popup(event.x_root, event.y_root)
         return "break"
 

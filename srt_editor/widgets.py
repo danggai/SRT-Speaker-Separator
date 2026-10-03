@@ -426,6 +426,9 @@ class _ColorPickerDialog:
 # ─────────────────────────────────────────────
 
 # ── 커스텀 팝업 메뉴 (OS 테두리 없는 다크 테마) ─────────────────────────
+_ACCEL_KEYS = {"Delete": "<Delete>", "Del": "<Delete>", "F2": "<F2>"}
+
+
 class PopupMenu:
     """tk.Menu 대신 Toplevel로 만든 커스텀 팝업 메뉴.
     Windows 흰 테두리 문제 없이 완전한 다크 테마 적용 가능."""
@@ -592,6 +595,9 @@ class PopupMenu:
                     self._root.after(10, c)  # destroy 완료 후 실행
                 row.bind("<Button-1>", _click)
                 lbl.bind("<Button-1>", _click)
+                key = _ACCEL_KEYS.get(accel)
+                if key:   # 메뉴가 떠 있을 때 표시된 단축키로 실행
+                    win.bind(key, _click)
 
             elif kind == "cascade" and submenu:
                 def _hover_cascade(e, r=row, sub=submenu):
