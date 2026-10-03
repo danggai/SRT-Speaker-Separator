@@ -4908,6 +4908,7 @@ class SRTEditor(tk.Tk):
         _cfg["diarize_device"] = device_pref
         _cfg["diarize_batch"]  = batch_idx
         _cfg["diarize_sensitivity"] = sensitivity
+        _save_config(_cfg)
         self._diarize_num_spk_val = num_spk
         self._diarize_mode_init   = mode
         self._diarize_device_init = device_pref
