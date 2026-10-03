@@ -252,8 +252,7 @@ class EditingMixin:
 
     def _subtitle_idx_at_playhead(self):
         """현재 재생 위치를 포함하는 자막 인덱스 하나를 고른다.
-        여러 개가 겹쳐 있으면 현재 선택된 행을 우선하고, 없으면 z-index가
-        가장 높은(리스트 뒤쪽) 것을 고른다."""
+        여러 개가 겹쳐 있으면 선택된 행 → 선택 행과 같은 화자 → 가까운 행 순으로 고른다."""
         if not self.media_path:
             return None, None
         pos = self.media_progress_var.get()
@@ -263,6 +262,11 @@ class EditingMixin:
         sel = getattr(self, "_selected_row_idx", None)
         if sel in rows:
             return sel, pos
+        if len(rows) > 1 and sel is not None and 0 <= sel < len(self.subtitles):
+            # 겹친 자막 중 선택한 줄과 같은 화자 → 선택한 줄과 가까운 줄 순으로 고름
+            spk = self.subtitles[sel].get("speaker", "")
+            same = [i for i in rows if self.subtitles[i].get("speaker", "") == spk]
+            return min(same or rows, key=lambda i: abs(i - sel)), pos
         return max(rows), pos
 
     def _split_subtitle_shortcut(self, event=None):
