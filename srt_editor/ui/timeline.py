@@ -135,7 +135,7 @@ class TimelineMixin:
         self.btn_prev.pack(side="left", padx=1)
 
         self.btn_play = flat_button(btn_group, "▶", self._media_play_pause,
-                                    bg=ACCENT, fg="white", hover="#AE96E2", hint_fg="#E8E0FF",
+                                    bg=ACCENT, fg="white", hover="#AE96E2",
                                     font=(theme.FONT_FAMILY, 13, "bold"), padx=14)
         self.btn_play.pack(side="left", padx=6)
 

@@ -39,6 +39,10 @@ from .version import APP_VERSION, GITHUB_TAGS_URL
 from .widgets import Tooltip, flat_button
 
 
+_BADGE_BG = "#2B2838"   # 단축키 배지 배경
+_BADGE_FG = "#CFC7EE"   # 단축키 배지 글자
+
+
 class SRTEditor(
     TranscribeMixin,
     DiarizeMixin,
@@ -299,29 +303,27 @@ class SRTEditor(
             import tkinter.font as tkfont
             ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
             icon_w = ifont.measure(icon)
+            # 위쪽 얇은 줄은 단축키 배지 자리 (켜고 꺼도 버튼 크기 그대로)
             ic = tk.Canvas(box, bg=bg, highlightthickness=0, cursor="hand2",
-                           width=icon_w + 24, height=ifont.metrics("linespace") + 4)
+                           width=icon_w + 24, height=ifont.metrics("linespace") + 10)
             ic.pack(fill="x")
             ic.create_text(0, 0, text=icon, fill=fg_hover, font=ifont, tags="icon")
-            ic.create_text(0, 0, text="", fill=FG_DIM, anchor="ne",
+            ic.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
+                                tags="hintbg")
+            ic.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne",
                            font=(theme.FONT_FAMILY, 7), tags="hint")
             box._fg = fg   # 이름 글자색 (토글 켜짐 표시에 사용)
             ic.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
 
-            hfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=7)
-
             def _layout(e=None, c=ic):
-                hint = c.itemcget("hint", "text")
-                # 단축키 글자가 아이콘과 겹치지 않을 만큼 폭 확보
-                need = icon_w + 2 * (hfont.measure(hint) + 4) if hint else icon_w + 24
-                if int(c.cget("width")) != max(icon_w + 24, need):
-                    c.configure(width=max(icon_w + 24, need))
                 w, h = c.winfo_width(), c.winfo_height()
-                c.coords("icon", w / 2, h / 2 + 2)
-                c.coords("hint", w - 3, 1)
+                c.coords("icon", w / 2, h / 2 + 5)
+                c.coords("hint", w - 4, 0)
                 bb = c.bbox("hint") if c.itemcget("hint", "text") else None
-                x1 = (bb[0] - 3) if bb else w - 4   # 단축키 표시가 있으면 그 왼쪽에
-                c.coords("dot", x1 - 8, 3, x1, 11)
+                if bb:
+                    c.coords("hintbg", bb[0] - 3, bb[1], bb[2] + 2, bb[3])
+                x1 = (bb[0] - 6) if bb else w - 4   # 배지가 있으면 그 왼쪽에 점
+                c.coords("dot", x1 - 8, 2, x1, 10)
             ic.bind("<Configure>", _layout)
             ic.relayout = _layout
             tx = tk.Label(box, text=label, bg=bg, fg=fg, cursor="hand2",
@@ -495,16 +497,28 @@ class SRTEditor(
         _save_config(cfg)
 
     def _apply_key_hints(self, on):
-        """주요 버튼 우상단에 단축키를 작게 표시하거나 숨긴다."""
+        """주요 버튼 우상단에 단축키 배지를 띄우거나 숨긴다 (버튼 크기는 그대로)."""
         self._key_hints_on = on
         for label, key in self._TB_KEY_HINTS.items():
             ic = self._tb_icons.get(label)
             if ic is not None:
                 ic.itemconfigure("hint", text=key if on else "")
+                ic.itemconfigure("hintbg", state="normal" if on else "hidden")
                 ic.relayout()
-        for btn, key in ((self._split_btn, "S"), (self.btn_play, "Space"),
-                         (self.btn_prev, "←"), (self.btn_next, "→")):
-            btn.set_hint(key if on else "")
+        for badge in getattr(self, "_key_badges", []):
+            badge.destroy()
+        self._key_badges = []
+        if on:
+            for widget, key in ((self._split_btn, "S"), (self.btn_play, "Space"),
+                                (self.btn_prev, "←"), (self.btn_next, "→")):
+                badge = tk.Label(self, text=key, bg=_BADGE_BG, fg=_BADGE_FG,
+                                 font=(theme.FONT_FAMILY, 7), padx=3, pady=0)
+                # 버튼 우상단 바로 위에 띄움 (레이아웃에 영향 없음)
+                badge.place(in_=widget, relx=1.0, x=2, y=4, anchor="se")
+                badge.bind("<Button-1>", lambda e, w=widget: w.event_generate("<Button-1>"))
+                badge.bind("<ButtonRelease-1>",
+                           lambda e, w=widget: w.event_generate("<ButtonRelease-1>", x=1, y=1))
+                self._key_badges.append(badge)
         toggle = self._tb_btns.get("단축키")
         if toggle is not None:   # 켜져 있으면 이름을 강조색으로
             toggle._fg = ACCENT if on else FG_DIM

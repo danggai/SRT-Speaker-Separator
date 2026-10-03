@@ -693,18 +693,15 @@ def show_toast(root, text, duration_ms=1600):
 
 
 class FlatButton(tk.Canvas):
-    """테두리 없는 평평한 버튼. 우상단에 단축키를 배경 없이 표시할 수 있다."""
+    """테두리 없는 평평한 버튼 (글자를 바꾸면 크기도 맞춰짐)."""
 
     def __init__(self, parent, text, command, bg, fg=FG, hover=BG3, font=None,
-                 padx=10, pady=3, hint_fg=FG_DIM):
+                 padx=10, pady=3):
         super().__init__(parent, bg=bg, highlightthickness=0, cursor="hand2")
         import tkinter.font as tkfont
         self._font = tkfont.Font(self, font=font or (theme.FONT_FAMILY, 9))
-        self._hint_font = tkfont.Font(self, family=theme.FONT_FAMILY, size=7)
         self._padx, self._pady, self._bg, self._hover = padx, pady, bg, hover
         self.create_text(0, 0, text=text, fill=fg, font=self._font, tags="label")
-        self.create_text(0, 0, text="", fill=hint_fg, anchor="ne",
-                         font=self._hint_font, tags="hint")
         self.bind("<Enter>", lambda e: tk.Canvas.configure(self, bg=self._hover))
         self.bind("<Leave>", lambda e: tk.Canvas.configure(self, bg=self._bg))
         # 버튼 위에서 뗐을 때만 실행
@@ -713,20 +710,10 @@ class FlatButton(tk.Canvas):
         self._relayout()
 
     def _relayout(self):
-        text = self.itemcget("label", "text")
-        hint = self.itemcget("hint", "text")
-        tw = self._font.measure(text)
-        hw = self._hint_font.measure(hint) + 4 if hint else 0
-        pad = max(self._padx, hw)   # 단축키가 글자와 겹치지 않게 좌우 여백 확보
-        w = tw + 2 * pad
+        w = self._font.measure(self.itemcget("label", "text")) + 2 * self._padx
         h = self._font.metrics("linespace") + 2 * self._pady
         tk.Canvas.configure(self, width=w, height=h)
         self.coords("label", w / 2, h / 2)
-        self.coords("hint", w - 2, 0)
-
-    def set_hint(self, hint):
-        self.itemconfigure("hint", text=hint or "")
-        self._relayout()
 
     def configure(self, cnf=None, **kw):
         if "text" in kw:
@@ -738,8 +725,7 @@ class FlatButton(tk.Canvas):
     config = configure
 
 
-def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10, pady=3,
-                hint_fg=FG_DIM):
+def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10, pady=3):
     """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
     return FlatButton(parent, text, command, bg, fg=fg, hover=hover, font=font,
-                      padx=padx, pady=pady, hint_fg=hint_fg)
+                      padx=padx, pady=pady)
