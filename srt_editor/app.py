@@ -186,6 +186,8 @@ class SRTEditor(
                  lambda e: self._on_shift_key_change(e, pressed=False))
         self.bind("<KeyRelease-Shift_R>",
                  lambda e: self._on_shift_key_change(e, pressed=False))
+        self.bind("<Control-m>", self.merge_selected)
+        self.bind("<Control-M>", self.merge_selected)
         self.bind("<Home>",      self._on_home_key)
         self.bind("<End>",       self._on_end_key)
         self.bind("<Control-a>", self._on_select_all)

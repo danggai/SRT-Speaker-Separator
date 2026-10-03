@@ -465,11 +465,14 @@ class SubtitleTableMixin:
         menu.add_command(label="아래에 행 추가",
                          command=lambda: self.add_row(after_idx=anchor_idx))
         menu.add_separator()
+        menu.add_command(label="병합" + (s if n > 1 else " (다음 자막과)"),
+                         accelerator="Ctrl+M",
+                         state="normal" if n > 1 or anchor_idx + 1 < len(self.subtitles)
+                         else "disabled",
+                         command=lambda: self.merge_selected())
         menu.add_command(label=f"삭제{s}",
                          accelerator="Del",
                          command=lambda: self._on_delete())
-        menu.add_separator()
-
         menu.add_separator()
 
         # ── 화자 변경 ─────────────────────────

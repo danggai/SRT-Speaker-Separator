@@ -250,6 +250,57 @@ class EditingMixin:
         self._pb_redraw()
         return True
 
+    def merge_selected(self, event=None):
+        """선택한 자막을 하나로 병합 (하나만 선택했으면 다음 자막과).
+        시간은 처음~끝, 화자는 가장 오래 말한 화자, 내용은 띄어쓰기로 이어 붙인다."""
+        if event is not None and isinstance(self.focus_get(), tk.Entry):
+            return
+        self._blur_all_entries()
+        targets = [i for i in self._selected_targets() if 0 <= i < len(self.subtitles)]
+        if len(targets) == 1 and targets[0] + 1 < len(self.subtitles):
+            targets.append(targets[0] + 1)
+        if len(targets) < 2:
+            return "break"
+        cache = self._ts_cache
+        times = [cache[i] for i in targets if i < len(cache)
+                 and cache[i][0] is not None and cache[i][1] is not None]
+        if len(times) != len(targets):
+            return "break"
+
+        share = {}   # 화자 → 말한 시간 합
+        for i, (t_s, t_e) in zip(targets, times):
+            spk = self.subtitles[i].get("speaker", "")
+            if spk:
+                share[spk] = share.get(spk, 0.0) + max(0.0, t_e - t_s)
+        speaker = max(share, key=share.get) if share else ""
+        text = " ".join(t for t in (self.subtitles[i].get("text", "").strip() for i in targets) if t)
+
+        def _fmt_ts(sec):
+            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
+            ms = int(round((sec % 1) * 1000))
+            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+        self._push_undo()
+        first = targets[0]
+        merged = self.subtitles[first]
+        merged["timestamp"] = (f"{_fmt_ts(min(t for t, _ in times))} --> "
+                               f"{_fmt_ts(max(t for _, t in times))}")
+        merged["text"] = text
+        merged["speaker"] = speaker
+        for i in sorted(targets[1:], reverse=True):
+            self.subtitles.pop(i)
+        self._selected_rows = set()
+        self._rebuild_ts_cache()
+        self._renumber_rows(first)
+        self._update_count()
+        self._render_speakers()
+        self._unsaved = True
+        self._select_row(first, seek=False)
+        self._scroll_to_row(first)
+        self._wf_img_cache = None
+        self._pb_redraw()
+        return "break"
+
     def _subtitle_idx_at_playhead(self):
         """현재 재생 위치를 포함하는 자막 인덱스 하나를 고른다.
         여러 개가 겹쳐 있으면 선택된 행 → 선택 행과 같은 화자 → 가까운 행 순으로 고른다."""

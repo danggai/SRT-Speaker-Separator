@@ -108,6 +108,11 @@ class TimelineMixin:
         b_split.pack(side="left", padx=(4, 2))
         self._split_btn = b_split
         Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
+        b_merge = flat_button(ctrl, "⊕ 병합", lambda: (self.merge_selected(), self.focus_set()),
+                              bg=MEDIA_BG)
+        b_merge.pack(side="left", padx=(0, 2))
+        Tooltip(b_merge, "선택한 자막 병합 (하나면 다음 자막과)  [Ctrl+M]", delay=400)
+        self._merge_btn = b_merge
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
         b_add.pack(side="left")
         Tooltip(b_add, "재생 위치에 자막 추가  [A]", delay=400)
