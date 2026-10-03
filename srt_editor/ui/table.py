@@ -649,6 +649,8 @@ class SubtitleTableMixin:
         if di < 0 or di >= len(self.subtitles):
             return
         val = self._slot_widgets[slot_idx]["pill_values"][pill_idx]
+        if self.subtitles[di].get("speaker", "") == val:
+            val = ""   # 선택된 화자를 다시 누르면 해제
         self._pill_select(di, val)
 
     # ── 슬롯 데이터 채우기 ───────────────────
@@ -839,7 +841,7 @@ class SubtitleTableMixin:
         c       = self.canvas
         t       = wi["tag"]
         current = sub.get("speaker", "")
-        choices = [("", "(없음)")] + [(sp, sp) for sp in self.speakers]
+        choices = [(sp, sp) for sp in self.speakers]
         while len(wi["pill_values"]) < len(choices):
             pi = len(wi["pill_values"])
             tags = (t, "pill", f"pk{slot_idx}_{pi}")
@@ -849,10 +851,11 @@ class SubtitleTableMixin:
             wi["pill_w"].append(0)
         for pi, (val, label) in enumerate(choices):
             is_sel = val == current
-            color = FG_DIM if val == "" else self._speaker_color(val)
-            c.itemconfigure(f"{t}pb{pi}", fill="#2D2040" if is_sel else bg,
+            color = self._speaker_color(val)
+            c.itemconfigure(f"{t}pb{pi}", fill=color if is_sel else bg,
                             outline=color if is_sel else "#2A2A2A")
-            c.itemconfigure(f"{t}pt{pi}", text=label, fill=color if is_sel else "#444455",
+            c.itemconfigure(f"{t}pt{pi}", text=label,
+                            fill=_on_color(color) if is_sel else "#444455",
                             font=self._pill_font(is_sel))
             wi["pill_values"][pi] = val
             wi["pill_w"][pi] = self._pill_text_w(label, is_sel) + 2 * self._PILL_PADX
@@ -1197,7 +1200,7 @@ class SubtitleTableMixin:
     # ── 화자 칸 ──────────────────────────────
     def _auto_resize_speaker_col(self):
         # 모든 버튼이 굵게 표시돼도 들어가는 폭 + 오른쪽 여유
-        labels = ["(없음)"] + list(self.speakers)
+        labels = list(self.speakers)
         pills = sum(self._pill_text_w(l, True) + 2 * self._PILL_PADX + self._PILL_GAP for l in labels)
         needed = max(8 + pills + 6 + 30, 80)
         if self._col_w["speaker"] != needed:
@@ -1298,3 +1301,12 @@ class SubtitleTableMixin:
 
     def _row_col_w(self, col_id):
         return self._col_w.get(col_id, self._COL_DEF_W.get(col_id, 80))
+
+
+def _on_color(hex_color):
+    """배경색 위에서 잘 읽히는 글자색 (밝은 배경 → 어두운 글자)."""
+    try:
+        r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    except (ValueError, TypeError):
+        return "#FFFFFF"
+    return "#16161A" if 0.299 * r + 0.587 * g + 0.114 * b > 150 else "#FFFFFF"
