@@ -1,13 +1,18 @@
-"""자막 교정: 오인식으로 보이는 표기를 찾아 제안하고, 확인한 것만 적용."""
+"""자막 교정: 문맥상 잘못 인식된 것 같은 표기를 찾아 줄별로 제안하고, 확인한 것만 적용."""
+import threading
 import tkinter as tk
 from tkinter import messagebox
 
 from .. import correction, theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, _apply_dark_titlebar
+from ..widgets import ToggleSwitch, flat_button
+
+_WRONG_FG = "#E08080"
+_RIGHT_FG = "#7FD48F"
 
 
 class CorrectionMixin:
-    """자막 교정 창 (반복 단어 통일 · 고유명사 사전)."""
+    """자막 교정 창."""
 
     def _open_correction_dialog(self):
         if not self.subtitles:
@@ -16,106 +21,222 @@ class CorrectionMixin:
         self._blur_all_entries()   # 입력 중이던 내용부터 확정
         self._ensure_proper_nouns_init()
         texts = [s.get("text", "") for s in self.subtitles]
-        suggestions = correction.suggest(texts, proper_nouns=self._proper_nouns)
-        if not suggestions:
-            messagebox.showinfo(
-                "자막 교정",
-                "교정할 항목을 찾지 못했습니다.\n\n"
-                "자주 나오는 이름·용어를 고유명사 사전에 등록하면,\n"
-                "비슷하게 잘못 인식된 표기도 찾아 바꿀 수 있습니다.",
-                parent=self)
+        fixes = correction.suggest(texts, proper_nouns=self._proper_nouns)
+        if not fixes:
+            messagebox.showinfo("자막 교정", "문맥상 고칠 만한 표기를 찾지 못했어요.", parent=self)
             return
 
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()
         win.title("자막 교정")
         win.configure(bg=BG)
-        win.geometry("620x520")
-        win.minsize(480, 320)
+        win.geometry("700x580")
+        win.minsize(540, 380)
         win.transient(self)
-        win.grab_set()
 
-        tk.Label(win, text=f"교정 제안 {len(suggestions)}건", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win,
-                 text="자주 나온 표기와 거의 같은데 드물게 나온 표기, 고유명사 사전과 비슷한 표기를\n"
-                      "찾았습니다. 체크한 항목만 적용되며, 줄 수를 누르면 해당 자막으로 이동합니다.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), justify="left"
-                 ).pack(anchor="w", padx=16, pady=(0, 8))
+        # ── 머리글 ────────────────────────────
+        head = tk.Frame(win, bg=BG)
+        head.pack(fill="x", padx=28, pady=(22, 10))
+        right_box = tk.Frame(head, bg=BG)
+        right_box.pack(side="right", anchor="n")
+        title_lbl = tk.Label(head, text="", bg=BG, fg=FG, font=(theme.FONT_FAMILY, 15, "bold"))
+        title_lbl.pack(anchor="w")
+        tk.Label(head, text="앞뒤 문맥을 보고 잘못 인식된 것 같은 표기를 찾았어요. 켠 줄만 바뀌어요.",
+                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(anchor="w", pady=(3, 0))
+        status_lbl = tk.Label(head, text="", bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9))
+        status_lbl.pack(anchor="w", pady=(4, 0))
 
         footer = tk.Frame(win, bg=BG)
-        footer.pack(side="bottom", fill="x", padx=16, pady=(6, 12))
+        footer.pack(side="bottom", fill="x", padx=28, pady=(8, 16))
         tk.Frame(win, bg=BORDER, height=1).pack(side="bottom", fill="x")
 
         outer, inner = self._make_scrollable(win)
-        outer.pack(fill="both", expand=True, padx=8)
+        outer.pack(fill="both", expand=True, padx=16)
 
-        rows = []
-        for sg in suggestions:
-            var = tk.BooleanVar(value=True)
-            row = tk.Frame(inner, bg=BG2, highlightthickness=1, highlightbackground=BORDER)
-            row.pack(fill="x", padx=8, pady=3)
-            tk.Checkbutton(row, variable=var, bg=BG2, activebackground=BG2,
-                           selectcolor=BG3, cursor="hand2").pack(side="left", padx=(6, 2))
-            body = tk.Frame(row, bg=BG2)
-            body.pack(side="left", fill="x", expand=True, pady=4)
-            line1 = tk.Frame(body, bg=BG2)
-            line1.pack(anchor="w")
-            tk.Label(line1, text=sg.wrong, bg=BG2, fg="#E08080",
-                     font=(theme.FONT_FAMILY, 10, "bold")).pack(side="left")
-            tk.Label(line1, text="  →  ", bg=BG2, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 10)).pack(side="left")
-            tk.Label(line1, text=sg.right, bg=BG2, fg="#7FD48F",
-                     font=(theme.FONT_FAMILY, 10, "bold")).pack(side="left")
-            tk.Label(line1, text=f"   {sg.reason}", bg=BG2, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 8)).pack(side="left")
-            first = sg.lines[0] if sg.lines else None
-            if first is not None:
-                example = self.subtitles[first].get("text", "")
-                tk.Label(body, text=example if len(example) <= 60 else example[:60] + "…",
-                         bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8),
-                         anchor="w").pack(anchor="w")
-                tk.Button(row, text=f"{len(sg.lines)}줄", bg=BG3, fg=FG, relief="flat", bd=0,
-                          cursor="hand2", font=(theme.FONT_FAMILY, 8), padx=8,
-                          activebackground=BG, activeforeground=FG,
-                          command=lambda i=first: self._goto_correction_line(i)
-                          ).pack(side="right", padx=8)
-            rows.append((sg, var))
+        cards = []   # (fix, var, card, reasons_frame)
 
+        def _text_line(parent, text, word, color, start=None):
+            """한 줄 문장에서 word만 색을 입혀 보여 줌 (start: 칠할 위치)."""
+            t = tk.Text(parent, height=1, width=1, bg=BG2, fg=FG, bd=0, highlightthickness=0,
+                        font=(theme.FONT_FAMILY, 11), cursor="hand2", wrap="none")
+            t.insert("1.0", text)
+            if start is None:
+                start = text.find(word)
+            if start >= 0:
+                t.tag_add("w", f"1.{start}", f"1.{start + len(word)}")
+                t.tag_configure("w", foreground=color,
+                                font=(theme.FONT_FAMILY, 11, "bold"))
+            t.configure(state="disabled")
+            return t
+
+        def _fill_reasons(box, fix):
+            for w in box.winfo_children():
+                w.destroy()
+            for r in fix.reasons:
+                good = fix.audio != "wrong"
+                tk.Label(box, text=r, bg=BG3, fg=FG_DIM if good else _WRONG_FG, padx=8, pady=2,
+                         font=(theme.FONT_FAMILY, 8)).pack(side="left", padx=(0, 4))
+
+        def _build_card(fix):
+            var = tk.BooleanVar(value=fix.checked)
+            card = tk.Frame(inner, bg=BG2, highlightthickness=1, highlightbackground=BORDER,
+                            cursor="hand2")
+            card.pack(fill="x", padx=12, pady=5)
+            top = tk.Frame(card, bg=BG2)
+            top.pack(fill="x", padx=14, pady=(10, 4))
+            ToggleSwitch(top, var, _update_title).pack(side="right")
+            tk.Label(top, text=f"{fix.line + 1}번째 줄", bg=BG2, fg=FG_DIM,
+                     font=(theme.FONT_FAMILY, 9)).pack(side="left")
+            tk.Label(top, text=f"   {fix.wrong}  →  {fix.right}", bg=BG2, fg=FG,
+                     font=(theme.FONT_FAMILY, 9, "bold")).pack(side="left")
+
+            before = self.subtitles[fix.line].get("text", "")
+            after = correction.apply([before], [correction.Fix(0, fix.wrong, fix.right, fix.kind)])[0]
+            body = tk.Frame(card, bg=BG2)
+            body.pack(fill="x", padx=14)
+            pos = correction.find_word(before, fix.wrong)
+            _text_line(body, before, fix.wrong, _WRONG_FG, pos).pack(fill="x")
+            _text_line(body, after, fix.right, _RIGHT_FG, pos).pack(fill="x", pady=(2, 0))
+            reasons = tk.Frame(card, bg=BG2)
+            reasons.pack(fill="x", padx=14, pady=(6, 10))
+            _fill_reasons(reasons, fix)
+            for w in (card, top, body) + tuple(body.winfo_children()):
+                w.bind("<Button-1>", lambda e, i=fix.line: self._goto_correction_line(i))
+            card.hidden = False
+            cards.append((fix, var, card, reasons))
+
+        def _update_title():
+            on = sum(1 for _, v, c, _ in cards if v.get() and not c.hidden)
+            shown = sum(1 for _, _, c, _ in cards if not c.hidden)
+            title_lbl.configure(text=f"교정 제안 {shown}건  ·  {on}건 선택")
+
+        for f in fixes:
+            _build_card(f)
+        _update_title()
+
+        # ── 음성으로 다시 확인 (미디어가 있을 때) ──
+        state = {"cancel": False}
+
+        def _audio_check():
+            items, targets = [], []
+            for fix, var, card, _ in cards:
+                t_s, t_e = (self._ts_cache[fix.line] if fix.line < len(self._ts_cache)
+                            else (None, None))
+                if t_s is None or t_e is None or fix.audio is not None:
+                    continue
+                items.append((t_s, t_e, fix.wrong, fix.right))
+                targets.append(fix)
+            if not items:
+                return
+            check_btn.configure(text="확인 중…")
+            mode = getattr(self, "_diarize_mode_init", None) or "accurate"
+            device = getattr(self, "_diarize_device_init", "auto")
+
+            def progress(n, total):
+                self.after(0, lambda: status_lbl.configure(text=f"음성 확인 중…  {n} / {total}"))
+
+            def work():
+                try:
+                    from .. import correction_audio
+                    results = correction_audio.verify(
+                        self.media_path, items, mode=mode, device=device,
+                        on_progress=progress, cancelled=lambda: state["cancel"])
+                    err = None
+                except ImportError:
+                    results, err = [], "음성 확인에는 자동 자막 기능(whisperx)이 설치돼 있어야 해요."
+                except Exception as e:
+                    results, err = [], f"음성 확인 중 오류가 났어요: {e}"
+                self.after(0, lambda: _audio_done(targets, results, err))
+            threading.Thread(target=work, daemon=True).start()
+
+        def _audio_done(targets, results, err):
+            if not win.winfo_exists():
+                return
+            check_btn.configure(text="음성으로 다시 확인")
+            if err:
+                status_lbl.configure(text=err, fg=_WRONG_FG)
+                return
+            right = wrong = 0
+            for fix, heard in zip(targets, results):
+                correction.apply_audio(fix, heard)
+                right += heard == "right"
+                wrong += heard == "wrong"
+            for fix, var, card, reasons in cards:
+                if fix.audio is None:
+                    continue
+                var.set(fix.checked)
+                _fill_reasons(reasons, fix)
+                if fix.audio == "wrong":   # 음성으로 원래 표기가 맞다고 확인되면 숨김
+                    card.pack_forget()
+                    card.hidden = True
+            status_lbl.configure(
+                text=f"음성 확인 완료  ·  바른 표기로 들림 {right}건, 원래대로 들림 {wrong}건 (숨김)",
+                fg=FG_DIM)
+            _update_title()
+
+        if getattr(self, "media_path", None):
+            check_btn = flat_button(right_box, "음성으로 다시 확인", _audio_check,
+                                    bg=theme.ON_BG, fg=theme.ON_FG, hover=theme.ON_BG_HOVER,
+                                    padx=14, pady=6)
+            check_btn.pack()
+        else:
+            tk.Label(right_box, text="미디어를 열면 음성으로\n다시 확인할 수 있어요",
+                     bg=BG, fg="#5A5A66", justify="right",
+                     font=(theme.FONT_FAMILY, 8)).pack()
+
+        # ── 하단 버튼 ─────────────────────────
         def _toggle_all():
-            on = not all(v.get() for _, v in rows)
-            for _, v in rows:
+            vis = [v for _, v, c, _ in cards if not c.hidden]
+            on = not all(v.get() for v in vis)
+            for v in vis:
                 v.set(on)
+            _update_title()
 
         def _apply():
-            chosen = [sg for sg, v in rows if v.get()]
+            chosen = [f for f, v, c, _ in cards if v.get() and not c.hidden]
+            _close()
             if not chosen:
-                win.destroy()
                 return
             changed = self._apply_corrections(chosen)
-            win.destroy()
-            messagebox.showinfo("자막 교정", f"{changed}개 자막을 교정했습니다.\n(실행 취소: Ctrl+Z)",
+            messagebox.showinfo("자막 교정", f"{changed}개 자막을 고쳤어요.\n(실행 취소: Ctrl+Z)",
                                 parent=self)
 
-        tk.Button(footer, text="전체 선택/해제", bg=BG3, fg=FG, relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9), padx=12, pady=5,
-                  activebackground=BG2, command=_toggle_all).pack(side="left")
-        tk.Button(footer, text="닫기", bg=BG3, fg=FG, relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9), padx=14, pady=5,
-                  activebackground=BG2, command=win.destroy).pack(side="right")
-        tk.Button(footer, text="선택 항목 적용", bg=ACCENT, fg="white", relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9, "bold"), padx=14, pady=5,
-                  activebackground="#7B5FB4", command=_apply).pack(side="right", padx=(0, 6))
+        def _close():
+            state["cancel"] = True
+            win.destroy()
+        win.protocol("WM_DELETE_WINDOW", _close)
+
+        flat_button(footer, "전체 켜기/끄기", _toggle_all, bg=BG3, hover="#33333C",
+                    padx=14, pady=6).pack(side="left")
+        flat_button(footer, "닫기", _close, bg=BG3, hover="#33333C",
+                    padx=16, pady=6).pack(side="right")
+        flat_button(footer, "선택한 줄 고치기", _apply, bg=ACCENT, fg="white", hover="#AE96E2",
+                    font=(theme.FONT_FAMILY, 9, "bold"), padx=16, pady=6
+                    ).pack(side="right", padx=(0, 8))
+
+        # 위치를 잡은 뒤 표시 (흰 창 번쩍임 방지)
+        win.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - win.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - win.winfo_reqheight()) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        try:
+            win.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+        win.deiconify()
+        _apply_dark_titlebar(win)
+        win.after(40, lambda: win.winfo_exists() and win.attributes("-alpha", 1.0))
+        win.grab_set()
 
     def _goto_correction_line(self, idx):
         if 0 <= idx < len(self.subtitles):
             self._scroll_to_row(idx)
             self._select_row(idx, seek=False)
 
-    def _apply_corrections(self, suggestions):
-        """제안을 적용하고 바뀐 자막 수를 반환. 한 번의 실행 취소로 되돌릴 수 있다."""
+    def _apply_corrections(self, fixes):
+        """제안을 해당 줄에만 적용하고 바뀐 자막 수를 반환. 한 번의 실행 취소로 되돌릴 수 있다."""
         texts = [s.get("text", "") for s in self.subtitles]
-        fixed = correction.apply(texts, suggestions)
+        fixed = correction.apply(texts, fixes)
         changed = [i for i, (a, b) in enumerate(zip(texts, fixed)) if a != b]
         if not changed:
             return 0

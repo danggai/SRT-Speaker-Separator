@@ -1,4 +1,4 @@
-"""자동 자막 오프라인 교정 제안 (반복 단어 통일, 고유명사 사전). GUI 없음."""
+"""자동 자막 오프라인 교정 제안 (비슷한 표기 후보 + 문맥 근거 점수). GUI 없음."""
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -96,20 +96,25 @@ def _is_candidate(base):
     return len(base) >= 2 and base not in _COMMON and base[-1] not in _PREDICATE_END
 
 
+SHOW_SCORE = 2      # 이 점수 이상만 보여 줌
+CHECK_SCORE = 3     # 이 점수 이상은 미리 체크
+NEAR_LINES = 10     # 이 줄 수 안에 바른 표기가 나오면 문맥 근거
+
+
 @dataclass
-class Suggestion:
-    kind: str                 # "repeat"(반복 단어 통일) | "dict"(고유명사 사전)
+class Fix:
+    """한 줄에서의 교정 제안 (근거와 점수 포함)."""
+    line: int                 # 자막 인덱스
     wrong: str                # 바꿀 표기 (조사 뗀 형태)
     right: str                # 바꿀 표기
-    count: int                # wrong이 나온 횟수
-    right_count: int = 0      # right가 나온 횟수 (반복 단어 통일 근거)
-    lines: list = field(default_factory=list)   # wrong이 나온 자막 인덱스
+    kind: str                 # "repeat"(반복 표기) | "dict"(고유명사 사전)
+    score: int = 0
+    reasons: list = field(default_factory=list)
+    audio: str = None         # 음성 확인 결과: "right" | "wrong" | None
 
     @property
-    def reason(self):
-        if self.kind == "dict":
-            return "고유명사 사전"
-        return f"'{self.right}' {self.right_count}회 / '{self.wrong}' {self.count}회"
+    def checked(self):
+        return self.score >= CHECK_SCORE
 
 
 def _occurrences(texts):
@@ -131,56 +136,134 @@ def _occurrences(texts):
     return counts, whole, lines
 
 
-def suggest(texts, proper_nouns=(), min_right=3, max_wrong=2, ratio=3):
-    """교정 제안 목록 생성."""
+def _tokens(text):
+    """[(조사 뗀 형태, 붙은 조사·호칭)] 목록."""
+    return [split_josa(m.group()) for m in _TOKEN_RE.finditer(text or "")]
+
+
+def _contexts(texts):
+    """형태별 문맥: {형태: [(줄, 앞 단어, 뒤 단어, 붙은 말)]}. 조사 뗀 형태와 단어 전체 둘 다 기록."""
+    ctx = defaultdict(list)
+    for i, t in enumerate(texts):
+        words = [m.group() for m in _TOKEN_RE.finditer(t or "")]
+        toks = [split_josa(w) for w in words]
+        for k, (base, suffix) in enumerate(toks):
+            prev = toks[k - 1][0] if k > 0 else ""
+            nxt = toks[k + 1][0] if k + 1 < len(toks) else ""
+            ctx[base].append((i, prev, nxt, suffix))
+            if words[k] != base:   # '아홀로'처럼 조사로 잘못 잘릴 수 있는 단어 전체도
+                ctx[words[k]].append((i, prev, nxt, ""))
+    return ctx
+
+
+def _name_suffix(occ):
+    """이름 뒤 호칭 ('루파씨' 또는 '루파 씨')."""
+    _, _, nxt, suffix = occ
+    if suffix[:1] in _NAME_SUFFIX:
+        return suffix[:1]
+    return nxt if nxt in _NAME_SUFFIX else ""
+
+
+def _score(fix, occ, right_ctx, n_wrong, n_right):
+    """문맥 근거로 점수와 이유를 채운다."""
+    line, prev, nxt, suffix = occ
+    if fix.kind == "dict":
+        fix.score += 1
+        fix.reasons.append("고유명사 사전에 있음")
+    elif n_right >= 2 * n_wrong:
+        fix.score += 1
+        fix.reasons.append(f"'{fix.right}' {n_right}회 · '{fix.wrong}' {n_wrong}회")
+    if right_ctx:
+        d = min(abs(line - r[0]) for r in right_ctx)
+        if d <= NEAR_LINES:
+            fix.score += 2
+            fix.reasons.append(f"{d}줄 거리에 '{fix.right}'" if d else f"같은 줄에 '{fix.right}'")
+        shared = []
+        if prev and any(r[1] == prev for r in right_ctx):
+            shared.append(f"앞말 '{prev}'")
+        if nxt and any(r[2] == nxt for r in right_ctx):
+            shared.append(f"뒷말 '{nxt}'")
+        if shared:
+            fix.score += min(2, len(shared))
+            fix.reasons.append(f"'{fix.right}'와 문맥 같음 ({', '.join(shared)})")
+    hon = _name_suffix(occ)
+    if hon and (fix.kind == "dict" or right_ctx):
+        fix.score += 1
+        fix.reasons.append(f"호칭 '{hon}'가 붙음")
+
+
+def suggest(texts, proper_nouns=(), min_right=3, max_wrong=2):
+    """줄별 교정 제안. 글자가 비슷한 후보 중 문맥 근거가 충분한 것만 남긴다."""
     counts, whole, lines = _occurrences(texts)
+    ctx = _contexts(texts)
     dict_words = [w.strip() for w in proper_nouns if w and w.strip()]
     dict_set = set(dict_words)
-    out, taken = [], set()
+    pairs = {}   # wrong → (right, kind)
 
-    # 1) 고유명사 사전 (조사 떼기 전 단어 전체도 비교)
-    forms = {}
-    for word, n in whole.items():
-        forms.setdefault(word, n)
-    for base, n in counts.items():
-        forms.setdefault(base, n)
-    for form, n in forms.items():
-        if form in dict_set or form in taken or len(form) < 2:
+    # 후보 1) 고유명사 사전과 비슷한 표기 (조사 뗀 형태와 단어 전체 모두 비교)
+    for base in list(counts) + [w for w in whole if w not in counts]:
+        if base in dict_set or base in pairs or len(base) < 2:
             continue
-        jf = to_jamo(form)
+        jb = to_jamo(base)
         for w in dict_words:
-            if len(w) != len(form):
+            if len(w) != len(base):
                 continue
             lim = _allowed_jamo_diff(len(w))
-            if _distance(jf, to_jamo(w), lim) <= lim:
-                out.append(Suggestion("dict", form, w, n, whole.get(w, 0) + counts.get(w, 0),
-                                      lines[form]))
-                taken.add(form)
-                taken.add(split_josa(form)[0])
+            if _distance(jb, to_jamo(w), lim) <= lim:
+                pairs[base] = (w, "dict")
                 break
 
-    # 2) 반복 단어 통일
+    # 후보 2) 자주 나온 표기와 비슷한 드문 표기
     def name_like(b):
-        return any(w.startswith(b + s) for w in whole for s in _NAME_SUFFIX)
+        return any(_name_suffix(o) for o in ctx.get(b, []))
 
     frequent = [b for b, n in counts.items()
                 if n >= min_right and _is_candidate(b) and (len(b) >= 3 or name_like(b))]
     for base, n in counts.items():
-        if base in taken or n > max_wrong or not _is_candidate(base):
+        if base in pairs or n > max_wrong or not _is_candidate(base):
             continue
         jb = to_jamo(base)
         lim = _allowed_jamo_diff(len(base))
         best = None
         for f in frequent:
-            if f == base or len(f) != len(base) or counts[f] < ratio * n:
+            # 바른 쪽이 더 많이 나오기만 하면 후보로 두고, 실제 추천 여부는 문맥 점수로 정함
+            if f == base or len(f) != len(base) or counts[f] <= n:
                 continue
             if _distance(jb, to_jamo(f), lim) <= lim and (best is None or counts[f] > counts[best]):
                 best = f
         if best:
-            out.append(Suggestion("repeat", base, best, n, counts[best], lines[base]))
+            pairs[base] = (best, "repeat")
 
-    out.sort(key=lambda s: (s.kind != "dict", -s.right_count, s.wrong))
+    out = []
+    for wrong, (right, kind) in pairs.items():
+        for occ in ctx.get(wrong, []):
+            fix = Fix(occ[0], wrong, right, kind)
+            n_wrong = counts.get(wrong) or whole.get(wrong, 0)
+            n_right = counts.get(right) or whole.get(right, 0)
+            _score(fix, occ, ctx.get(right, []), n_wrong, n_right)
+            if fix.score >= SHOW_SCORE:
+                out.append(fix)
+    out.sort(key=lambda f: (f.line, -f.score))
     return out
+
+
+def find_word(text, base):
+    """text에서 조사 뗀 형태가 base인 첫 단어의 위치 (없으면 -1)."""
+    for m in _TOKEN_RE.finditer(text or ""):
+        if m.group() == base or split_josa(m.group())[0] == base:
+            return m.start()
+    return -1
+
+
+def apply_audio(fix, heard):
+    """음성 재확인 결과 반영. heard: 'right' | 'wrong' | None."""
+    fix.audio = heard
+    if heard == "right":
+        fix.score += 3
+        fix.reasons.insert(0, f"음성으로 다시 들어 보니 '{fix.right}'")
+    elif heard == "wrong":
+        fix.score = 0
+        fix.reasons.insert(0, f"음성으로 다시 들어 보니 '{fix.wrong}' 그대로")
 
 
 # 받침 유무에 따라 바뀌는 조사: (받침 있을 때, 없을 때)
@@ -201,20 +284,25 @@ def _fit_josa(word, josa):
     return josa
 
 
-def apply(texts, suggestions):
-    """선택된 제안을 적용한 새 텍스트 목록. 단어 부분만 바꾸고 조사는 받침에 맞춘다."""
-    table = {s.wrong: s.right for s in suggestions}
-    if not table:
-        return list(texts)
+def apply(texts, fixes):
+    """선택된 제안을 해당 줄에만 적용한 새 텍스트 목록. 조사는 받침에 맞춘다."""
+    by_line = defaultdict(dict)
+    for f in fixes:
+        by_line[f.line][f.wrong] = f.right
+    out = list(texts)
+    for i, table in by_line.items():
+        if not (0 <= i < len(out)):
+            continue
 
-    def fix(m):
-        word = m.group()
-        if word in table:          # 단어 전체가 바꿀 대상 (예: '아훌로' → '아홀로')
-            return table[word]
-        base, josa = split_josa(word)
-        if base not in table:
-            return word
-        right = table[base]
-        return right + _fit_josa(right, josa)
+        def fix(m, table=table):
+            word = m.group()
+            if word in table:
+                return table[word]
+            base, josa = split_josa(word)
+            if base not in table:
+                return word
+            right = table[base]
+            return right + _fit_josa(right, josa)
 
-    return [_TOKEN_RE.sub(fix, t or "") for t in texts]
+        out[i] = _TOKEN_RE.sub(fix, out[i] or "")
+    return out
