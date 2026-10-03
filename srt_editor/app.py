@@ -317,10 +317,9 @@ class SRTEditor(
                            cursor="hand2")
             cv.pack(side=side, padx=1, pady=5)
             rounded_rect(cv, 1, 1, w - 2, _TB_H - 2, ON_RADIUS, fill=bg, outline=bg, tags="box")
-            cv.create_text(w / 2, _ICON_H / 2 + 5, text=icon, fill=fg_hover if bg == TB_BG else fg,
-                           font=_ifont)
-            cv.create_text(w / 2, _TB_H - 7 - _lfont.metrics("linespace") / 2, text=label,
-                           fill=fg, font=_lfont, tags="label")
+            cv.create_text(0, 0, text=icon, fill=fg_hover if bg == TB_BG else fg,
+                           font=_ifont, tags="icon")
+            cv.create_text(0, 0, text=label, fill=fg, font=_lfont, tags="label")
             cv.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
                                 tags="hintbg")
             cv.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne", font=_hfont, tags="hint")
@@ -338,6 +337,11 @@ class SRTEditor(
                 cv.itemconfigure("label", fill=lfg)
 
             def _layout():
+                # 아이콘+이름 묶음을 세로 가운데에 (단축키 표시 중이면 모든 버튼을 조금 아래로)
+                il, ll = _ifont.metrics("linespace"), _lfont.metrics("linespace")
+                top = (_TB_H - (il + ll)) / 2 + (4 if getattr(self, "_key_hints_on", False) else 0)
+                cv.coords("icon", w / 2, top + il / 2)
+                cv.coords("label", w / 2, top + il + ll / 2)
                 cv.coords("hint", w - 5, 2)
                 bb = cv.bbox("hint") if cv.itemcget("hint", "text") else None
                 if bb and bb[0] < 3:   # 버튼 폭을 넘으면 가운데 정렬해 잘리지 않게
@@ -504,12 +508,11 @@ class SRTEditor(
     def _apply_key_hints(self, on):
         """주요 버튼 우상단에 단축키 배지를 띄우거나 숨긴다 (버튼 크기는 그대로)."""
         self._key_hints_on = on
-        for label, key in self._TB_KEY_HINTS.items():
-            ic = self._tb_icons.get(label)
-            if ic is not None:
-                ic.itemconfigure("hint", text=key if on else "")
-                ic.itemconfigure("hintbg", state="normal" if on else "hidden")
-                ic.relayout()
+        for label, ic in self._tb_icons.items():
+            key = self._TB_KEY_HINTS.get(label, "")
+            ic.itemconfigure("hint", text=key if on else "")
+            ic.itemconfigure("hintbg", state="normal" if on and key else "hidden")
+            ic.relayout()
         for badge in getattr(self, "_key_badges", []):
             badge.destroy()
         self._key_badges = []
