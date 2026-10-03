@@ -15,6 +15,7 @@ from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
 from . import theme
 from .config import _load_config
+from .ime import ImeCompositionOverlay
 from .media import MEDIA_EXTS, MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
 from .theme import (
@@ -115,6 +116,8 @@ class SRTEditor(
         self._build_styles()
         self._build_ui()
         self._setup_dnd()        # 드래그 앤 드롭
+        # Windows에서 한글 조합 중인 글자가 입력창에 바로 보이도록
+        self._ime_overlay = ImeCompositionOverlay(self)
 
         # 업데이트 체크 (백그라운드, 앱 시작 3초 후)
         self.after(3000, self._check_update_async)
