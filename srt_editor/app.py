@@ -432,10 +432,15 @@ class SRTEditor(
                  text="지원: .srt  ·  " + " ".join(e.lstrip(".") for e in MEDIA_EXTS),
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(pady=(8, 0))
 
+        # 최근 파일 (홈 화면이 보일 때마다 갱신)
+        self._recent_box = tk.Frame(card, bg=BG2)
+
         tut = tk.Label(card, text="튜토리얼 다시 보기", bg=BG2, fg=ACCENT,
                        cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
         tut.pack(pady=(14, 0))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
+        self._tut_link = tut
+        self._render_recent_files()
 
     @property
     def _unsaved(self):
@@ -469,7 +474,37 @@ class SRTEditor(
     def _hide_overlay(self):
         self.overlay.place_forget()
 
+    def _render_recent_files(self):
+        """홈 화면의 최근 파일 목록을 다시 그린다."""
+        import os
+        box = self._recent_box
+        for w in box.winfo_children():
+            w.destroy()
+        paths = self._recent_files()
+        if not paths:
+            box.pack_forget()
+            return
+        box.pack(fill="x", pady=(18, 0), before=self._tut_link)
+        tk.Label(box, text="최근 파일", bg=BG2, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 4))
+        for p in paths:
+            row = tk.Frame(box, bg=BG2, cursor="hand2")
+            row.pack(fill="x")
+            name = tk.Label(row, text=os.path.basename(p), bg=BG2, fg=FG, cursor="hand2",
+                            font=(theme.FONT_FAMILY, 10), anchor="w")
+            name.pack(side="left", padx=(8, 8), pady=3)
+            folder = tk.Label(row, text=os.path.dirname(p), bg=BG2, fg=FG_DIM, cursor="hand2",
+                              font=(theme.FONT_FAMILY, 8), anchor="w")
+            folder.pack(side="left", fill="x", expand=True)
+            parts = (row, name, folder)
+            for w in parts:
+                w.bind("<Enter>", lambda e, ps=parts: [x.configure(bg=BG3) for x in ps])
+                w.bind("<Leave>", lambda e, ps=parts: [x.configure(bg=BG2) for x in ps])
+                w.bind("<Button-1>", lambda e, path=p: self._open_paths([path]))
+            Tooltip(name, p, delay=500)
+
     def _show_overlay(self):
+        self._render_recent_files()
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.overlay.lift()
 

@@ -6,6 +6,7 @@ from tkinter import filedialog
 from tkinter import messagebox
 
 from .. import srt_io
+from ..config import _load_config, _save_config
 from ..media import MEDIA_EXTS, MEDIA_PATTERN
 from ..widgets import show_toast
 from ..srt_io import (
@@ -84,6 +85,23 @@ class FileMixin:
         if path:
             self._open_paths([path])
 
+    _MAX_RECENT_FILES = 5
+
+    def _add_recent_file(self, path):
+        """최근 파일 목록 맨 앞에 추가 (임시 폴더의 파일은 제외)."""
+        import tempfile
+        path = os.path.abspath(path)
+        if os.path.dirname(path) == os.path.abspath(tempfile.gettempdir()):
+            return
+        cfg = _load_config()
+        recent = [p for p in cfg.get("recent_files", []) if p != path]
+        cfg["recent_files"] = [path] + recent[:self._MAX_RECENT_FILES - 1]
+        _save_config(cfg)
+
+    def _recent_files(self):
+        """존재하는 최근 파일 목록."""
+        return [p for p in _load_config().get("recent_files", []) if os.path.isfile(p)]
+
     def _open_paths(self, paths):
         """열기·드래그 앤 드롭 공용: SRT는 바로, 미디어만이면 동명 SRT 또는 자동 생성."""
         srt_paths   = [p for p in paths if p.lower().endswith(".srt")]
@@ -116,6 +134,7 @@ class FileMixin:
 
         self.filepath  = path
         self.save_path = path
+        self._add_recent_file(path)
         # 다른 파일의 편집 기록으로 실행 취소되지 않도록 기록을 비운다
         self._undo_stack = []
         self._redo_stack = []
@@ -231,6 +250,7 @@ class FileMixin:
             write_srt_tagged(self.subtitles, path, meta or None)
             self._unsaved = False
             self.save_path = path
+            self._add_recent_file(path)
             _fn = os.path.splitext(os.path.basename(path))[0]
             self._set_doc_title(_fn)
             self._update_title("  ✓")
