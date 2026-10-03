@@ -198,7 +198,8 @@ class SpeakerMixin:
         name_var = tk.StringVar(value=name)
 
         # 단축키 배지·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
-        badge = tk.Canvas(row, width=20, height=20, bg=_ROW_BG, highlightthickness=0)
+        badge = tk.Canvas(row, width=20, height=20, bg=_ROW_BG, highlightthickness=0,
+                          cursor="hand2")
         badge.create_image(0, 0, anchor="nw", image=rounded_rect_image(20, 20, 5, _KEY_BG))
         badge.create_text(10, 10, text=str(i + 1) if i < 9 else "", fill=_KEY_FG,
                           font=(theme.FONT_FAMILY, 9, "bold"), tags="key")
@@ -285,7 +286,7 @@ class SpeakerMixin:
                    if getattr(self, "_spk_edit_row", None) is r else None)
         entry.bind("<KeyPress>", _on_entry_key)
 
-        for widget in [row, hl, cnt_lbl]:
+        for widget in [row, hl, cnt_lbl, badge]:
             widget.bind("<Button-1>",
                 lambda e, r=row: self._assign_speaker_from_sidebar(r._spk_name))
 
