@@ -43,7 +43,7 @@ jobs:
       - name: Build EXE
         run: |
           python -m srt_editor.app_icon icon.ico
-          pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico srt_speaker_separator.py
+          pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico --hidden-import fractions --hidden-import decimal --hidden-import dataclasses --hidden-import inspect --hidden-import numbers --hidden-import dis srt_speaker_separator.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

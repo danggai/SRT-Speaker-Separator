@@ -17,6 +17,7 @@ from .ui.correct import CorrectionMixin
 from .ui.tutorial import TutorialMixin
 from .ui.shortcuts import ShortcutsMixin
 from .ui.options import OptionsMixin
+from .ui.video_win import VideoMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
@@ -64,6 +65,7 @@ class SRTEditor(
     TutorialMixin,
     ShortcutsMixin,
     OptionsMixin,
+    VideoMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -195,11 +197,14 @@ class SRTEditor(
         self.bind("A", self._add_subtitle_shortcut)
         self.bind("s", self._split_subtitle_shortcut)
         self.bind("S", self._split_subtitle_shortcut)
+        self.bind("v", self._toggle_video)
+        self.bind("V", self._toggle_video)
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
             self.bind("ㅁ", self._add_subtitle_shortcut)
             self.bind("ㅡ", self._mute_shortcut)
+            self.bind("ㅍ", self._toggle_video)
         except tk.TclError:
             pass
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -410,6 +415,7 @@ class SRTEditor(
         _sep()
         _tool("🎙", "화자 분석", self._open_diarize_dialog, "화자 자동 분석")
         _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
+        _tool("🎬", "영상", self._toggle_video, "영상 창 열기/닫기  [V]")
         _sep()
         _tool("⌂", "홈으로", self._close_to_home, "파일 닫고 처음 화면으로")
 
@@ -525,7 +531,7 @@ class SRTEditor(
     # 버튼 우상단에 표시할 단축키
     _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
                      "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y",
-                     "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V"}
+                     "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V", "영상": "V"}
 
     def _toggle_key_hints(self):
         on = not getattr(self, "_key_hints_on", False)

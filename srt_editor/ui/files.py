@@ -304,10 +304,13 @@ class FileMixin:
 
         threading.Thread(target=_fetch, daemon=True).start()
 
-        # 파형 추출 시작
+        # 파형 추출 시작 (영상은 소리를 뽑은 뒤)
         self._waveform_pts = []
         self._pb_redraw()
-        self._extract_waveform(path)
+        if self._is_video():
+            self._prepare_video_audio(path)
+        else:
+            self._extract_waveform(path)
 
     # ── 전체 저장 ─────────────────────────────
     def _do_write_srt(self, path):
