@@ -749,3 +749,11 @@ def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10,
     """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
     return FlatButton(parent, text, command, bg, fg=fg, hover=hover, font=font,
                       padx=padx, pady=pady)
+
+
+def rounded_rect(canvas, x0, y0, x1, y1, r, **kw):
+    """캔버스에 둥근 모서리 사각형을 그린다."""
+    return canvas.create_polygon(
+        x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+        x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0,
+        smooth=True, **kw)

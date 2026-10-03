@@ -30,13 +30,18 @@ from .theme import (
     FG,
     FG_DIM,
     MEDIA_BG,
+    ON_BG,
+    ON_BG_HOVER,
+    ON_BORDER,
+    ON_FG,
+    ON_RADIUS,
     ROW_EVEN,
     ROW_SEL,
     _apply_dark_titlebar,
     _pick_font,
 )
 from .version import APP_VERSION, GITHUB_TAGS_URL
-from .widgets import Tooltip, flat_button
+from .widgets import Tooltip, flat_button, rounded_rect
 
 
 _BADGE_BG = "#2B2838"   # 단축키 배지 배경
@@ -359,6 +364,39 @@ class SRTEditor(
             box._label = tx
             return box
 
+        def _toggle_tool(icon, label, cmd, tip, side="right"):
+            """켜짐 상태를 둥근 테두리와 연한 배경으로 보여 주는 툴바 토글 버튼."""
+            import tkinter.font as tkfont
+            ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
+            lfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=8)
+            w = max(ifont.measure(icon) + 24, lfont.measure(label) + 16)
+            h = ifont.metrics("linespace") + 10 + lfont.metrics("linespace") + 9   # 다른 툴바 버튼과 같은 높이
+            cv = tk.Canvas(top, width=w, height=h, bg=TB_BG, highlightthickness=0, cursor="hand2")
+            cv.pack(side=side, padx=1, pady=5)
+            rounded_rect(cv, 1, 1, w - 2, h - 2, ON_RADIUS, fill=TB_BG, outline=TB_BG, tags="box")
+            iy = (ifont.metrics("linespace") + 10) / 2 + 5
+            cv.create_text(w / 2, iy, text=icon, fill=FG, font=ifont)
+            cv.create_text(w / 2, h - 7 - lfont.metrics("linespace") / 2, text=label,
+                           fill=FG_DIM, font=lfont, tags="label")
+            state = {"on": False, "hover": False}
+
+            def _paint():
+                on, hv = state["on"], state["hover"]
+                fill = (ON_BG_HOVER if hv else ON_BG) if on else (TB_HOVER if hv else TB_BG)
+                cv.itemconfigure("box", fill=fill, outline=ON_BORDER if on else fill)
+                cv.itemconfigure("label", fill=ON_FG if on else (FG if hv else FG_DIM))
+
+            def _set_on(on):
+                state["on"] = on
+                _paint()
+            cv.set_on = _set_on
+            cv.bind("<Enter>", lambda e: (state.update(hover=True), _paint()))
+            cv.bind("<Leave>", lambda e: (state.update(hover=False), _paint()))
+            cv.bind("<Button-1>", lambda e: _defocus(cmd)())
+            Tooltip(cv, tip, delay=500)
+            self._tb_btns[label] = cv
+            return cv
+
         def _sep(side="left"):
             tk.Frame(top, bg="#34343C", width=1).pack(side=side, fill="y", padx=6, pady=12)
 
@@ -383,7 +421,7 @@ class SRTEditor(
                                  side="right", bg="#5B3FA0", hover="#6B4DB4",
                                  fg="white", fg_hover="white")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
-        _tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기", side="right")
+        _toggle_tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기")
         _sep(side="right")
 
         # 미지정 카운터
@@ -521,9 +559,8 @@ class SRTEditor(
                            lambda e, w=widget: w.event_generate("<ButtonRelease-1>", x=1, y=1))
                 self._key_badges.append(badge)
         toggle = self._tb_btns.get("단축키")
-        if toggle is not None:   # 켜져 있으면 이름을 강조색으로
-            toggle._fg = ACCENT if on else FG_DIM
-            toggle._label.configure(fg=toggle._fg)
+        if toggle is not None:   # 켜짐: 둥근 테두리 + 연한 배경
+            toggle.set_on(on)
 
     def _set_doc_title(self, name):
         """창 제목에 표시할 파일 이름을 바꾼다 (None이면 앱 이름만)."""

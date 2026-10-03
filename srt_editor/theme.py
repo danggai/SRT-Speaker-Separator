@@ -70,6 +70,13 @@ ROW_SEL   = "#2D2040"   # 선택 시 연보라 tint (Treeview용)
 ROW_HL    = "#221A35"   # 행 하이라이트 배경 (아주 연한 보라)
 MEDIA_BG  = "#111111"
 
+# 켜짐(ON) 상태 공통 스타일: 얇은 둥근 테두리 + 연한 보라 배경
+ON_BG       = "#2A2740"
+ON_BG_HOVER = "#33304A"
+ON_BORDER   = "#6E5AA8"
+ON_FG       = ACCENT
+ON_RADIUS   = 6
+
 
 def _pick_font(root=None):
     """시스템에서 한글 지원 폰트를 찾아 반환.
