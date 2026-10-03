@@ -209,6 +209,8 @@ def reset_app():
     app._undo_stack, app._redo_stack = [], []
     app._clipboard = []
     app._auto_kept = {}
+    app._col_w = dict(app._COL_DEF_W)
+    app.canvas.event_generate("<Leave>")   # 앞 테스트가 남긴 '마우스 아래 항목' 제거
     app._auto_color_cache = None
     app._selection_anchor = None
     app._set_volume(80, save=False)
@@ -296,8 +298,11 @@ def press(btn):
 
 def key(widget, seq, wait=0.1):
     """키 이벤트는 포커스가 있는 창에만 가므로 포커스를 준 뒤 보낸다."""
-    widget.focus_force()
-    pump(0.05)
+    for _ in range(5):
+        widget.focus_force()
+        pump(0.05)
+        if widget.focus_get() is widget:
+            break
     widget.event_generate(seq)
     pump(wait)
 
@@ -345,8 +350,8 @@ def click_row(app, di, col="num", ctrl=False, shift=False):
     pump(0.05)
     s = slot_of(app, di)
     expect(s is not None, f"{di}번 줄이 화면에 안 보여요")
-    y = s * app.ROW_H + app.ROW_H // 2
     c = app.canvas
+    y = s * app.ROW_H + app.ROW_H // 2 - int(c.canvasy(0))
     state = (0x4 if ctrl else 0) | (0x1 if shift else 0)
     if shift:
         app._canvas_shift_press(Ev(c, col_x(app, col), y, state))

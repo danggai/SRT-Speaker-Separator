@@ -167,7 +167,7 @@ def add_speaker_default_names_and_inline_rename(app):
     app.add_speaker()
     app.add_speaker()
     eq(app.speakers[2:], ["새화자1", "새화자2"], "기본 이름")
-    wait_until(lambda: app._spk_edit_row is not None, 3, "이름 편집 모드")
+    wait_until(lambda: app._spk_edit_row is not None and app._spk_edit_row._spk_name == "새화자2", 3, "이름 편집 모드")
     row = app._spk_edit_row
     eq(row._spk_name, "새화자2", "방금 추가한 화자가 편집 상태")
     row._name_var.set("수진")

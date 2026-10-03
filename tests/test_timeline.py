@@ -357,11 +357,10 @@ def space_key_toggles_playback_but_not_while_typing(app):
     expect(app.player.is_playing, "스페이스로 재생")
     app_key("<space>")
     expect(not app.player.is_playing, "스페이스로 일시정지")
+    app._media_stop()
     from harness import key
-    click_content = app._slot_widgets
-    from harness import click_row
-    click_row(app, 2, "content")
-    ent = app._slot_widgets[[i for i, d in enumerate(app._slot_data) if d == 2][0]]["content"]
+    from test_table import begin_text_edit
+    ent = begin_text_edit(app, 2)
     key(ent, "<space>")
     expect(not app.player.is_playing, "글자를 입력하는 중에는 스페이스가 재생을 시작하면 안 돼요")
     app._media_stop()
