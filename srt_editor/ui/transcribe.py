@@ -8,6 +8,7 @@ from tkinter import messagebox
 
 from .. import theme
 from ..config import _add_recent_token, _load_config, _save_config
+from ..srt_io import format_srt_time
 from ..speech import (
     _DEFAULT_ASR_MODE,
     _DIARIZE_BATCH_MAP,
@@ -468,11 +469,6 @@ class TranscribeMixin:
                 _set("자막 변환 중...", 95)
 
 
-                def _fmt_ts(sec):
-                    h=int(sec//3600); m=int((sec%3600)//60)
-                    s=int(sec%60);   ms=int((sec%1)*1000)
-                    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
                 # 한국어 종결어미(대략적인 문장/절 경계 판단용).
                 # 정확한 형태소 분석은 아니지만, 흔한 종결 패턴을 폭넓게
                 # 커버해 "글자 수만 꽉 채우고 뚝 끊기"보다 자연스러운
@@ -635,7 +631,7 @@ class TranscribeMixin:
                             if text[-1] in ".。":
                                 text = text[:-1].rstrip()
                     srt_lines.append(str(i))
-                    srt_lines.append(f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}")
+                    srt_lines.append(f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}")
                     if spk:
                         srt_lines.append(f"[{spk}] {text}")
                     else:

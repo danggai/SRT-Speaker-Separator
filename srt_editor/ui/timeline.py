@@ -4,6 +4,7 @@ import tkinter as tk
 
 from .. import theme
 from ..config import _load_config, _save_config
+from ..srt_io import format_srt_time
 from ..theme import ACCENT, BG2, FG, FG_DIM, MEDIA_BG
 from ..widgets import IconButton, Tooltip, flat_button
 
@@ -1029,11 +1030,7 @@ class TimelineMixin:
                 else:
                     t_s = drag.get("t_s", self._ts_cache[idx][0])
                     t_e = drag.get("t_e", self._ts_cache[idx][1])
-                    def _fmt_ts(sec):
-                        h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
-                        ms=int(round((sec%1)*1000))
-                        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-                    new_ts = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
+                    new_ts = f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}"
                     if self.subtitles[idx].get("timestamp") != new_ts:
                         self.subtitles[idx]["timestamp"] = new_ts
                         self._ts_cache[idx] = (t_s, t_e)

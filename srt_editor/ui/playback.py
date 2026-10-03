@@ -1,7 +1,8 @@
 """재생 제어, 키보드 이동, 재생 위치 하이라이트."""
-import re
 import tkinter as tk
 from tkinter import ttk
+
+from ..srt_io import format_srt_time, parse_srt_time
 
 
 class PlaybackMixin:
@@ -9,13 +10,10 @@ class PlaybackMixin:
 
     # ── 미디어 컨트롤 ────────────────────────
     def _on_space_key(self, event):
-        """스페이스바: 자막 내용 Entry 편집 중이면 무시, 그 외 재생/정지."""
+        """스페이스바: 글자 입력칸 편집 중이면 무시, 그 외 재생/정지."""
         focused = self.focus_get()
-        # 자막 content Entry 편집 중이면 스페이스 통과
-        if isinstance(focused, tk.Entry):
-            for wi in self._slot_widgets:
-                if wi.get("content") is focused:
-                    return
+        if isinstance(focused, (tk.Entry, tk.Text)):
+            return
         # 버튼에 포커스가 있으면 앱으로 돌려서 이중 호출 방지
         if isinstance(focused, (tk.Button, ttk.Button)):
             self.focus_set()
@@ -262,11 +260,7 @@ class PlaybackMixin:
     @staticmethod
     def _ts_to_sec(ts_str):
         """'HH:MM:SS,mmm' 또는 'HH:MM:SS.mmm' → float 초. 실패 시 None."""
-        m = re.match(r"(\d+):(\d+):(\d+)[,.](\d+)", ts_str.strip())
-        if not m:
-            return None
-        h, mi, s, ms = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
-        return h * 3600 + mi * 60 + s + ms / 1000.0
+        return parse_srt_time(ts_str)
 
     def _get_rows_at(self, pos_sec):
         """현재 재생 위치(초)에 해당하는 자막 행 인덱스 집합 반환.
@@ -358,14 +352,8 @@ class PlaybackMixin:
 
     @staticmethod
     def _sec_to_srt_ts(sec):
-        """초 단위 시간을 자막 시작/종료시간과 동일한 SRT 타임스탬프
-        형식(00:00:00,000)으로 변환."""
-        sec = max(0.0, sec)
-        h = int(sec // 3600)
-        m = int((sec % 3600) // 60)
-        s = int(sec % 60)
-        ms = int(round((sec % 1) * 1000))
-        return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+        """초 → SRT 타임스탬프 (자막 시작/종료시간과 같은 형식)."""
+        return format_srt_time(sec)
 
     def _copy_current_time(self, event=None):
         """현재 재생 위치 라벨 클릭 — 자막 시작/종료시간과 동일한 형식으로

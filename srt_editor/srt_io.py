@@ -41,8 +41,28 @@ def display_to_regex(display: str) -> str:
 # ─────────────────────────────────────────────
 #  SRT 파싱 / 저장
 # ─────────────────────────────────────────────
+def format_srt_time(sec):
+    """초 → 'HH:MM:SS,mmm' (음수는 0으로, 밀리초를 먼저 반올림해 '01,1000' 같은 값이 안 나오게)."""
+    total = int(round(max(0.0, sec) * 1000))
+    h, rem = divmod(total, 3600000)
+    m, rem = divmod(rem, 60000)
+    s, ms = divmod(rem, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+_TIME_RE = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)")
+
+
+def parse_srt_time(ts):
+    """'HH:MM:SS,mmm' 또는 'HH:MM:SS.mmm' → 초(float). 형식이 틀리면 None."""
+    m = _TIME_RE.match((ts or "").strip())
+    if not m:
+        return None
+    h, mi, s, frac = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+    return h * 3600 + mi * 60 + s + float("0." + frac)
+
+
 def parse_srt(filepath, pattern=None):
-    global g_speaker_pattern
     pat = pattern if pattern is not None else g_speaker_pattern
     with open(filepath, "r", encoding="utf-8-sig") as f:
         content = f.read()
@@ -50,6 +70,8 @@ def parse_srt(filepath, pattern=None):
     subs = []
     for block in blocks:
         lines = block.strip().splitlines()
+        if len(lines) == 2 and "-->" in lines[1]:   # 텍스트가 빈 자막도 버리지 않음
+            lines.append("")
         if len(lines) < 3:
             continue
         timestamp = lines[1].strip()
@@ -80,7 +102,6 @@ def write_srt(subtitles, filepath):
 
 
 def write_srt_tagged(subtitles, filepath, meta: dict = None):
-    global g_display_pattern
     lines = []
     for i, sub in enumerate(subtitles, start=1):
         lines.append(str(i))

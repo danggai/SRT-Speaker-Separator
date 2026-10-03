@@ -2,6 +2,8 @@
 import copy
 import tkinter as tk
 
+from ..srt_io import format_srt_time
+
 
 class EditingMixin:
     """실행 취소/다시 실행, 잘라내기/복사/붙여넣기, 자막 추가·분할·삭제."""
@@ -185,12 +187,7 @@ class EditingMixin:
         if t_end <= t_sec:
             t_end = t_sec + 0.5
 
-        def _fmt_ts(sec):
-            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
-            ms = int(round((sec % 1) * 1000))
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-        new_sub = {"timestamp": f"{_fmt_ts(t_sec)} --> {_fmt_ts(t_end)}",
+        new_sub = {"timestamp": f"{format_srt_time(t_sec)} --> {format_srt_time(t_end)}",
                    "text": "", "speaker": ""}
         self._push_undo()
         self.subtitles.insert(insert_at, new_sub)
@@ -219,18 +216,13 @@ class EditingMixin:
         if not (t_s + self._MIN_SUB_DURATION <= pos <= t_e - self._MIN_SUB_DURATION):
             return False
 
-        def _fmt_ts(sec):
-            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
-            ms = int(round((sec % 1) * 1000))
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
         self._push_undo()
         sub     = self.subtitles[idx]
         text    = sub.get("text", "")
         speaker = sub.get("speaker", "")
 
-        sub["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(pos)}"
-        new_sub = {"timestamp": f"{_fmt_ts(pos)} --> {_fmt_ts(t_e)}",
+        sub["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(pos)}"
+        new_sub = {"timestamp": f"{format_srt_time(pos)} --> {format_srt_time(t_e)}",
                    "text": text, "speaker": speaker}
         # 뒷부분도 원본과 같은 레이어를 유지하도록 _lane을 그대로 물려준다.
         # (안 그러면 새 자막은 _lane이 없어 매번 새로 자동 배치되면서
@@ -275,16 +267,11 @@ class EditingMixin:
         speaker = max(share, key=share.get) if share else ""
         text = " ".join(t for t in (self.subtitles[i].get("text", "").strip() for i in targets) if t)
 
-        def _fmt_ts(sec):
-            h = int(sec // 3600); m = int((sec % 3600) // 60); s = int(sec % 60)
-            ms = int(round((sec % 1) * 1000))
-            return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
         self._push_undo()
         first = targets[0]
         merged = self.subtitles[first]
-        merged["timestamp"] = (f"{_fmt_ts(min(t for t, _ in times))} --> "
-                               f"{_fmt_ts(max(t for _, t in times))}")
+        merged["timestamp"] = (f"{format_srt_time(min(t for t, _ in times))} --> "
+                               f"{format_srt_time(max(t for _, t in times))}")
         merged["text"] = text
         merged["speaker"] = speaker
         for i in sorted(targets[1:], reverse=True):
