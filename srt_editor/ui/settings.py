@@ -9,6 +9,7 @@ from ..config import _load_config, _save_config
 from ..srt_io import display_to_regex
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
 from ..version import APP_VERSION, GITHUB_LATEST_API
+from .options import OPTION_DEFAULTS
 from ..widgets import PurpleSlider, Segmented, ToggleSwitch, flat_button, rounded_rect_image
 
 
@@ -89,10 +90,23 @@ class SettingsMixin:
         return outer, inner
 
     # ── 설정 창 공용 레이아웃 (카드 묶음형) ────────
-    def _settings_title(self, parent, title, desc=None):
-        """섹션 제목 (큼직한 글씨 + 한 줄 설명)."""
-        tk.Label(parent, text=title, bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 15, "bold")).pack(anchor="w", padx=32, pady=(26, 2))
+    def _settings_title(self, parent, title, desc=None, section=None):
+        """섹션 제목 (큼직한 글씨 + 한 줄 설명). section이 있으면 오른쪽에 기본값 버튼."""
+        head = tk.Frame(parent, bg=BG)
+        head.pack(fill="x", padx=32, pady=(26, 2))
+        tk.Label(head, text=title, bg=BG, fg=FG,
+                 font=(theme.FONT_FAMILY, 15, "bold")).pack(side="left")
+        if section:
+            def _reset():
+                if not messagebox.askyesno("기본값", f"{title} 설정을 기본값으로 되돌릴까요?",
+                                           parent=parent.winfo_toplevel()):
+                    return
+                self._reset_settings_section(section)
+                rebuild = getattr(parent, "_rebuild", None)
+                if rebuild:
+                    parent.after_idle(rebuild)
+            flat_button(head, "기본값", _reset, bg=BG3, hover="#33333C",
+                        font=(theme.FONT_FAMILY, 9), padx=12, pady=4).pack(side="right")
         if desc:
             tk.Label(parent, text=desc, bg=BG, fg=FG_DIM,
                      font=(theme.FONT_FAMILY, 9)).pack(anchor="w", padx=32)
@@ -174,6 +188,47 @@ class SettingsMixin:
         ent.bind("<Return>", _commit)
         ent.bind("<FocusOut>", _commit)
 
+    _SECTION_OPTS = {
+        "general": ("startup_open_last", "update_check"),
+        "edit": ("advance_after_assign", "seek_step", "seek_step_shift", "click_seek",
+                 "new_sub_len", "lock_timeline"),
+        "storage": ("backup_enabled", "backup_minutes"),
+        "export": ("export_dir_mode", "export_dir"),
+    }
+
+    def _reset_settings_section(self, section):
+        """설정 탭 하나를 기본값으로 되돌림."""
+        for key in self._SECTION_OPTS.get(section, ()):
+            self._set_opt(key, OPTION_DEFAULTS[key])
+        cfg = _load_config()
+        if section == "general":
+            self._apply_key_hints(False)
+            cfg["show_key_hints"] = False
+        elif section == "transcribe":
+            self._transcribe_max_chars = 25
+            self._transcribe_language = "ko"
+            self._transcribe_period = False
+            self._transcribe_spellcheck = False
+            cfg.update(transcribe_max_chars=25, transcribe_language="ko",
+                       transcribe_period=False, transcribe_spellcheck=False)
+            for name, v in (("_transcribe_max_chars_var", 25), ("_transcribe_period_var", False),
+                            ("_transcribe_spellcheck_var", False)):
+                var = getattr(self, name, None)
+                if var is not None:
+                    var.set(v)
+        elif section == "speaker":
+            srt_io.g_display_pattern = srt_io.DEFAULT_DISPLAY_PATTERN
+            srt_io.g_speaker_pattern = srt_io.DEFAULT_SPEAKER_PATTERN
+            self._diarize_device_init = "auto"
+            cfg["diarize_device"] = "auto"
+            var = getattr(self, "_diarize_device_var", None)
+            if var is not None:
+                try:
+                    var.set("auto")
+                except tk.TclError:
+                    pass
+        _save_config(cfg)
+
     def _open_settings(self, tab_idx=0):
         """설정 창 (왼쪽 메뉴 + 오른쪽 카드 묶음)."""
         win = tk.Toplevel(self)
@@ -225,6 +280,12 @@ class SettingsMixin:
         def _add_section(title, builder):
             outer, inner = self._make_scrollable(content_host)
             builder(inner)
+
+            def _rebuild():
+                for w in inner.winfo_children():
+                    w.destroy()
+                builder(inner)
+            inner._rebuild = _rebuild
             idx = len(_items)
             cv = tk.Canvas(nav, width=190, height=38, bg=BG2, highlightthickness=0,
                            cursor="hand2")
@@ -313,7 +374,7 @@ class SettingsMixin:
 
     # ── 섹션: 일반 ────────────────────────────
     def _build_general_section(self, parent):
-        self._settings_title(parent, "일반", None)
+        self._settings_title(parent, "일반", section="general")
         card = self._settings_card(parent, "시작")
         _, right = self._settings_row(card, "⌂", "시작 화면", None)
         start_var = tk.StringVar(value="last" if self._opt("startup_open_last") else "home")
@@ -334,7 +395,7 @@ class SettingsMixin:
 
     # ── 섹션: 편집 ────────────────────────────
     def _build_edit_section(self, parent):
-        self._settings_title(parent, "편집", None)
+        self._settings_title(parent, "편집", section="edit")
         card = self._settings_card(parent, "화자 지정")
         _, right = self._settings_row(card, "↓", "지정 후 다음 줄로",
                                       "숫자 키로 지정하면 아래 줄 선택")
@@ -359,7 +420,7 @@ class SettingsMixin:
     # ── 섹션: 자동 자막 ───────────────────────
     def _build_transcribe_settings_tab(self, parent):
         """자동 자막 설정."""
-        self._settings_title(parent, "자동 자막", None)
+        self._settings_title(parent, "자동 자막", section="transcribe")
         card = self._settings_card(parent, "인식")
 
         # 한 줄 최대 글자 수 (슬라이더 + 직접 입력, 10~50)
@@ -457,7 +518,7 @@ class SettingsMixin:
 
     # ── 섹션: 화자 ────────────────────────────
     def _build_speaker_section(self, parent):
-        self._settings_title(parent, "화자", None)
+        self._settings_title(parent, "화자", section="speaker")
         self._build_pattern_tab(parent)
 
         card = self._settings_card(parent, "화자 분석")
@@ -529,7 +590,7 @@ class SettingsMixin:
 
     # ── 섹션: 저장 공간 ───────────────────────
     def _build_storage_section(self, parent):
-        self._settings_title(parent, "저장 공간", None)
+        self._settings_title(parent, "저장 공간", section="storage")
         card = self._settings_card(parent, "자동 백업")
         _, right = self._settings_row(card, "↺", "자동 백업",
                                       "갑자기 꺼져도 다음 실행 때 복구")
@@ -562,7 +623,7 @@ class SettingsMixin:
 
     # ── 섹션: 내보내기 ────────────────────────
     def _build_export_section(self, parent):
-        self._settings_title(parent, "내보내기", None)
+        self._settings_title(parent, "내보내기", section="export")
         card = self._settings_card(parent)
         left, right = self._settings_row(card, "→", "저장할 폴더", None)
         mode = tk.StringVar(value=self._opt("export_dir_mode"))
