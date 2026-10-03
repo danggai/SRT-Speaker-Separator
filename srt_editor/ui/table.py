@@ -695,11 +695,12 @@ class SubtitleTableMixin:
 
     @staticmethod
     def _fmt_card_time(sec):
-        """카드에 표시할 시작 시각 (1시간 미만: 0:30.37, 이상: 1:02:03.45)."""
-        h = int(sec // 3600)
-        m = int(sec % 3600 // 60)
-        s = sec % 60
-        return f"{h}:{m:02d}:{s:05.2f}" if h else f"{m}:{s:05.2f}"
+        """카드에 표시할 시작 시각 (1시간 미만: 08:04.60, 이상: 1:02:03.45)."""
+        cs = int(round(sec * 100))   # 반올림으로 60.00초가 되지 않게 1/100초 단위로 계산
+        h, cs = divmod(cs, 360000)
+        m, cs = divmod(cs, 6000)
+        s = cs / 100
+        return f"{h}:{m:02d}:{s:05.2f}" if h else f"{m:02d}:{s:05.2f}"
 
     def _fit_text(self, text, width):
         """width(px)에 들어가도록 자른 글자 (넘치면 끝에 …)."""
