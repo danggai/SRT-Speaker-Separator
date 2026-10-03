@@ -25,14 +25,14 @@ class PlaybackMixin:
     def _on_left_key(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        step = 30 if (event.state & 0x1) else 5
+        step = self._opt("seek_step_shift") if (event.state & 0x1) else self._opt("seek_step")
         self._media_seek(-step)
         return "break"
 
     def _on_right_key(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        step = 30 if (event.state & 0x1) else 5
+        step = self._opt("seek_step_shift") if (event.state & 0x1) else self._opt("seek_step")
         self._media_seek(+step)
         return "break"
 

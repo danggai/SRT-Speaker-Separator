@@ -33,6 +33,8 @@ class FileMixin:
             )
             if ans is None:   # 취소
                 return
+            if not ans:       # 아니오 → 변경을 버리므로 백업도 지움
+                self._clear_backup()
             if ans:           # 예 → 저장
                 self.save_file()
                 if self._unsaved:  # 저장 실패(경로 없음 등)
@@ -285,6 +287,7 @@ class FileMixin:
             write_srt_tagged(self.subtitles, path, meta or None)
             self._unsaved = False
             self.save_path = path
+            self._clear_backup()   # 저장했으니 백업은 필요 없음
             self._add_recent_file(path)
             self._remember_view()
             _fn = os.path.splitext(os.path.basename(path))[0]
@@ -386,9 +389,15 @@ class FileMixin:
             messagebox.showwarning("내보내기", "자막이 없습니다.", parent=self)
             return
         init_dir = os.path.dirname(self.filepath) if self.filepath else ""
-        out_dir = filedialog.askdirectory(title="저장할 폴더 선택",
-                                          initialdir=init_dir,
-                                          parent=self)
+        mode = self._opt("export_dir_mode")
+        if mode == "same" and init_dir:
+            out_dir = init_dir
+        elif mode == "fixed" and os.path.isdir(self._opt("export_dir")):
+            out_dir = self._opt("export_dir")
+        else:
+            out_dir = filedialog.askdirectory(title="저장할 폴더 선택",
+                                              initialdir=init_dir,
+                                              parent=self)
         if not out_dir:
             return
 

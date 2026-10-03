@@ -523,6 +523,12 @@ class SpeakerMixin:
                 self._refresh_row(idx)
         self._unsaved = True
         self._refresh_speaker_counts()
+        # 설정: 한 줄 지정 후 다음 줄로
+        if self._opt("advance_after_assign") and len(targets) == 1 \
+                and targets[0] + 1 < len(self.subtitles):
+            nxt = targets[0] + 1
+            self._select_row(nxt)
+            self._scroll_to_row(nxt)
         return "break"
 
     def _assign_speaker_from_sidebar(self, name):

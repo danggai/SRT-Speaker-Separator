@@ -120,12 +120,12 @@ class TimelineMixin:
         time_box.place(in_=btn_group, relx=1.0, rely=0.5, x=12, anchor="w")
 
         # 재생 컨트롤 — 도형을 직접 그린 아이콘 + 보라 원형 재생 버튼
-        self.btn_prev = IconButton(btn_group, "back", lambda: self._media_seek(-5))
+        self.btn_prev = IconButton(btn_group, "back", lambda: self._media_seek(-self._opt("seek_step")))
         self.btn_prev.pack(side="left", padx=1)
         self.btn_play = IconButton(btn_group, "play", self._media_play_pause, size=34,
                                    fg="white", circle=ACCENT, circle_hover="#AE96E2")
         self.btn_play.pack(side="left", padx=6)
-        self.btn_next = IconButton(btn_group, "fwd", lambda: self._media_seek(+5))
+        self.btn_next = IconButton(btn_group, "fwd", lambda: self._media_seek(+self._opt("seek_step")))
         self.btn_next.pack(side="left", padx=1)
 
         # 처음으로 버튼은 대칭 묶음 바깥 왼쪽에 (재생 버튼이 정중앙에 오도록)
@@ -792,11 +792,13 @@ class TimelineMixin:
 
         if hit["type"] == "handle":
             self._start_handle_drag(hit["mode"], hit["idx"])
+            self._wf_sub_drag["locked"] = self._opt("lock_timeline")
             return
 
         if hit["type"] == "body":
             shift_lock = bool(event.state & 0x0001)   # Shift 키
             self._start_body_drag(hit["idx"], x, y, shift_lock, stack=hit["stack"])
+            self._wf_sub_drag["locked"] = self._opt("lock_timeline")
             return
 
         # ── 빈 타임라인 / 파형 영역 → 재생 위치 스크럽 ──
@@ -856,6 +858,8 @@ class TimelineMixin:
 
     def _pb_drag(self, event):
         drag = getattr(self, "_wf_sub_drag", None)
+        if drag and drag.get("locked"):   # 설정: 타임라인 시간 잠금 (클릭 선택만 허용)
+            return
         if drag:
             dur = self.player.duration
             if dur <= 0:

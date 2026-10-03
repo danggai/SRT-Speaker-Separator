@@ -273,7 +273,7 @@ class EditingMixin:
         """재생 위치(미디어 없으면 선택한 줄 다음)에 자막 추가."""
         if self.media_path:
             # 재생 위치부터, 5초 안에 다음 자막이 있으면 그 시작점까지 (없으면 5초)
-            self.add_row_at_time(self.media_progress_var.get(), duration=5.0)
+            self.add_row_at_time(self.media_progress_var.get(), duration=float(self._opt("new_sub_len")))
         else:
             self.add_row(getattr(self, "_last_focused_idx", None))
 

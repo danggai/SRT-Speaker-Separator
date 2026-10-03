@@ -1181,7 +1181,7 @@ class SubtitleTableMixin:
         if prev is not None and prev != idx and prev not in old_multi:
             self._redraw_slot_for(prev)
         self._redraw_slot_for(idx)
-        if seek:
+        if seek and self._opt("click_seek"):
             self._seek_to_subtitle(idx)
         self._wf_reveal_subtitle(idx)
 
