@@ -515,6 +515,7 @@ class SRTEditor(
                                  font=(theme.FONT_FAMILY, 7), padx=3, pady=0)
                 # 버튼 우상단 바로 위에 띄움 (레이아웃에 영향 없음)
                 badge.place(in_=widget, relx=1.0, x=2, y=4, anchor="se")
+                badge.lower(self.overlay)   # 홈 화면이 떠 있으면 가려지게
                 badge.bind("<Button-1>", lambda e, w=widget: w.event_generate("<Button-1>"))
                 badge.bind("<ButtonRelease-1>",
                            lambda e, w=widget: w.event_generate("<ButtonRelease-1>", x=1, y=1))
