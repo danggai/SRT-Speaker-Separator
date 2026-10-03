@@ -99,8 +99,9 @@ class TimelineMixin:
         self._wf_hsb_off0     = 0.0
 
         # ── 컨트롤 행 (버튼 + 볼륨) ───────────
-        ctrl = tk.Frame(inner, bg=MEDIA_BG)
+        ctrl = tk.Frame(inner, bg=MEDIA_BG, height=40)
         ctrl.pack(fill="x", pady=(5, 0))
+        ctrl.pack_propagate(False)   # 가운데 재생 묶음(place)까지 들어가게 높이 고정
 
         # 자막 도구 (재생 위치 기준으로 나누기 / 추가)
         b_split = flat_button(ctrl, "✂ 나누기", _split_and_defocus, bg=MEDIA_BG)
@@ -112,12 +113,13 @@ class TimelineMixin:
         Tooltip(b_add, "재생 위치에 자막 추가  [A]", delay=400)
         self._add_btn = b_add
 
+        # 재생 묶음은 재생 바 정중앙에 고정, 시간 표시는 그 오른쪽에 붙임
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
-        btn_group.pack(side="left", expand=True)
+        btn_group.place(relx=0.5, rely=0.5, anchor="center")
+        time_box = tk.Frame(ctrl, bg=MEDIA_BG)
+        time_box.place(in_=btn_group, relx=1.0, rely=0.5, x=12, anchor="w")
 
         # 재생 컨트롤 — 도형을 직접 그린 아이콘 + 보라 원형 재생 버튼
-        self.btn_stop = IconButton(btn_group, "start", self._media_stop)
-        self.btn_stop.pack(side="left", padx=1)
         self.btn_prev = IconButton(btn_group, "back", lambda: self._media_seek(-5))
         self.btn_prev.pack(side="left", padx=1)
         self.btn_play = IconButton(btn_group, "play", self._media_play_pause, size=34,
@@ -126,17 +128,20 @@ class TimelineMixin:
         self.btn_next = IconButton(btn_group, "fwd", lambda: self._media_seek(+5))
         self.btn_next.pack(side="left", padx=1)
 
+        # 처음으로 버튼은 대칭 묶음 바깥 왼쪽에 (재생 버튼이 정중앙에 오도록)
+        self.btn_stop = IconButton(ctrl, "start", self._media_stop)
+        self.btn_stop.place(in_=btn_group, relx=0.0, rely=0.5, x=-6, anchor="e")
+
         # 현재 / 전체 시간 (재생 버튼 오른쪽)
-        self.lbl_pos = tk.Label(btn_group, text="0:00:00", bg=MEDIA_BG, fg=FG,
-                                font=(theme.FONT_FAMILY, 9, "bold"), width=8, anchor="e",
-                                cursor="hand2")
-        self.lbl_pos.pack(side="left", padx=(10, 0))
+        self.lbl_pos = tk.Label(time_box, text="0:00:00", bg=MEDIA_BG, fg=FG,
+                                font=(theme.FONT_FAMILY, 9, "bold"), cursor="hand2")
+        self.lbl_pos.pack(side="left")
         self.lbl_pos.bind("<Button-1>", self._copy_current_time)
         Tooltip(self.lbl_pos, "클릭: 현재 시간을 자막 타임스탬프 형식으로 복사", delay=400)
-        tk.Label(btn_group, text="/", bg=MEDIA_BG, fg="#4A4A55",
+        tk.Label(time_box, text="/", bg=MEDIA_BG, fg="#4A4A55",
                  font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=3)
-        self.lbl_dur = tk.Label(btn_group, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
-                                font=(theme.FONT_FAMILY, 9), width=8, anchor="w")
+        self.lbl_dur = tk.Label(time_box, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
+                                font=(theme.FONT_FAMILY, 9))
         self.lbl_dur.pack(side="left")
 
         # 줌 컨트롤 — 주변 배경과 동일색, 테두리 없음
