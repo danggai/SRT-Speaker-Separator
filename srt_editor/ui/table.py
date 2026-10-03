@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .. import theme
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, ROW_EVEN, ROW_HL, ROW_ODD
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, ROW_HL
 from ..widgets import PopupMenu
 
 
@@ -26,13 +26,22 @@ class SubtitleTableMixin:
         self._ts_cache = cache
 
 
-    # ── 자막 테이블 (가상 스크롤) ─────────────
-    # 컬럼 정의: num / ts_s / ts_e / content(가변) / speaker / del
+    # ── 자막 테이블 (가상 스크롤, 한 줄 카드) ─────────────
+    # 컬럼 정의: num / time(시작 + 길이) / content(가변) / speaker
+    # 각 자막은 둥근 테두리 카드로 그리고, 시간을 더블클릭하면 시작/종료
+    # 타임스탬프 입력칸이 나타나 정확한 시각을 편집할 수 있다.
     _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
     _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
-    _COL_IDS   = ["num", "ts_s", "ts_e", "speaker"]
-    _COL_DEF_W = {"num": 40, "ts_s": 132, "ts_e": 132, "speaker": 220}
-    ROW_H      = 34   # 행 높이 (px)
+    _COL_IDS   = ["num", "time", "speaker"]
+    _COL_DEF_W = {"num": 44, "time": 150, "speaker": 220}
+    ROW_H      = 44   # 행 높이 (카드 38 + 위아래 간격 6)
+    _CARD_X    = 8    # 카드 좌우 바깥 여백
+    _CARD_Y    = 3    # 카드 위아래 바깥 여백
+    _CARD_R    = 8    # 카드 모서리 둥글기
+    _CARD_BG       = BG2
+    _CARD_SEL_BG   = ROW_HL
+    _CARD_PLAY_BORDER = "#2F5A2F"
+    _TS_EDIT_W = 118  # 시간 편집 입력칸 하나의 너비
     _VSCROLL_BUF = 3  # 뷰포트 위아래로 미리 만들어둘 여분 행 수
 
     def _build_table(self, parent):
@@ -49,8 +58,8 @@ class SubtitleTableMixin:
         hdr_c.pack(fill="x")
         self._hdr_canvas = hdr_c
 
-        _titles = {"num":"#","ts_s":"시작시간","ts_e":"종료시간",
-                   "content":"자막 내용","speaker":"화자"}
+        _titles = {"num": "#", "time": "시간 (더블클릭: 편집)",
+                   "content": "자막 내용", "speaker": "화자"}
         self._hdr_wins = {}
         for cid in list(self._COL_IDS) + ["content"]:
             lbl = tk.Label(hdr_c, text=_titles[cid],
@@ -173,68 +182,76 @@ class SubtitleTableMixin:
             self._create_slot()
 
     def _create_slot(self):
-        """빈 행 Frame과 내부 위젯을 한 세트 생성해 풀에 추가."""
+        """빈 카드(행)와 내부 위젯을 한 세트 생성해 풀에 추가.
+        행은 Canvas로 만들어 둥근 카드 테두리와 칸 구분선을 그리고, 위젯은
+        그 위에 배치한다. 실제 위치는 _apply_col_to_slot에서 정한다."""
         slot_idx = len(self._slot_frames)
         h   = self.ROW_H
-        pos = self._get_col_positions()
+        card_bg = self._CARD_BG
 
-        row = tk.Frame(self.canvas, bg=ROW_EVEN, height=h)
-        row.pack_propagate(False)
+        row = tk.Canvas(self.canvas, bg=BG, height=h, highlightthickness=0, bd=0)
+        row.create_polygon(0, 0, 0, 0, smooth=True, tags="card",
+                           fill=card_bg, outline=BORDER)
+        for _ in range(3):   # 번호|시간|자막|화자 칸 구분선
+            row.create_line(0, 0, 0, 0, fill=BORDER, tags="div")
 
         wi = {}  # cid → widget
 
         # 번호
-        num_lbl = tk.Label(row, text="", bg=ROW_EVEN, fg=FG_DIM,
+        num_lbl = tk.Label(row, text="", bg=card_bg, fg=FG_DIM,
                            font=(theme.FONT_FAMILY, 9), anchor="center", cursor="hand2")
-        num_lbl.place(x=0, y=0, width=self._col_w["num"], height=h)
         wi["num"] = num_lbl
 
-        # 타임스탬프 시작
+        # 시간: '0:30.37 +2.12초' (더블클릭하면 아래 입력칸으로 편집)
+        time_frame = tk.Frame(row, bg=card_bg, cursor="hand2")
+        time_lbl = tk.Label(time_frame, text="", bg=card_bg, fg="#B9A6EC",
+                            font=(FONT_MONO, 10, "bold"), cursor="hand2")
+        time_lbl.pack(side="left", padx=(10, 5))
+        dur_lbl = tk.Label(time_frame, text="", bg=card_bg, fg=FG_DIM,
+                           font=(theme.FONT_FAMILY, 8), cursor="hand2")
+        dur_lbl.pack(side="left")
+        wi["time"] = time_frame
+        wi["time_lbl"] = time_lbl
+        wi["dur_lbl"] = dur_lbl
+        wi["_ts_editing"] = False
+
+        # 시작/종료 타임스탬프 입력칸 — 평소엔 숨기고 시간 편집 중에만 표시
         ts_s_var = tk.StringVar()
         ts_s = tk.Entry(row, textvariable=ts_s_var,
                         bg=BG3, fg=ACCENT, insertbackground=FG,
                         font=(FONT_MONO, 9), relief="flat",
                         highlightthickness=1, highlightbackground=BORDER,
                         highlightcolor=ACCENT)
-        ts_s.place(x=self._col_w["num"], y=3,
-                   width=self._col_w["ts_s"], height=h - 6)
         wi["ts_s"] = ts_s
         wi["ts_s_var"] = ts_s_var
 
-        # 타임스탬프 종료
         ts_e_var = tk.StringVar()
         ts_e = tk.Entry(row, textvariable=ts_e_var,
                         bg=BG3, fg=ACCENT, insertbackground=FG,
                         font=(FONT_MONO, 9), relief="flat",
                         highlightthickness=1, highlightbackground=BORDER,
                         highlightcolor=ACCENT)
-        x_ts_e = self._col_w["num"] + self._col_w["ts_s"]
-        ts_e.place(x=x_ts_e, y=3, width=self._col_w["ts_e"], height=h - 6)
         wi["ts_e"] = ts_e
         wi["ts_e_var"] = ts_e_var
 
-        # 내용
-        cx, cw_ = pos["content"]
+        # 내용 — 카드와 같은 배경으로 두고, 편집 중일 때만 보라색 테두리
         txt_var = tk.StringVar()
         txt_e = tk.Entry(row, textvariable=txt_var,
-                         bg=BG3, fg=FG, insertbackground=FG,
-                         font=(theme.FONT_FAMILY, 10), relief="flat",
-                         highlightthickness=1, highlightbackground=BORDER,
+                         bg=card_bg, fg=FG, insertbackground=FG,
+                         font=(theme.FONT_FAMILY, 11), relief="flat",
+                         highlightthickness=1, highlightbackground=card_bg,
                          highlightcolor=ACCENT)
-        txt_e.place(x=cx, y=3, width=cw_, height=h - 6)
         wi["content"] = txt_e
         wi["txt_var"] = txt_var
 
         # 화자 pill — 슬롯 생성 시 현재 화자 수 + 1(없음) 만큼 미리 생성
-        sx = pos["speaker"][0]
-        spk_frame = tk.Frame(row, bg=ROW_EVEN)
-        spk_frame.place(x=sx, y=0, width=self._col_w["speaker"], height=h)
+        spk_frame = tk.Frame(row, bg=card_bg)
         wi["speaker"] = spk_frame
 
         pill_labels = []
         n_pills = len(self.speakers) + 1   # (없음) + 화자들
         for pi in range(max(n_pills, 8)):   # 최소 8개 확보 (화자 추가 시 여유)
-            lbl = tk.Label(spk_frame, text="", bg=ROW_EVEN,
+            lbl = tk.Label(spk_frame, text="", bg=card_bg,
                            fg=FG_DIM, font=(theme.FONT_FAMILY, 9),
                            padx=7, pady=2, cursor="hand2",
                            relief="flat", highlightthickness=1,
@@ -280,6 +297,14 @@ class SubtitleTableMixin:
         spk_frame.bind("<B1-Motion>",  _relay_motion)
         spk_frame.bind("<ButtonRelease-1>", _relay_release)
         spk_frame.bind("<Button-3>",   lambda e, s=slot_idx: self._slot_right_click(s, e))
+        # 시간 칸: 한 번 클릭은 다른 칸처럼 선택, 더블클릭은 시각 편집
+        for w in (time_frame, time_lbl, dur_lbl):
+            w.bind("<Button-1>",        _relay_press)
+            w.bind("<Shift-Button-1>",  lambda e, s=slot_idx: self._slot_shift_click(s))
+            w.bind("<B1-Motion>",       _relay_motion)
+            w.bind("<ButtonRelease-1>", _relay_release)
+            w.bind("<Button-3>",        lambda e, s=slot_idx: self._slot_right_click(s, e))
+            w.bind("<Double-Button-1>", lambda e, s=slot_idx: self._ts_edit_start(s))
 
         def _ts_commit(s=slot_idx):
             wi2 = self._slot_widgets[s]
@@ -311,9 +336,14 @@ class SubtitleTableMixin:
             self._ts_style(wi2["ts_s"], wi2["ts_s_var"].get())
             self._ts_style(wi2["ts_e"], wi2["ts_e_var"].get())
 
+        def _ts_focus_out(e, s=slot_idx, f=_ts_commit):
+            f()
+            # 시작↔종료 입력칸 사이 이동이 아니면 편집 종료 (포커스가 옮겨간 뒤 판단)
+            self.after_idle(lambda: self._ts_edit_end_if_left(s))
+
         for ent in (ts_s, ts_e):
-            ent.bind("<Return>",     lambda e, f=_ts_commit: f())
-            ent.bind("<FocusOut>",   lambda e, f=_ts_commit: f())
+            ent.bind("<Return>",     lambda e: self.focus_set())   # 확정 → FocusOut에서 저장
+            ent.bind("<FocusOut>",   _ts_focus_out)
             ent.bind("<KeyRelease>", _ts_key)
             ent.bind("<FocusIn>",    lambda e, s=slot_idx: self._slot_focus_in(s))
 
@@ -651,39 +681,62 @@ class SubtitleTableMixin:
             y_screen = slot_idx * h
             self.canvas.itemconfigure(win_id, state="normal", width=cw)
             self.canvas.coords(win_id, 0, y_screen)
+            self._paint_slot(slot_idx, di, pos, cw)
 
-            sub     = self.subtitles[di]
-            is_sel  = (di == getattr(self, "_selected_row_idx", None) or di in getattr(self, "_selected_rows", set()))
-            is_play = (di in getattr(self, "_playing_rows", set()))
-            bg = ROW_HL if is_sel else (self.ROW_PLAYING if is_play else
-                 (ROW_ODD if di % 2 == 0 else ROW_EVEN))
+    def _slot_colors(self, di):
+        """자막 상태별 카드 색: (카드 배경, 테두리 색, 테두리 두께)."""
+        if di == getattr(self, "_selected_row_idx", None) or di in getattr(self, "_selected_rows", set()):
+            return self._CARD_SEL_BG, ACCENT, 2
+        if di in getattr(self, "_playing_rows", set()):
+            return self.ROW_PLAYING, self._CARD_PLAY_BORDER, 1
+        return self._CARD_BG, BORDER, 1
 
-            row = self._slot_frames[slot_idx]
-            wi["num"].configure(text=str(di + 1), bg=bg)
+    @staticmethod
+    def _fmt_card_time(sec):
+        """카드에 표시할 시작 시각 (1시간 미만: 0:30.37, 이상: 1:02:03.45)."""
+        h = int(sec // 3600)
+        m = int(sec % 3600 // 60)
+        s = sec % 60
+        return f"{h}:{m:02d}:{s:05.2f}" if h else f"{m}:{s:05.2f}"
 
-            ts_full  = sub.get("timestamp", "")
-            parts    = ts_full.split("-->")
-            ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
-            ts_end   = parts[1].strip() if len(parts) >= 2 else ""
-            # 편집 중(포커스 상태)인 타임스탬프 Entry는 덮어쓰지 않음 (안전장치)
-            if wi.get("ts_s") is None or self.focus_get() is not wi.get("ts_s"):
-                wi["ts_s_var"].set(ts_start)
-            if wi.get("ts_e") is None or self.focus_get() is not wi.get("ts_e"):
-                wi["ts_e_var"].set(ts_end)
-            self._ts_style(wi["ts_s"], ts_start)
-            self._ts_style(wi["ts_e"], ts_end)
+    def _paint_slot(self, slot_idx, di, pos, cw):
+        """슬롯 하나를 자막 di의 내용·상태로 채우고 배치한다."""
+        wi  = self._slot_widgets[slot_idx]
+        sub = self.subtitles[di]
+        bg, outline, width = self._slot_colors(di)
+        row = self._slot_frames[slot_idx]
+        row.itemconfigure("card", fill=bg, outline=outline, width=width)
 
-            # 편집 중(포커스 상태)인 텍스트 Entry는 덮어쓰지 않음 (안전장치)
-            txt_entry = wi.get("content")
-            if txt_entry is None or self.focus_get() is not txt_entry:
-                wi["txt_var"].set(sub.get("text", ""))
-            self._update_slot_pills(slot_idx, sub, bg)
+        wi["num"].configure(text=str(di + 1), bg=bg)
 
-            row.configure(bg=bg)
-            wi["num"].configure(bg=bg)
-            wi["speaker"].configure(bg=bg)
+        ts_full  = sub.get("timestamp", "")
+        parts    = ts_full.split("-->")
+        ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
+        ts_end   = parts[1].strip() if len(parts) >= 2 else ""
+        # 편집 중(포커스 상태)인 타임스탬프 Entry는 덮어쓰지 않음 (안전장치)
+        if self.focus_get() is not wi["ts_s"]:
+            wi["ts_s_var"].set(ts_start)
+        if self.focus_get() is not wi["ts_e"]:
+            wi["ts_e_var"].set(ts_end)
+        self._ts_style(wi["ts_s"], ts_start)
+        self._ts_style(wi["ts_e"], ts_end)
+        if self._ts_valid(ts_start) and self._ts_valid(ts_end):
+            t_s, t_e = self._ts_to_sec(ts_start), self._ts_to_sec(ts_end)
+            wi["time_lbl"].configure(text=self._fmt_card_time(t_s), fg="#B9A6EC", bg=bg)
+            wi["dur_lbl"].configure(text=f"+{max(0.0, t_e - t_s):.2f}초", bg=bg)
+        else:
+            wi["time_lbl"].configure(text="시간 오류", fg="#FF6B8A", bg=bg)
+            wi["dur_lbl"].configure(text="", bg=bg)
+        wi["time"].configure(bg=bg)
 
-            self._apply_col_to_slot(slot_idx, pos, cw)
+        # 편집 중(포커스 상태)인 텍스트 Entry는 덮어쓰지 않음 (안전장치)
+        txt_entry = wi["content"]
+        if self.focus_get() is not txt_entry:
+            wi["txt_var"].set(sub.get("text", ""))
+        txt_entry.configure(bg=bg, highlightbackground=bg)
+        wi["speaker"].configure(bg=bg)
+        self._update_slot_pills(slot_idx, sub, bg)
+        self._apply_col_to_slot(slot_idx, pos, cw)
 
     def _flush_deferred_pills(self, expected_top):
         """스크롤이 멈춘 뒤 호출 — 현재 뷰포트의 pill을 완성."""
@@ -693,29 +746,47 @@ class SubtitleTableMixin:
         for slot_idx, di in enumerate(self._slot_data):
             if di < 0 or di >= len(self.subtitles):
                 continue
-            sub     = self.subtitles[di]
-            is_sel  = (di == getattr(self, "_selected_row_idx", None) or di in getattr(self, "_selected_rows", set()))
-            is_play = (di in getattr(self, "_playing_rows", set()))
-            bg = ROW_HL if is_sel else (self.ROW_PLAYING if is_play else
-                 (ROW_ODD if di % 2 == 0 else ROW_EVEN))
-            self._update_slot_pills(slot_idx, sub, bg)
+            self._update_slot_pills(slot_idx, self.subtitles[di], self._slot_colors(di)[0])
 
-    def _update_slot_bg(self, slot_idx, bg):
-        """배경색만 갱신 (데이터 변경 없이 선택/재생 하이라이트 반영)."""
-        wi  = self._slot_widgets[slot_idx]
-        row = self._slot_frames[slot_idx]
-        cur_bg = row.cget("bg")
-        if cur_bg == bg:
-            return
-        row.configure(bg=bg)
-        wi["num"].configure(bg=bg)
-        wi["speaker"].configure(bg=bg)
-        # 스크롤 중 지연 중이면 pill은 flush 때 갱신
-        if getattr(self, "_pill_defer_job", None):
-            return
+    def _update_slot_bg(self, slot_idx, bg=None):
+        """선택/재생 하이라이트만 다시 반영 (카드 색은 자막 상태로 결정)."""
         di = self._slot_data[slot_idx]
         if 0 <= di < len(self.subtitles):
-            self._update_slot_pills(slot_idx, self.subtitles[di], bg)
+            self._paint_slot(slot_idx, di, self._get_col_positions(),
+                             max(self.canvas.winfo_width(), 100))
+
+    # ── 시간 편집 (더블클릭) ─────────────────
+    def _ts_edit_start(self, slot_idx):
+        """시간 칸 더블클릭 → 시작/종료 타임스탬프 입력칸을 펼쳐 편집."""
+        di = self._slot_data_idx(slot_idx)
+        if di < 0:
+            return
+        wi = self._slot_widgets[slot_idx]
+        wi["_ts_editing"] = True
+        self._apply_col_to_slot(slot_idx, self._get_col_positions(),
+                                max(self.canvas.winfo_width(), 100))
+        wi["ts_s"].focus_set()
+        wi["ts_s"].select_range(0, "end")
+        wi["ts_s"].icursor("end")
+
+    def _ts_edit_end_if_left(self, slot_idx):
+        """포커스가 시작/종료 입력칸 밖으로 나갔으면 입력칸을 접고 시간 표시로 복귀."""
+        wi = self._slot_widgets[slot_idx]
+        if not wi.get("_ts_editing"):
+            return
+        try:
+            focus = self.focus_get()
+        except Exception:
+            focus = None
+        if focus in (wi["ts_s"], wi["ts_e"]):
+            return
+        wi["_ts_editing"] = False
+        wi["ts_s"].place_forget()
+        wi["ts_e"].place_forget()
+        di = self._slot_data_idx(slot_idx)
+        if 0 <= di < len(self.subtitles):
+            self._paint_slot(slot_idx, di, self._get_col_positions(),
+                             max(self.canvas.winfo_width(), 100))
 
     def _update_slot_pills(self, slot_idx, sub, bg):
         """pill Label들을 configure로만 갱신 — destroy/create 없음."""
@@ -753,19 +824,39 @@ class SubtitleTableMixin:
                 vals[pi] = ""
 
     def _apply_col_to_slot(self, slot_idx, pos, cw):
-        """단일 슬롯의 컬럼 너비/위치를 pos에 맞게 재배치."""
-        wi = self._slot_widgets[slot_idx]
-        h  = self.ROW_H
-        for cid in list(self._COL_IDS) + ["content"]:
-            if cid not in pos or cid not in wi:
-                continue
-            x, w = pos[cid]
-            y_off = 3 if cid in ("ts_s", "ts_e", "content") else 0
-            h_use = (h - 6) if cid in ("ts_s", "ts_e", "content") else h
-            try:
-                wi[cid].place(x=x, y=y_off, width=w, height=h_use)
-            except Exception:
-                pass
+        """단일 슬롯의 카드 테두리·구분선과 위젯 위치를 pos에 맞게 재배치."""
+        wi  = self._slot_widgets[slot_idx]
+        row = self._slot_frames[slot_idx]
+        y0, y1 = self._CARD_Y, self.ROW_H - self._CARD_Y
+        ch  = y1 - y0
+        x0  = pos["num"][0]
+        x1  = pos["speaker"][0] + pos["speaker"][1]
+        r   = self._CARD_R
+        row.coords("card", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+                   x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
+        for line, cid in zip(row.find_withtag("div"), ("time", "content", "speaker")):
+            x = pos[cid][0]
+            row.coords(line, x, y0 + 1, x, y1 - 1)
+        try:
+            nx, nw = pos["num"]
+            wi["num"].place(x=nx + 1, y=y0 + 2, width=nw - 2, height=ch - 4)
+            tx, tw = pos["time"]
+            wi["time"].place(x=tx + 1, y=y0 + 2, width=tw - 2, height=ch - 4)
+            cx, cw_ = pos["content"]
+            wi["content"].place(x=cx + 6, y=y0 + 5, width=max(20, cw_ - 12), height=ch - 10)
+            sx, sw = pos["speaker"]
+            wi["speaker"].place(x=sx + 6, y=y0 + 2, width=max(20, sw - 12), height=ch - 4)
+            if wi.get("_ts_editing"):
+                ew = self._TS_EDIT_W
+                wi["ts_s"].place(x=tx + 4, y=y0 + 5, width=ew, height=ch - 10)
+                wi["ts_e"].place(x=tx + 8 + ew, y=y0 + 5, width=ew, height=ch - 10)
+                wi["ts_s"].lift()
+                wi["ts_e"].lift()
+            else:
+                wi["ts_s"].place_forget()
+                wi["ts_e"].place_forget()
+        except Exception:
+            pass
 
     # ── Canvas 크기 변경 ──────────────────────
 
@@ -795,14 +886,15 @@ class SubtitleTableMixin:
             total = self.winfo_width() - self._col_w.get("__sidebar__", 230)
         if total <= 1:
             total = 900
-        vsb_w = self.vsb.winfo_width() if self.vsb.winfo_width() > 1 else 16
-        total = max(total - vsb_w, 200)
+        # 자막 목록 캔버스는 스크롤바 왼쪽까지라 스크롤바 폭은 이미 빠져 있다.
+        # 카드 좌우 바깥 여백만 빼고 열을 배치한다.
+        total = max(total - 2 * self._CARD_X, 200)
         fixed = sum(self._col_w[c] for c in self._COL_IDS)
         content_w = max(60, total - fixed)
 
         pos = {}
-        x = 0
-        for cid in ["num", "ts_s", "ts_e"]:
+        x = self._CARD_X
+        for cid in ["num", "time"]:
             pos[cid] = (x, self._col_w[cid]); x += self._col_w[cid]
         pos["content"] = (x, content_w);     x += content_w
         pos["speaker"] = (x, self._col_w["speaker"]); x += self._col_w["speaker"]
@@ -820,7 +912,7 @@ class SubtitleTableMixin:
             x, w = pos[cid]
             c.coords(win_id, x + 4, 14)
             c.itemconfigure(win_id, width=max(4, w - 8))
-        for cid in ["ts_s", "ts_e", "content", "speaker"]:
+        for cid in ["time", "content", "speaker"]:
             x, w = pos[cid]
             dx = x + w
             c.create_line(dx, 3, dx, 25, fill=BORDER, width=2,
@@ -828,7 +920,7 @@ class SubtitleTableMixin:
 
     def _hdr_divider_at(self, mx):
         pos = self._get_col_positions()
-        for cid in ["ts_s", "ts_e", "content", "speaker"]:
+        for cid in ["time", "content", "speaker"]:
             x, w = pos[cid]
             if abs(mx - (x + w)) <= 5:
                 return cid
@@ -918,17 +1010,7 @@ class SubtitleTableMixin:
         slot = self._find_slot(idx)
         if slot < 0:
             return
-        wi  = self._slot_widgets[slot]
-        sub = self.subtitles[idx]
-        is_sel  = (idx == getattr(self, "_selected_row_idx", None) or idx in getattr(self, "_selected_rows", set()))
-        is_play = (idx in getattr(self, "_playing_rows", set()))
-        if is_sel:
-            bg = ROW_HL
-        elif is_play:
-            bg = self.ROW_PLAYING
-        else:
-            bg = ROW_ODD if idx % 2 == 0 else ROW_EVEN
-        self._update_slot_pills(slot, sub, bg)
+        self._update_slot_pills(slot, self.subtitles[idx], self._slot_colors(idx)[0])
 
     def _find_slot(self, data_idx):
         """data_idx를 표시 중인 슬롯 번호 반환. 없으면 -1."""
@@ -943,48 +1025,8 @@ class SubtitleTableMixin:
         if slot < 0:
             return
         # fill_slots의 부분 적용: 해당 슬롯 하나만
-        n   = len(self.subtitles)
-        h   = self.ROW_H
-        cw  = max(self.canvas.winfo_width(), 100)
-        pos = self._get_col_positions()
-
-        wi  = self._slot_widgets[slot]
-        row = self._slot_frames[slot]
-        sub = self.subtitles[data_idx]
-
-        is_sel  = (data_idx == getattr(self, "_selected_row_idx", None) or data_idx in getattr(self, "_selected_rows", set()))
-        is_play = (data_idx in getattr(self, "_playing_rows", set()))
-        if is_sel:
-            bg = ROW_HL
-        elif is_play:
-            bg = self.ROW_PLAYING
-        else:
-            bg = ROW_ODD if data_idx % 2 == 0 else ROW_EVEN
-
-        wi["num"].configure(text=str(data_idx + 1), bg=bg)
-
-        ts_full  = sub.get("timestamp", "")
-        parts    = ts_full.split("-->")
-        ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
-        ts_end   = parts[1].strip() if len(parts) >= 2 else ""
-        # 편집 중(포커스 상태)인 타임스탬프 Entry는 덮어쓰지 않음 (안전장치)
-        if wi.get("ts_s") is None or self.focus_get() is not wi.get("ts_s"):
-            wi["ts_s_var"].set(ts_start)
-        if wi.get("ts_e") is None or self.focus_get() is not wi.get("ts_e"):
-            wi["ts_e_var"].set(ts_end)
-        self._ts_style(wi["ts_s"], ts_start)
-        self._ts_style(wi["ts_e"], ts_end)
-
-        txt_entry = wi.get("content")
-        if txt_entry is None or self.focus_get() is not txt_entry:
-            wi["txt_var"].set(sub.get("text", ""))
-
-        self._update_slot_pills(slot, sub, bg)
-
-        row.configure(bg=bg)
-        wi["num"].configure(bg=bg)
-        wi["speaker"].configure(bg=bg)
-        self._apply_col_to_slot(slot, pos, cw)
+        self._paint_slot(slot, data_idx, self._get_col_positions(),
+                         max(self.canvas.winfo_width(), 100))
 
     # ── 행 선택 / 하이라이트 ─────────────────
     def _on_global_click(self, event):
