@@ -53,7 +53,7 @@ class PlaybackMixin:
             # (이 행이 다음 Shift 확장의 새 앵커가 됨)
             idx = self._current_nav_idx()
             new_idx = max(0, min(len(self.subtitles) - 1, idx + delta))
-            self._select_row(new_idx)
+            self._select_row(new_idx, defer_seek=True)
             self._scroll_to_row(new_idx)
             return
 
@@ -95,7 +95,7 @@ class PlaybackMixin:
         idx = self._current_nav_idx()
         new_idx = max(0, idx - 1)
         if new_idx != idx:
-            self._select_row(new_idx)
+            self._select_row(new_idx, defer_seek=True)
             self._scroll_to_row(new_idx)
         return "break"
 
@@ -107,7 +107,7 @@ class PlaybackMixin:
         idx = self._current_nav_idx()
         new_idx = min(len(self.subtitles) - 1, idx + 1)
         if new_idx != idx:
-            self._select_row(new_idx)
+            self._select_row(new_idx, defer_seek=True)
             self._scroll_to_row(new_idx)
         return "break"
 
@@ -125,7 +125,7 @@ class PlaybackMixin:
         idx = self._current_nav_idx()
         new_idx = max(0, idx - self._page_size())
         if new_idx != idx:
-            self._select_row(new_idx)
+            self._select_row(new_idx, defer_seek=True)
             self._scroll_to_row(new_idx)
         return "break"
 
@@ -137,7 +137,7 @@ class PlaybackMixin:
         idx = self._current_nav_idx()
         new_idx = min(len(self.subtitles) - 1, idx + self._page_size())
         if new_idx != idx:
-            self._select_row(new_idx)
+            self._select_row(new_idx, defer_seek=True)
             self._scroll_to_row(new_idx)
         return "break"
 

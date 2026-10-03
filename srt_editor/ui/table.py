@@ -1184,8 +1184,8 @@ class SubtitleTableMixin:
     def _blur_content_entry(self):
         self._blur_all_entries()
 
-    def _select_row(self, idx, seek=True):
-        """단독 선택 — 다중 선택 해제 후 idx만 선택."""
+    def _select_row(self, idx, seek=True, defer_seek=False):
+        """단독 선택 — 다중 선택 해제 후 idx만 선택. defer_seek: 재생 위치 이동을 잠시 미룸 (키 연타용)."""
         prev       = getattr(self, "_selected_row_idx", None)
         old_multi  = set(getattr(self, "_selected_rows", set()))
         self._selected_row_idx = idx
@@ -1199,6 +1199,20 @@ class SubtitleTableMixin:
         if prev is not None and prev != idx and prev not in old_multi:
             self._redraw_slot_for(prev)
         self._redraw_slot_for(idx)
+        job = getattr(self, "_nav_seek_job", None)
+        if job:
+            self.after_cancel(job)
+            self._nav_seek_job = None
+        if defer_seek:
+            self._nav_seek_job = self.after(120, lambda: self._finish_select(idx, seek))
+        else:
+            self._finish_select(idx, seek)
+
+    def _finish_select(self, idx, seek):
+        """선택한 자막으로 재생 위치·파형 이동."""
+        self._nav_seek_job = None
+        if idx >= len(self.subtitles):
+            return
         if seek and self._opt("click_seek"):
             self._seek_to_subtitle(idx)
         self._wf_reveal_subtitle(idx)
