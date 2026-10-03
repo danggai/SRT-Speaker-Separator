@@ -15,6 +15,7 @@ from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
 from .ui.correct import CorrectionMixin
 from .ui.tutorial import TutorialMixin
+from .ui.shortcuts import ShortcutsMixin
 from . import theme
 from .config import _load_config
 from .ime import ImeCompositionOverlay
@@ -50,6 +51,7 @@ class SRTEditor(
     FileMixin,
     CorrectionMixin,
     TutorialMixin,
+    ShortcutsMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -132,6 +134,8 @@ class SRTEditor(
         self.bind("<Control-s>", lambda e: self.save_file())
         self.bind("<Control-S>", lambda e: self.save_file_as())
         self.bind("<Control-o>", lambda e: self.open_file())
+        self.bind("<question>",  self._show_shortcuts)
+        self.bind("<F1>",        self._show_shortcuts)
         self.bind("<space>",     self._on_space_key)
         self.bind("<Left>",       self._on_left_key)
         self.bind("<Right>",      self._on_right_key)
@@ -436,6 +440,10 @@ class SRTEditor(
         tut.pack(pady=(14, 0))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
         self._tut_link = tut
+        keys = tk.Label(card, text="단축키 보기  ( ? )", bg=BG2, fg=FG_DIM,
+                        cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
+        keys.pack(pady=(6, 0))
+        keys.bind("<Button-1>", lambda e: self._show_shortcuts())
         self._render_recent_files()
 
     @property
