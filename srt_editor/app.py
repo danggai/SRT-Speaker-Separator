@@ -280,6 +280,7 @@ class SRTEditor(
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
         self._top_bar = top   # 업데이트 배지 삽입용
         self._tb_btns = {}    # 이름 → 툴바 버튼 (튜토리얼 강조용)
+        self._tb_icons = {}   # 이름 → 툴바 아이콘 캔버스 (단축키·저장 표시)
 
         def _defocus(fn):
             """버튼 실행 후 포커스를 루트로 돌려 스페이스바 재실행 방지."""
@@ -293,9 +294,26 @@ class SRTEditor(
             """아이콘 + 이름을 세로로 둔 툴바 버튼. 마우스를 올리면 배경이 밝아진다."""
             box = tk.Frame(top, bg=bg, cursor="hand2")
             box.pack(side=side, padx=1, pady=5)
-            ic = tk.Label(box, text=icon, bg=bg, fg=fg_hover, cursor="hand2",
-                          font=(theme.FONT_FAMILY, 15))
-            ic.pack(padx=12, pady=(4, 0))
+            # 아이콘은 캔버스에 그려 단축키·저장 표시를 배경 없이 겹쳐 그릴 수 있게 함
+            import tkinter.font as tkfont
+            ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
+            ic = tk.Canvas(box, bg=bg, highlightthickness=0, cursor="hand2",
+                           width=ifont.measure(icon) + 24, height=ifont.metrics("linespace") + 4)
+            ic.pack(fill="x")
+            ic.create_text(0, 0, text=icon, fill=fg_hover, font=ifont, tags="icon")
+            ic.create_text(0, 0, text="", fill=FG_DIM, anchor="ne",
+                           font=(theme.FONT_FAMILY, 7), tags="hint")
+            ic.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
+
+            def _layout(e=None, c=ic):
+                w, h = c.winfo_width(), c.winfo_height()
+                c.coords("icon", w / 2, h / 2 + 2)
+                c.coords("hint", w - 3, 1)
+                bb = c.bbox("hint") if c.itemcget("hint", "text") else None
+                x1 = (bb[0] - 3) if bb else w - 4   # 단축키 표시가 있으면 그 왼쪽에
+                c.coords("dot", x1 - 8, 3, x1, 11)
+            ic.bind("<Configure>", _layout)
+            ic.relayout = _layout
             tx = tk.Label(box, text=label, bg=bg, fg=fg, cursor="hand2",
                           font=(theme.FONT_FAMILY, 8))
             tx.pack(padx=8, pady=(0, 5))
@@ -319,6 +337,7 @@ class SRTEditor(
             for w in (ic, tx):
                 Tooltip(w, tip, delay=500)
             self._tb_btns[label] = box
+            self._tb_icons[label] = ic
             return box
 
         def _sep(side="left"):
@@ -326,12 +345,7 @@ class SRTEditor(
 
         tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
-        _save = _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
-        # 저장 안 된 변경이 있을 때 저장 버튼에 점 표시
-        self._save_dot = tk.Label(_save, text="●", bg=TB_BG, fg=ACCENT,
-                                  font=(theme.FONT_FAMILY, 8))
-        Tooltip(self._save_dot, "저장하지 않은 변경 사항이 있어요", delay=400)
-        self._save_dot.bind("<Button-1>", lambda e: (self.save_file(), self.focus_set()))
+        _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
         _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
@@ -457,12 +471,9 @@ class SRTEditor(
             return
         self.__dict__["_unsaved_flag"] = value
         self._update_title()
-        dot = getattr(self, "_save_dot", None)
-        if dot is not None:
-            if value:
-                dot.place(relx=1.0, x=-8, y=4, anchor="ne")
-            else:
-                dot.place_forget()
+        ic = getattr(self, "_tb_icons", {}).get("저장")
+        if ic is not None:   # 저장 안 된 변경이 있으면 저장 버튼에 점 표시
+            ic.itemconfigure("dot", state="normal" if value else "hidden")
 
     def _set_doc_title(self, name):
         """창 제목에 표시할 파일 이름을 바꾼다 (None이면 앱 이름만)."""
