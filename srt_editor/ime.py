@@ -11,11 +11,10 @@ _OFFSCREEN = -32000
 _IACE_DEFAULT = 0x10
 _PRE_TAG = "ImePreBefore"    # 입력칸 기본 동작 전
 _POST_TAG = "ImePreAfter"    # 입력칸 기본 동작 후
-_WM_IME_ENDCOMPOSITION = 0x010E
 
 
 class ImeCompositionOverlay:
-    POLL_MS = 30
+    POLL_MS = 15
     GCS_COMPSTR = 0x8
 
     def __init__(self, root):
@@ -82,11 +81,9 @@ class ImeCompositionOverlay:
 
         def proc(h, msg, wp, lp):
             res = self._user32.CallWindowProcW(holder["orig"], h, msg, wp, lp)
-            if msg in (_WM_IME_STARTCOMPOSITION, _WM_IME_COMPOSITION, _WM_IME_ENDCOMPOSITION):
+            if msg in (_WM_IME_STARTCOMPOSITION, _WM_IME_COMPOSITION):
                 try:
-                    if msg != _WM_IME_ENDCOMPOSITION:
-                        self._push_ime_window_offscreen(h)
-                    self._sync_preview()   # 조합 글자 즉시 반영
+                    self._push_ime_window_offscreen(h)
                 except Exception:
                     pass
             return res
