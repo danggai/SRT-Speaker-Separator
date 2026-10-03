@@ -18,6 +18,7 @@ class SpeakerMixin:
         side = ttk.Frame(parent, style="Side.TFrame", width=220)
         side.pack(side="left", fill="y")
         side.pack_propagate(False)
+        self._side_panel = side
 
         # SPEAKERS 헤더 + 우측 + 버튼
         _hdr_row = tk.Frame(side, bg=BG2)

@@ -14,6 +14,7 @@ from .ui.editing import EditingMixin
 from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
 from .ui.correct import CorrectionMixin
+from .ui.tutorial import TutorialMixin
 from . import theme
 from .config import _load_config
 from .ime import ImeCompositionOverlay
@@ -48,6 +49,7 @@ class SRTEditor(
     PlaybackMixin,
     FileMixin,
     CorrectionMixin,
+    TutorialMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -123,6 +125,8 @@ class SRTEditor(
 
         # 업데이트 체크 (백그라운드, 앱 시작 3초 후)
         self.after(3000, self._check_update_async)
+        # 첫 실행이면 튜토리얼 안내
+        self.after(500, self._tutorial_maybe_ask)
 
         # 단축키
         self.bind("<Control-s>", lambda e: self.save_file())
@@ -271,6 +275,7 @@ class SRTEditor(
         top.pack(fill="x")
         tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
         self._top_bar = top   # 업데이트 배지 삽입용
+        self._tb_btns = {}    # 이름 → 툴바 버튼 (튜토리얼 강조용)
 
         def _defocus(fn):
             """버튼 실행 후 포커스를 루트로 돌려 스페이스바 재실행 방지."""
@@ -309,6 +314,7 @@ class SRTEditor(
                 w.bind("<Button-1>", lambda e: run())
             for w in (ic, tx):
                 Tooltip(w, tip, delay=500)
+            self._tb_btns[label] = box
             return box
 
         def _sep(side="left"):
@@ -420,6 +426,11 @@ class SRTEditor(
         tk.Label(card,
                  text="지원: .srt  ·  " + " ".join(e.lstrip(".") for e in MEDIA_EXTS),
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(pady=(8, 0))
+
+        tut = tk.Label(card, text="튜토리얼 다시 보기", bg=BG2, fg=ACCENT,
+                       cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
+        tut.pack(pady=(14, 0))
+        tut.bind("<Button-1>", lambda e: self._tutorial_start())
 
     def _hide_overlay(self):
         self.overlay.place_forget()
