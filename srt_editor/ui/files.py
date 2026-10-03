@@ -122,15 +122,17 @@ class FileMixin:
         _fname = os.path.splitext(os.path.basename(path))[0]
         self.title(f"{_fname} - SRT Speaker Editer")
 
-        self.speakers = []
         self.speaker_colors = {}
+        # ── 파일 끝 메타 복원 ──────────────────
+        meta = read_srt_meta(path)
+        # 저장된 화자 순서를 먼저 따르고, 없는 화자는 등장 순서로 뒤에 추가
+        self.speakers = list(dict.fromkeys(
+            sp for sp in meta.get("speakers", []) if isinstance(sp, str) and sp))
         for sub in self.subtitles:
             sp = sub.get("speaker", "")
             if sp and sp not in self.speakers:
                 self.speakers.append(sp)
 
-        # ── 파일 끝 메타 복원 ──────────────────
-        meta = read_srt_meta(path)
         if "speaker_colors" in meta:
             self.speaker_colors = meta["speaker_colors"]
         if "display_pattern" in meta:
@@ -220,6 +222,8 @@ class FileMixin:
         """실제 SRT 파일 쓰기 + 타이틀/상태 갱신. 성공 시 True 반환."""
         try:
             meta = {}
+            if self.speakers:
+                meta["speakers"] = list(self.speakers)
             if self.speaker_colors:
                 meta["speaker_colors"] = self.speaker_colors
             if srt_io.g_display_pattern != DEFAULT_DISPLAY_PATTERN:

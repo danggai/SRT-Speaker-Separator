@@ -279,27 +279,28 @@ class SRTEditor(
                 self.focus_set()
             return wrapper
 
-        def _tool(icon, label, cmd, tip, side="left"):
+        def _tool(icon, label, cmd, tip, side="left", bg=TB_BG, hover=TB_HOVER,
+                  fg=FG_DIM, fg_hover=FG):
             """아이콘 + 이름을 세로로 둔 툴바 버튼. 마우스를 올리면 배경이 밝아진다."""
-            box = tk.Frame(top, bg=TB_BG, cursor="hand2")
+            box = tk.Frame(top, bg=bg, cursor="hand2")
             box.pack(side=side, padx=1, pady=5)
-            ic = tk.Label(box, text=icon, bg=TB_BG, fg=FG, cursor="hand2",
+            ic = tk.Label(box, text=icon, bg=bg, fg=fg_hover, cursor="hand2",
                           font=(theme.FONT_FAMILY, 15))
             ic.pack(padx=12, pady=(4, 0))
-            tx = tk.Label(box, text=label, bg=TB_BG, fg=FG_DIM, cursor="hand2",
+            tx = tk.Label(box, text=label, bg=bg, fg=fg, cursor="hand2",
                           font=(theme.FONT_FAMILY, 8))
             tx.pack(padx=8, pady=(0, 5))
             parts = (box, ic, tx)
 
             def _enter(e):
                 for w in parts:
-                    w.configure(bg=TB_HOVER)
-                tx.configure(fg=FG)
+                    w.configure(bg=hover)
+                tx.configure(fg=fg_hover)
 
             def _leave(e):
                 for w in parts:
-                    w.configure(bg=TB_BG)
-                tx.configure(fg=FG_DIM)
+                    w.configure(bg=bg)
+                tx.configure(fg=fg)
 
             run = _defocus(cmd)
             for w in parts:
@@ -312,24 +313,6 @@ class SRTEditor(
 
         def _sep(side="left"):
             tk.Frame(top, bg="#34343C", width=1).pack(side=side, fill="y", padx=6, pady=12)
-
-        def _primary(text, cmd, tip):
-            """완료 버튼처럼 보이는 강조 버튼 (보라 바탕 둥근 버튼, 흰 굵은 글씨)."""
-            import tkinter.font as tkfont
-            font = tkfont.Font(self, family=theme.FONT_FAMILY, size=10, weight="bold")
-            w, h, r = font.measure(text) + 36, 36, 10
-            cv = tk.Canvas(top, width=w, height=h, bg=TB_BG, highlightthickness=0, cursor="hand2")
-            cv.pack(side="right", padx=(4, 0), pady=10)
-            cv.create_polygon(r, 0, w - r, 0, w, 0, w, r, w, h - r, w, h, w - r, h, r, h,
-                              0, h, 0, h - r, 0, r, 0, 0, smooth=True, fill=ACCENT, tags="bg")
-            cv.create_text(w / 2, h / 2, text=text, fill="white", font=font)
-            run = _defocus(cmd)
-            cv.bind("<Enter>", lambda e: cv.itemconfigure("bg", fill="#AE96E2"))
-            cv.bind("<Leave>", lambda e: cv.itemconfigure("bg", fill=ACCENT))
-            cv.bind("<ButtonPress-1>", lambda e: cv.itemconfigure("bg", fill="#8466C4"))
-            cv.bind("<ButtonRelease-1>", lambda e: (cv.itemconfigure("bg", fill="#AE96E2"), run()))
-            Tooltip(cv, tip, delay=500)
-            return cv
 
         tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
@@ -345,8 +328,11 @@ class SRTEditor(
         _tool("⌂", "홈으로", self._close_to_home, "파일 닫고 처음 화면으로")
 
         # 오른쪽 끝부터: 내보내기(강조) → 설정 → 미지정 카운터
-        tk.Frame(top, bg=TB_BG, width=12).pack(side="right")
-        self._export_btn = _primary("📤  내보내기", self.export, "화자별 자막 내보내기")
+        tk.Frame(top, bg=TB_BG, width=6).pack(side="right")
+        # 내보내기는 진한 보라 바탕으로 강조
+        self._export_btn = _tool("📤", "내보내기", self.export, "화자별 자막 내보내기",
+                                 side="right", bg="#5B3FA0", hover="#6B4DB4",
+                                 fg="white", fg_hover="white")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
         _sep(side="right")
 
