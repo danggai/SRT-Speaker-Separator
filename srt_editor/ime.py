@@ -1,4 +1,5 @@
-"""Windows 한글 IME 조합 중 글자를 입력칸에 표시 (Tk 8.6 미지원 보완), IME 기본 조합창은 화면 밖으로."""
+"""Windows 한글 IME 조합 중 글자를 입력칸에 표시 (Tk 8.6 미지원 보완), IME 기본 조합창은 화면 밖으로.
+입력칸이 아닌 곳에서는 IME를 떼어 한글 상태에서도 단축키가 동작하게 한다."""
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
@@ -20,6 +21,7 @@ class ImeCompositionOverlay:
         self._label_master = None
         self._fonts = {}
         self._hooked = {}   # hwnd → (콜백 객체, 원래 창 프로시저)
+        self._no_ime = set()   # 입력기를 떼어 둔 창 (입력칸이 아닌 곳)
         if sys.platform != "win32":
             return
         try:
@@ -49,6 +51,7 @@ class ImeCompositionOverlay:
                             ("rcArea", wt.RECT)]
             self._CompositionForm = _CompositionForm
             self._imm.ImmSetCompositionWindow.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+            self._imm.ImmAssociateContextEx.argtypes = [wt.HWND, ctypes.c_void_p, wt.DWORD]
         except Exception:
             return
         root.after(self.POLL_MS, self._poll)
@@ -124,6 +127,10 @@ class ImeCompositionOverlay:
             hwnd = self._user32.GetFocus()
             if hwnd:
                 self._hook(hwnd)
+                if not isinstance(widget, tk.Entry) and hwnd not in self._no_ime:
+                    # 입력칸이 아닌 곳에서는 입력기를 떼어, 한글 상태여도 S·A·M 같은 단축키가 바로 동작
+                    self._imm.ImmAssociateContextEx(hwnd, None, 0)
+                    self._no_ime.add(hwnd)
             text = self._composition() if isinstance(widget, tk.Entry) else ""
             if text:
                 self._push_ime_window_offscreen(hwnd)
