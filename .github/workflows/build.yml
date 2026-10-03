@@ -42,7 +42,8 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name SRTSpeakerEditor srt_speaker_separator.py
+          python -m srt_editor.app_icon icon.ico
+          pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico srt_speaker_separator.py
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

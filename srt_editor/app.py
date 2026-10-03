@@ -20,6 +20,7 @@ from .ui.options import OptionsMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
+from .app_icon import apply_icon, set_app_id
 from .media import MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
 from .theme import (
@@ -69,6 +70,7 @@ class SRTEditor(
 
     def __init__(self):
         super().__init__()
+        apply_icon(self)
         self._set_doc_title(None)
         self.geometry("1200x820")
         self.minsize(900, 620)
@@ -786,6 +788,7 @@ class SRTEditor(
 #  tkinterdnd2 지원 여부에 따라 루트 클래스 선택
 # ─────────────────────────────────────────────
 def main():
+    set_app_id()
     try:
         from tkinterdnd2 import TkinterDnD
 
