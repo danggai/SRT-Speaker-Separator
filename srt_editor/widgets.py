@@ -756,6 +756,98 @@ class FlatButton(tk.Canvas):
     config = configure
 
 
+class IconButton(tk.Canvas):
+    """이모지 대신 도형을 직접 그리는 아이콘 버튼 (Windows에서도 모양이 일정함).
+    configure(text="▶"/"⏸"/"🔇"/"🔉"/"🔊")로 아이콘을 바꿀 수 있다."""
+
+    _TEXT_KIND = {"▶": "play", "⏸": "pause", "🔇": "vol0", "🔉": "vol1", "🔊": "vol2"}
+
+    def __init__(self, parent, kind, command=None, size=26, fg=FG, hover=BG3,
+                 circle=None, circle_hover=None):
+        try:
+            outer = parent.cget("bg")
+        except tk.TclError:
+            outer = BG
+        super().__init__(parent, width=size, height=size, bg=outer,
+                         highlightthickness=0, cursor="hand2")
+        self._size, self._fg, self._kind = size, fg, kind
+        self._circle, self._circle_hover = circle, circle_hover or circle
+        self._outer, self._hover = outer, hover
+        if circle:   # 원형 바탕 (재생 버튼)
+            self.create_oval(1, 1, size - 1, size - 1, fill=circle, outline="", tags="bg")
+        else:        # 마우스를 올렸을 때만 보이는 둥근 바탕
+            r = min(theme.ON_RADIUS, size // 2)
+            self.create_polygon(r, 0, size - r, 0, size, 0, size, r, size, size - r, size, size,
+                                size - r, size, r, size, 0, size, 0, size - r, 0, r, 0, 0,
+                                smooth=True, fill=outer, outline=outer, tags="bg")
+        self._draw()
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
+        if command:
+            self.bind("<ButtonRelease-1>", lambda e: command()
+                      if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height() else None)
+
+    def _set_hover(self, on):
+        if self._circle:
+            self.itemconfigure("bg", fill=self._circle_hover if on else self._circle)
+        else:
+            c = self._hover if on else self._outer
+            self.itemconfigure("bg", fill=c, outline=c)
+
+    def _draw(self):
+        self.delete("icon")
+        s, k, f = self._size, self._kind, self._fg
+        c = s / 2
+        u = s / 26   # 26px 기준 배율
+
+        def tri(x, y, w, h, right=True, **kw):
+            pts = (x, y - h / 2, x + w, y, x, y + h / 2) if right else \
+                  (x + w, y - h / 2, x, y, x + w, y + h / 2)
+            self.create_polygon(*pts, fill=f, outline="", tags="icon", **kw)
+
+        if k == "play":
+            tri(c - 3.5 * u, c, 9 * u, 11 * u)
+        elif k == "pause":
+            for x in (c - 4 * u, c + 1.5 * u):
+                self.create_rectangle(x, c - 5 * u, x + 2.5 * u, c + 5 * u, fill=f,
+                                      outline="", tags="icon")
+        elif k == "back":
+            tri(c - 6 * u, c, 6 * u, 9 * u, right=False)
+            tri(c, c, 6 * u, 9 * u, right=False)
+        elif k == "fwd":
+            tri(c - 6 * u, c, 6 * u, 9 * u)
+            tri(c, c, 6 * u, 9 * u)
+        elif k == "start":
+            self.create_rectangle(c - 6 * u, c - 4.5 * u, c - 4 * u, c + 4.5 * u, fill=f,
+                                  outline="", tags="icon")
+            tri(c - 4 * u, c, 9 * u, 9 * u, right=False)
+        elif k.startswith("vol"):
+            self.create_polygon(c - 7 * u, c - 2.5 * u, c - 4 * u, c - 2.5 * u, c, c - 6 * u,
+                                c, c + 6 * u, c - 4 * u, c + 2.5 * u, c - 7 * u, c + 2.5 * u,
+                                fill=f, outline="", tags="icon")
+            if k == "vol0":
+                for d in (1, -1):
+                    self.create_line(c + 2.5 * u, c - 3 * u * d, c + 7.5 * u, c + 3 * u * d,
+                                     fill=f, width=max(1, 1.5 * u), tags="icon")
+            else:
+                waves = (4,) if k == "vol1" else (4, 7.5)
+                for rad in waves:
+                    self.create_arc(c - rad * u, c - rad * u, c + rad * u, c + rad * u,
+                                    start=-45, extent=90, style="arc", outline=f,
+                                    width=max(1, 1.5 * u), tags="icon")
+
+    def configure(self, cnf=None, **kw):
+        if "text" in kw:
+            kind = self._TEXT_KIND.get(kw.pop("text"))
+            if kind and kind != self._kind:
+                self._kind = kind
+                self._draw()
+        if cnf or kw:
+            return tk.Canvas.configure(self, cnf, **kw)
+
+    config = configure
+
+
 def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10, pady=3):
     """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
     return FlatButton(parent, text, command, bg, fg=fg, hover=hover, font=font,

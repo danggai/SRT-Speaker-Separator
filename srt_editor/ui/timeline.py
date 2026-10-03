@@ -5,7 +5,7 @@ import tkinter as tk
 from .. import theme
 from ..config import _load_config, _save_config
 from ..theme import ACCENT, BG2, FG, FG_DIM, MEDIA_BG
-from ..widgets import Tooltip, flat_button
+from ..widgets import IconButton, Tooltip, flat_button
 
 
 class TimelineMixin:
@@ -102,16 +102,9 @@ class TimelineMixin:
         ctrl = tk.Frame(inner, bg=MEDIA_BG)
         ctrl.pack(fill="x", pady=(5, 0))
 
-        self.lbl_pos = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=ACCENT,
-                                font=(theme.FONT_FAMILY, 9, "bold"), width=8, anchor="w",
-                                cursor="hand2")
-        self.lbl_pos.pack(side="left")
-        self.lbl_pos.bind("<Button-1>", self._copy_current_time)
-        Tooltip(self.lbl_pos, "클릭: 현재 시간을 자막 타임스탬프 형식으로 복사", delay=400)
-
         # 자막 도구 (재생 위치 기준으로 나누기 / 추가)
         b_split = flat_button(ctrl, "✂ 나누기", _split_and_defocus, bg=MEDIA_BG)
-        b_split.pack(side="left", padx=(8, 2))
+        b_split.pack(side="left", padx=(4, 2))
         self._split_btn = b_split
         Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
@@ -122,21 +115,29 @@ class TimelineMixin:
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
         btn_group.pack(side="left", expand=True)
 
-        # 재생 컨트롤 — 배경 MEDIA_BG와 동일, 테두리 없음
-        _pc = dict(bg=MEDIA_BG, font=(theme.FONT_FAMILY, 11))
-
-        self.btn_stop = flat_button(btn_group, "⏮", self._media_stop, **_pc)
+        # 재생 컨트롤 — 도형을 직접 그린 아이콘 + 보라 원형 재생 버튼
+        self.btn_stop = IconButton(btn_group, "start", self._media_stop)
         self.btn_stop.pack(side="left", padx=1)
-        self.btn_prev = flat_button(btn_group, "⏪", lambda: self._media_seek(-5), **_pc)
+        self.btn_prev = IconButton(btn_group, "back", lambda: self._media_seek(-5))
         self.btn_prev.pack(side="left", padx=1)
-
-        self.btn_play = flat_button(btn_group, "▶", self._media_play_pause,
-                                    bg=ACCENT, fg="white", hover="#AE96E2",
-                                    font=(theme.FONT_FAMILY, 13, "bold"), padx=14)
+        self.btn_play = IconButton(btn_group, "play", self._media_play_pause, size=34,
+                                   fg="white", circle=ACCENT, circle_hover="#AE96E2")
         self.btn_play.pack(side="left", padx=6)
-
-        self.btn_next = flat_button(btn_group, "⏩", lambda: self._media_seek(+5), **_pc)
+        self.btn_next = IconButton(btn_group, "fwd", lambda: self._media_seek(+5))
         self.btn_next.pack(side="left", padx=1)
+
+        # 현재 / 전체 시간 (재생 버튼 오른쪽)
+        self.lbl_pos = tk.Label(btn_group, text="0:00:00", bg=MEDIA_BG, fg=FG,
+                                font=(theme.FONT_FAMILY, 9, "bold"), width=8, anchor="e",
+                                cursor="hand2")
+        self.lbl_pos.pack(side="left", padx=(10, 0))
+        self.lbl_pos.bind("<Button-1>", self._copy_current_time)
+        Tooltip(self.lbl_pos, "클릭: 현재 시간을 자막 타임스탬프 형식으로 복사", delay=400)
+        tk.Label(btn_group, text="/", bg=MEDIA_BG, fg="#4A4A55",
+                 font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=3)
+        self.lbl_dur = tk.Label(btn_group, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
+                                font=(theme.FONT_FAMILY, 9), width=8, anchor="w")
+        self.lbl_dur.pack(side="left")
 
         # 줌 컨트롤 — 주변 배경과 동일색, 테두리 없음
         zoom_wrap = tk.Frame(ctrl, bg=MEDIA_BG)
@@ -149,15 +150,10 @@ class TimelineMixin:
         flat_button(zoom_wrap, "+", self._wf_zoom_in, bg=MEDIA_BG,
                     font=(theme.FONT_FAMILY, 10), padx=6, pady=2).pack(side="left")
 
-        self.lbl_dur = tk.Label(ctrl, text="0:00:00", bg=MEDIA_BG, fg=FG_DIM,
-                                font=(theme.FONT_FAMILY, 9), width=8, anchor="e")
-        self.lbl_dur.pack(side="right")
-
         vol_frame = tk.Frame(ctrl, bg=MEDIA_BG)
-        vol_frame.pack(side="right", padx=(0, 12))
+        vol_frame.pack(side="right", padx=(0, 8))
 
-        self._vol_icon = tk.Label(vol_frame, text="🔊", bg=MEDIA_BG, fg=FG,
-                                  font=(theme.FONT_FAMILY, 11), cursor="hand2")
+        self._vol_icon = IconButton(vol_frame, "vol2", fg=FG_DIM, size=24)
         self._vol_icon.pack(side="left", padx=(0, 4))
         self._vol_icon.bind("<Button-1>", self._toggle_mute)
 
@@ -166,9 +162,21 @@ class TimelineMixin:
                                      cursor="hand2")
         self._vol_canvas.pack(side="left")
 
-        self._vol_pct = tk.Label(vol_frame, text="100%", bg=MEDIA_BG, fg=FG,
-                                 font=(theme.FONT_FAMILY, 9, "bold"), width=4, anchor="w")
+        # 퍼센트는 볼륨 영역에 마우스를 올렸을 때만 보임 (자리는 유지)
+        self._vol_pct = tk.Label(vol_frame, text="100%", bg=MEDIA_BG, fg=MEDIA_BG,
+                                 font=(theme.FONT_FAMILY, 8), width=4, anchor="w")
         self._vol_pct.pack(side="left", padx=(4, 0))
+
+        def _vol_hover(on):
+            self._vol_pct.configure(fg=FG_DIM if on else MEDIA_BG)
+
+        def _vol_leave(e, f=vol_frame):
+            w = f.winfo_containing(*f.winfo_pointerxy())
+            if w is None or not str(w).startswith(str(f)):
+                _vol_hover(False)
+        for w in (vol_frame, self._vol_icon, self._vol_canvas, self._vol_pct):
+            w.bind("<Enter>", lambda e: _vol_hover(True), add="+")
+            w.bind("<Leave>", _vol_leave, add="+")
 
         self._vol_var = 100
         self._vol_before_mute = 100
