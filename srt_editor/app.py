@@ -41,7 +41,7 @@ from .theme import (
     _pick_font,
 )
 from .version import APP_VERSION, GITHUB_TAGS_URL
-from .widgets import Tooltip, flat_button, rounded_rect
+from .widgets import Tooltip, flat_button, rounded_rect_image
 
 
 _BADGE_BG = "#2B2838"   # 단축키 배지 배경
@@ -316,7 +316,7 @@ class SRTEditor(
             cv = tk.Canvas(top, width=w, height=_TB_H, bg=TB_BG, highlightthickness=0,
                            cursor="hand2")
             cv.pack(side=side, padx=1, pady=5)
-            rounded_rect(cv, 1, 1, w - 2, _TB_H - 2, ON_RADIUS, fill=bg, outline=bg, tags="box")
+            cv.create_image(0, 0, anchor="nw", tags="box")
             cv.create_text(0, 0, text=icon, fill=fg_hover if bg == TB_BG else fg,
                            font=_ifont, tags="icon")
             cv.create_text(0, 0, text=label, fill=fg, font=_lfont, tags="label")
@@ -332,8 +332,11 @@ class SRTEditor(
                     fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), ON_BORDER, ON_FG
                 else:
                     fill = hover if hv else bg
-                    outline, lfg = fill, (fg_hover if hv else fg)
-                cv.itemconfigure("box", fill=fill, outline=outline)
+                    outline, lfg = None, (fg_hover if hv else fg)
+                # 안티앨리어싱된 둥근 배경 (툴바와 같은 색이면 그리지 않음)
+                img = "" if (fill == TB_BG and not outline) else \
+                    rounded_rect_image(w, _TB_H, ON_RADIUS, fill, outline)
+                cv.itemconfigure("box", image=img)
                 cv.itemconfigure("label", fill=lfg)
 
             def _layout():
@@ -359,6 +362,7 @@ class SRTEditor(
             cv.relayout = _layout
             cv.set_on = _set_on
             _layout()
+            _paint()
             run = _defocus(cmd)
             cv.bind("<Enter>", lambda e: (state.update(hover=True), _paint()))
             cv.bind("<Leave>", lambda e: (state.update(hover=False), _paint()))

@@ -712,8 +712,84 @@ def show_toast(root, text, duration_ms=1600):
     return win
 
 
+_IMG_CACHE = {}
+_SS = 4   # 안티앨리어싱용 확대 배율
+
+
+def _hex_rgba(color):
+    from PIL import ImageColor
+    return ImageColor.getrgb(color)[:3] + (255,)
+
+
+def rounded_rect_image(w, h, r, fill, outline=None, width=1):
+    """안티앨리어싱된 둥근 사각형 이미지 (캐시)."""
+    from PIL import Image, ImageDraw, ImageTk
+    key = ("rr", w, h, r, fill, outline, width)
+    if key not in _IMG_CACHE:
+        im = Image.new("RGBA", (w * _SS, h * _SS), (0, 0, 0, 0))
+        ImageDraw.Draw(im).rounded_rectangle(
+            [0, 0, w * _SS - 1, h * _SS - 1], radius=r * _SS, fill=_hex_rgba(fill),
+            outline=_hex_rgba(outline) if outline else None,
+            width=width * _SS if outline else 0)
+        _IMG_CACHE[key] = ImageTk.PhotoImage(im.resize((w, h), Image.LANCZOS))
+    return _IMG_CACHE[key]
+
+
+def _icon_image(kind, size, fg, circle=None, hover_bg=None):
+    """도형 아이콘 이미지 (원형 바탕·마우스 오버 바탕 포함, 안티앨리어싱, 캐시)."""
+    from PIL import Image, ImageDraw, ImageTk
+    key = ("icon", kind, size, fg, circle, hover_bg)
+    if key in _IMG_CACHE:
+        return _IMG_CACHE[key]
+    S = size * _SS
+    im = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    if circle:
+        d.ellipse([0, 0, S - 1, S - 1], fill=_hex_rgba(circle))
+    elif hover_bg:
+        d.rounded_rectangle([0, 0, S - 1, S - 1], radius=theme.ON_RADIUS * _SS,
+                            fill=_hex_rgba(hover_bg))
+    f = _hex_rgba(fg)
+    c, u = S / 2, S / 26   # 26px 기준 배율
+
+    def tri(x, y, w, h, right=True):
+        pts = [(x, y - h / 2), (x + w, y), (x, y + h / 2)] if right else \
+              [(x + w, y - h / 2), (x, y), (x + w, y + h / 2)]
+        d.polygon(pts, fill=f)
+
+    if kind == "play":
+        tri(c - 3.5 * u, c, 9 * u, 11 * u)
+    elif kind == "pause":
+        for x in (c - 4 * u, c + 1.5 * u):
+            d.rounded_rectangle([x, c - 5 * u, x + 2.5 * u, c + 5 * u], radius=0.6 * u, fill=f)
+    elif kind == "back":
+        tri(c - 6 * u, c, 6 * u, 9 * u, right=False)
+        tri(c, c, 6 * u, 9 * u, right=False)
+    elif kind == "fwd":
+        tri(c - 6 * u, c, 6 * u, 9 * u)
+        tri(c, c, 6 * u, 9 * u)
+    elif kind == "start":
+        d.rectangle([c - 6 * u, c - 4.5 * u, c - 4 * u, c + 4.5 * u], fill=f)
+        tri(c - 4 * u, c, 9 * u, 9 * u, right=False)
+    elif kind.startswith("vol"):
+        d.polygon([(c - 7 * u, c - 2.5 * u), (c - 4 * u, c - 2.5 * u), (c, c - 6 * u),
+                   (c, c + 6 * u), (c - 4 * u, c + 2.5 * u), (c - 7 * u, c + 2.5 * u)], fill=f)
+        lw = max(1, int(1.6 * u))
+        if kind == "vol0":
+            for dd in (1, -1):
+                d.line([(c + 2.5 * u, c - 3 * u * dd), (c + 7.5 * u, c + 3 * u * dd)],
+                       fill=f, width=lw)
+        else:
+            for rad in ((4,) if kind == "vol1" else (4, 7.5)):
+                d.arc([c - rad * u, c - rad * u, c + rad * u, c + rad * u],
+                      start=-45, end=45, fill=f, width=lw)
+    photo = ImageTk.PhotoImage(im.resize((size, size), Image.LANCZOS))
+    _IMG_CACHE[key] = photo
+    return photo
+
+
 class FlatButton(tk.Canvas):
-    """둥근 모서리의 평평한 버튼 (글자를 바꾸면 크기도 맞춰짐)."""
+    """둥근 모서리의 평평한 버튼 (안티앨리어싱, 글자를 바꾸면 크기도 맞춰짐)."""
 
     def __init__(self, parent, text, command, bg, fg=FG, hover=BG3, font=None,
                  padx=10, pady=3):
@@ -725,26 +801,35 @@ class FlatButton(tk.Canvas):
         import tkinter.font as tkfont
         self._font = tkfont.Font(self, font=font or (theme.FONT_FAMILY, 9))
         self._padx, self._pady, self._bg, self._hover = padx, pady, bg, hover
-        self.create_polygon(0, 0, 0, 0, smooth=True, fill=bg, outline=bg, tags="box")
+        self._outer, self._hovering = outer, False
+        self.create_image(0, 0, anchor="nw", tags="box")
         self.create_text(0, 0, text=text, fill=fg, font=self._font, tags="label")
-        self.bind("<Enter>", lambda e: self.itemconfigure("box", fill=self._hover,
-                                                          outline=self._hover))
-        self.bind("<Leave>", lambda e: self.itemconfigure("box", fill=self._bg,
-                                                          outline=self._bg))
+        self.bind("<Enter>", lambda e: self._set_hover(True))
+        self.bind("<Leave>", lambda e: self._set_hover(False))
         # 버튼 위에서 뗐을 때만 실행
         self.bind("<ButtonRelease-1>", lambda e: command()
                   if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height() else None)
         self._relayout()
 
+    def _set_hover(self, on):
+        self._hovering = on
+        self._paint_box()
+
+    def _paint_box(self):
+        fill = self._hover if self._hovering else self._bg
+        if fill == self._outer:
+            self.itemconfigure("box", image="")
+            return
+        w, h = self._wh
+        self.itemconfigure("box", image=rounded_rect_image(w, h, min(theme.ON_RADIUS, h // 2), fill))
+
     def _relayout(self):
         w = self._font.measure(self.itemcget("label", "text")) + 2 * self._padx
         h = self._font.metrics("linespace") + 2 * self._pady
+        self._wh = (w, h)
         tk.Canvas.configure(self, width=w, height=h)
-        r = min(theme.ON_RADIUS, h // 2)
-        x0, y0, x1, y1 = 0, 0, w - 1, h - 1
-        self.coords("box", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
-                    x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
         self.coords("label", w / 2, h / 2)
+        self._paint_box()
 
     def configure(self, cnf=None, **kw):
         if "text" in kw:
@@ -757,7 +842,7 @@ class FlatButton(tk.Canvas):
 
 
 class IconButton(tk.Canvas):
-    """이모지 대신 도형을 직접 그리는 아이콘 버튼 (Windows에서도 모양이 일정함).
+    """이모지 대신 도형을 그리는 아이콘 버튼 (안티앨리어싱, Windows에서도 모양이 일정함).
     configure(text="▶"/"⏸"/"🔇"/"🔉"/"🔊")로 아이콘을 바꿀 수 있다."""
 
     _TEXT_KIND = {"▶": "play", "⏸": "pause", "🔇": "vol0", "🔉": "vol1", "🔊": "vol2"}
@@ -770,16 +855,10 @@ class IconButton(tk.Canvas):
             outer = BG
         super().__init__(parent, width=size, height=size, bg=outer,
                          highlightthickness=0, cursor="hand2")
-        self._size, self._fg, self._kind = size, fg, kind
+        self._size, self._fg, self._kind, self._hovering = size, fg, kind, False
         self._circle, self._circle_hover = circle, circle_hover or circle
-        self._outer, self._hover = outer, hover
-        if circle:   # 원형 바탕 (재생 버튼)
-            self.create_oval(1, 1, size - 1, size - 1, fill=circle, outline="", tags="bg")
-        else:        # 마우스를 올렸을 때만 보이는 둥근 바탕
-            r = min(theme.ON_RADIUS, size // 2)
-            self.create_polygon(r, 0, size - r, 0, size, 0, size, r, size, size - r, size, size,
-                                size - r, size, r, size, 0, size, 0, size - r, 0, r, 0, 0,
-                                smooth=True, fill=outer, outline=outer, tags="bg")
+        self._hover = hover
+        self.create_image(size / 2, size / 2, tags="img")
         self._draw()
         self.bind("<Enter>", lambda e: self._set_hover(True))
         self.bind("<Leave>", lambda e: self._set_hover(False))
@@ -788,53 +867,15 @@ class IconButton(tk.Canvas):
                       if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height() else None)
 
     def _set_hover(self, on):
-        if self._circle:
-            self.itemconfigure("bg", fill=self._circle_hover if on else self._circle)
-        else:
-            c = self._hover if on else self._outer
-            self.itemconfigure("bg", fill=c, outline=c)
+        self._hovering = on
+        self._draw()
 
     def _draw(self):
-        self.delete("icon")
-        s, k, f = self._size, self._kind, self._fg
-        c = s / 2
-        u = s / 26   # 26px 기준 배율
-
-        def tri(x, y, w, h, right=True, **kw):
-            pts = (x, y - h / 2, x + w, y, x, y + h / 2) if right else \
-                  (x + w, y - h / 2, x, y, x + w, y + h / 2)
-            self.create_polygon(*pts, fill=f, outline="", tags="icon", **kw)
-
-        if k == "play":
-            tri(c - 3.5 * u, c, 9 * u, 11 * u)
-        elif k == "pause":
-            for x in (c - 4 * u, c + 1.5 * u):
-                self.create_rectangle(x, c - 5 * u, x + 2.5 * u, c + 5 * u, fill=f,
-                                      outline="", tags="icon")
-        elif k == "back":
-            tri(c - 6 * u, c, 6 * u, 9 * u, right=False)
-            tri(c, c, 6 * u, 9 * u, right=False)
-        elif k == "fwd":
-            tri(c - 6 * u, c, 6 * u, 9 * u)
-            tri(c, c, 6 * u, 9 * u)
-        elif k == "start":
-            self.create_rectangle(c - 6 * u, c - 4.5 * u, c - 4 * u, c + 4.5 * u, fill=f,
-                                  outline="", tags="icon")
-            tri(c - 4 * u, c, 9 * u, 9 * u, right=False)
-        elif k.startswith("vol"):
-            self.create_polygon(c - 7 * u, c - 2.5 * u, c - 4 * u, c - 2.5 * u, c, c - 6 * u,
-                                c, c + 6 * u, c - 4 * u, c + 2.5 * u, c - 7 * u, c + 2.5 * u,
-                                fill=f, outline="", tags="icon")
-            if k == "vol0":
-                for d in (1, -1):
-                    self.create_line(c + 2.5 * u, c - 3 * u * d, c + 7.5 * u, c + 3 * u * d,
-                                     fill=f, width=max(1, 1.5 * u), tags="icon")
-            else:
-                waves = (4,) if k == "vol1" else (4, 7.5)
-                for rad in waves:
-                    self.create_arc(c - rad * u, c - rad * u, c + rad * u, c + rad * u,
-                                    start=-45, extent=90, style="arc", outline=f,
-                                    width=max(1, 1.5 * u), tags="icon")
+        h = self._hovering
+        circle = (self._circle_hover if h else self._circle) if self._circle else None
+        img = _icon_image(self._kind, self._size, self._fg, circle=circle,
+                          hover_bg=self._hover if (h and not self._circle) else None)
+        self.itemconfigure("img", image=img)
 
     def configure(self, cnf=None, **kw):
         if "text" in kw:
@@ -852,11 +893,3 @@ def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10,
     """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
     return FlatButton(parent, text, command, bg, fg=fg, hover=hover, font=font,
                       padx=padx, pady=pady)
-
-
-def rounded_rect(canvas, x0, y0, x1, y1, r, **kw):
-    """캔버스에 둥근 모서리 사각형을 그린다."""
-    return canvas.create_polygon(
-        x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
-        x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0,
-        smooth=True, **kw)
