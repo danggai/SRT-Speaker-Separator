@@ -269,6 +269,21 @@ class EditingMixin:
             return min(same or rows, key=lambda i: abs(i - sel)), pos
         return max(rows), pos
 
+    def _add_subtitle_here(self):
+        """재생 위치(미디어 없으면 선택한 줄 다음)에 자막 추가."""
+        if self.media_path:
+            # 재생 위치부터, 5초 안에 다음 자막이 있으면 그 시작점까지 (없으면 5초)
+            self.add_row_at_time(self.media_progress_var.get(), duration=5.0)
+        else:
+            self.add_row(getattr(self, "_last_focused_idx", None))
+
+    def _add_subtitle_shortcut(self, event=None):
+        """단축키 A: 재생 위치에 자막 추가."""
+        if isinstance(self.focus_get(), tk.Entry) or not self.subtitles:
+            return
+        self._add_subtitle_here()
+        return "break"
+
     def _split_subtitle_shortcut(self, event=None):
         """단축키 S: 현재 재생 위치를 포함하는 자막을 그 위치 기준으로
         둘로 나눈다."""

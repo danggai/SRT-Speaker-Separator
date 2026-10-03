@@ -51,12 +51,7 @@ class TimelineMixin:
         self._set_media_label(None)
 
         def _add_row_and_defocus():
-            if self.media_path:
-                # 현재 재생 위치를 시작점으로, 5초 이내에 다음 자막이 있으면
-                # 그 시작점을, 없으면 5초 뒤를 종료점으로 하는 자막 추가.
-                self.add_row_at_time(self.media_progress_var.get(), duration=5.0)
-            else:
-                self.add_row(getattr(self, "_last_focused_idx", None))
+            self._add_subtitle_here()
             self.focus_set()   # 스페이스바로 버튼이 재실행되는 것 방지
 
         def _split_and_defocus():
@@ -121,7 +116,8 @@ class TimelineMixin:
         Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
         b_add.pack(side="left")
-        Tooltip(b_add, "재생 위치에 자막 추가", delay=400)
+        Tooltip(b_add, "재생 위치에 자막 추가  [A]", delay=400)
+        self._add_btn = b_add
 
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
         btn_group.pack(side="left", expand=True)
