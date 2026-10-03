@@ -68,8 +68,29 @@ class SpeakerMixin:
         gsc = self._ensure_global_speaker_colors()
         if name in gsc:
             return gsc[name]
-        idx = self.speakers.index(name) if name in self.speakers else 0
-        return SPEAKER_COLORS[idx % len(SPEAKER_COLORS)]
+        return self._auto_speaker_colors().get(name, SPEAKER_COLORS[0])
+
+    def _auto_speaker_colors(self):
+        """색이 지정되지 않은 화자에게 다른 화자와 겹치지 않는 프리셋 색을 순서대로 배정."""
+        gsc = self._ensure_global_speaker_colors()
+        fixed = {n: (self.speaker_colors.get(n) or gsc.get(n)) for n in self.speakers}
+        key = (tuple(self.speakers), tuple(fixed.values()))
+        cache = getattr(self, "_auto_color_cache", None)
+        if cache and cache[0] == key:
+            return cache[1]
+        used = {c.upper() for c in fixed.values() if c}
+        free = [c for c in SPEAKER_COLORS if c.upper() not in used]
+        result, k = {}, 0
+        for n in self.speakers:
+            if fixed[n]:
+                continue
+            if free:
+                result[n] = free.pop(0)
+            else:   # 프리셋을 다 쓰면 순환
+                result[n] = SPEAKER_COLORS[k % len(SPEAKER_COLORS)]
+                k += 1
+        self._auto_color_cache = (key, result)
+        return result
 
     def _save_global_speaker_color(self, name, color):
         """화자 색상을 로컬 스토리지(config)에도 저장 — 다른 자막 파일을
