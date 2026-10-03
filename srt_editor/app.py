@@ -135,6 +135,8 @@ class SRTEditor(
         self.bind("<Shift-Right>", self._on_right_key)
         self.bind("<Control-z>", lambda e: self._undo())
         self.bind("<Control-Z>", lambda e: self._redo())
+        self.bind("<Control-y>", lambda e: self._redo())   # 다시 실행 버튼 툴팁의 단축키
+        self.bind("<Control-Y>", lambda e: self._redo())
         self.bind("<Control-x>", self._on_cut)
         self.bind("<Control-c>", self._on_copy)
         self.bind("<Control-v>", self._on_paste)
