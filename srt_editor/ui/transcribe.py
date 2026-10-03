@@ -119,6 +119,9 @@ class TranscribeMixin:
         _sens_slider.pack(side="left", padx=(6, 0))
 
         def _sens_visibility_upd(*_):
+            # 창이 닫힌 뒤 다른 창에서 같은 변수를 바꿔도 남은 콜백이 오류를 내지 않도록
+            if not _sens_row.winfo_exists():
+                return
             num, exact = self._get_diarize_spk_settings()
             if num > 0 and exact:
                 _sens_row.pack_forget()
