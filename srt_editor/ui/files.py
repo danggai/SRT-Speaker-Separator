@@ -309,21 +309,17 @@ class FileMixin:
         if not self.subtitles:
             return
 
-        # 탐색 시작점: 마지막 이동했던 위치 → 없으면 뷰포트 상단 행
-        start = getattr(self, "_last_unassigned_idx", None)
-        if start is None:
-            start = self._vscroll_top
+        # 현재 선택 줄 다음부터 (선택 없으면 화면 맨 위 줄부터) 순환 탐색
+        start = getattr(self, "_selected_row_idx", None)
+        if start is None or start >= len(self.subtitles):
+            start = self._vscroll_top - 1
 
         n = len(self.subtitles)
         for offset in range(1, n + 1):
             idx = (start + offset) % n
             if not self.subtitles[idx]["speaker"]:
                 self._scroll_to_row(idx)
-                self._set_row_highlight(idx, True)
-                self._selected_row_idx = idx
-                self._last_focused_idx = idx
-                self._last_unassigned_idx = idx   # 다음 클릭 시 여기서부터
-                # 포커스를 버튼이 아닌 루트로 이동
+                self._select_row(idx)   # 숫자 키가 이 줄에 적용되도록 선택도 옮김
                 self.focus_set()
                 return
 
