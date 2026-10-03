@@ -30,13 +30,13 @@ class OptionsMixin:
     """설정값 읽기/쓰기와 자동 백업."""
 
     def _opt(self, key):
-        opts = self.__dict__.setdefault("_options", {})
+        opts = self.__dict__.setdefault("_opt_cache", {})
         if key not in opts:
             opts[key] = _load_config().get(key, OPTION_DEFAULTS[key])
         return opts[key]
 
     def _set_opt(self, key, value):
-        self.__dict__.setdefault("_options", {})[key] = value
+        self.__dict__.setdefault("_opt_cache", {})[key] = value
         cfg = _load_config()
         cfg[key] = value
         _save_config(cfg)
