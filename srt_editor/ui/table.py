@@ -257,7 +257,7 @@ class SubtitleTableMixin:
             self.after_idle(lambda: self._ts_edit_end_if_left(s))
 
         for ent in (ts_s, ts_e):
-            ent.bind("<Return>",     lambda e: self.focus_set())   # 확정 → FocusOut에서 저장
+            ent.bind("<Return>",     lambda e: (self.focus_set(), "break")[1])   # 확정 → FocusOut에서 저장
             ent.bind("<FocusOut>",   _ts_focus_out)
             ent.bind("<KeyRelease>", _ts_key)
             ent.bind("<FocusIn>",    lambda e, s=slot_idx: self._slot_focus_in(s))
@@ -267,7 +267,7 @@ class SubtitleTableMixin:
             self._txt_edit_end(s)
 
         txt_e.bind("<FocusOut>", _txt_focus_out)
-        txt_e.bind("<Return>",   lambda e: self.focus_set())   # 확정 → FocusOut에서 저장
+        txt_e.bind("<Return>",   lambda e: (self.focus_set(), "break")[1])   # 확정 → FocusOut에서 저장
         txt_e.bind("<FocusIn>",  lambda e, s=slot_idx: self._slot_focus_in(s))
 
         self._slot_data.append(-1)
@@ -360,6 +360,21 @@ class SubtitleTableMixin:
         ent.focus_set()
         if x is not None:
             ent.icursor(f"@{int(x - self.canvas.coords(wi['content_win'])[0])}")
+
+    def _edit_selected_text(self, event=None):
+        """Enter: 선택한 줄의 자막 내용 입력칸으로 바로 들어가 편집 (커서는 끝에)."""
+        if isinstance(self.focus_get(), tk.Entry) or getattr(self, "_tut", None):
+            return
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is None or not (0 <= idx < len(self.subtitles)):
+            return
+        self._scroll_to_row(idx)
+        slot = self._find_slot(idx)
+        if slot < 0:
+            return
+        self._txt_edit_start(slot)
+        self._slot_widgets[slot]["content"].icursor("end")
+        return "break"
 
     def _txt_edit_end(self, slot_idx):
         wi = self._slot_widgets[slot_idx]

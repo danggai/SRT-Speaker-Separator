@@ -144,6 +144,8 @@ class SRTEditor(
         self.bind("<Control-s>", lambda e: self.save_file())
         self.bind("<Control-S>", lambda e: self.save_file_as())
         self.bind("<Control-o>", lambda e: self.open_file())
+        self.bind("<Return>",    self._edit_selected_text)
+        self.bind("<KP_Enter>",  self._edit_selected_text)
         self.bind("<question>",  self._show_shortcuts)
         self.bind("<F1>",        self._show_shortcuts)
         self.bind("<space>",     self._on_space_key)
