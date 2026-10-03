@@ -382,7 +382,9 @@ class SRTEditor(
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
         _tool("↪", "다시 실행", self._redo, "다시 실행  [Ctrl+Y]")
-        _tool("🗑", "자막 삭제", self._on_delete, "선택한 자막 삭제  [Delete]")
+        _sep()
+        _tool("✂", "잘라내기", lambda: self._on_cut(None), "선택한 자막 잘라내기  [Ctrl+X]")
+        _tool("📋", "붙여넣기", lambda: self._on_paste(None), "붙여넣기  [Ctrl+V]")
         _sep()
         _tool("🎙", "화자 분석", self._open_diarize_dialog, "화자 자동 분석")
         _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
@@ -500,7 +502,8 @@ class SRTEditor(
 
     # 버튼 우상단에 표시할 단축키
     _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
-                     "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y", "자막 삭제": "Del"}
+                     "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y",
+                     "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V"}
 
     def _toggle_key_hints(self):
         on = not getattr(self, "_key_hints_on", False)
