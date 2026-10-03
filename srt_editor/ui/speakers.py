@@ -7,7 +7,7 @@ from tkinter import ttk
 from .. import theme
 from ..config import _load_config, _save_config
 from ..theme import BG2, BG3, FG, FG_DIM, SPEAKER_COLORS
-from ..widgets import Tooltip, _ColorPickerDialog
+from ..widgets import PopupMenu, Tooltip, _ColorPickerDialog
 
 
 class SpeakerMixin:
@@ -157,7 +157,7 @@ class SpeakerMixin:
             old.destroy()
 
     def _make_speaker_row(self, i, name, before=None):
-        """화자 목록의 한 줄(색 점·이름·개수·삭제)을 만든다. before를 주면 그 위젯 위에 넣는다."""
+        """화자 목록의 한 줄(색 점·이름·개수)을 만든다. before를 주면 그 위젯 위에 넣는다."""
         color = self._speaker_color(name)
 
         row = tk.Frame(self.speaker_inner, bg=BG3,
@@ -191,17 +191,11 @@ class SpeakerMixin:
 
         name_var = tk.StringVar(value=name)
 
-        # 삭제 버튼·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
-        del_btn = tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
-                  font=(theme.FONT_FAMILY, 10), bd=0, cursor="hand2",
-                  activebackground=BG3, activeforeground="#FF6B8A",
-                  command=lambda r=row: self.delete_speaker(r._spk_name))
-        del_btn.pack(side="right", padx=(1, 4))
-
+        # 카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
         cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
         cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
                  font=(theme.FONT_FAMILY, 9))
-        cnt_lbl.pack(side="right", padx=2)
+        cnt_lbl.pack(side="right", padx=(2, 8))
         self._spk_count_lbls[name] = cnt_lbl
         row._cnt_lbl = cnt_lbl
         row._spk_color = color
@@ -287,9 +281,12 @@ class SpeakerMixin:
         drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
         drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
 
+        # 우클릭 메뉴 (이름 변경·색상 변경·삭제)
+        for widget in (row, drag_lbl, badge, dot_c, name_canvas, cnt_lbl):
+            widget.bind("<Button-3>", lambda e, r=row: self._speaker_menu(e, r))
+
         Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
-        row._tips = (Tooltip(row, "", delay=600), Tooltip(dot_c, "", delay=400),
-                     Tooltip(del_btn, "", delay=400))
+        row._tips = (Tooltip(row, "", delay=600), Tooltip(dot_c, "", delay=400))
         row._badge, row._dot, row._name_text_id = badge, dot_c, _name_text_id
         self._set_speaker_tips(row)
         # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
@@ -311,10 +308,22 @@ class SpeakerMixin:
     def _set_speaker_tips(self, row):
         name, i = row._spk_name, row._spk_idx
         key_hint = f"  단축키: {i+1}" if i < 9 else ""
-        tip_row, tip_dot, tip_del = row._tips
-        tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}"
+        tip_row, tip_dot = row._tips
+        tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}\n우클릭 → 이름·색상 변경, 삭제"
         tip_dot._text = f"클릭 → '{name}' 색상 변경"
-        tip_del._text = f"'{name}' 화자 삭제"
+
+    def _speaker_menu(self, event, row):
+        """화자 줄 우클릭 메뉴."""
+        name = row._spk_name
+        menu = PopupMenu(self)
+        menu.add_command(label="이름 변경", command=lambda: self._begin_name_edit(row))
+        menu.add_command(label="색상 변경",
+                         command=lambda: self._pick_speaker_color(name, row._dot, row))
+        menu.add_separator()
+        menu.add_command(label=f"'{name}' 삭제", foreground="#FF6B8A",
+                         command=lambda: self.delete_speaker(name))
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
 
     def _restyle_speaker_row(self, row, i, name):
         """기존 줄을 i번째 화자(name)로 바꾼다 — 줄을 새로 만들지 않아 깜빡이지 않음."""
