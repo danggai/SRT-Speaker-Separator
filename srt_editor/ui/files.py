@@ -1,5 +1,7 @@
 """SRT/미디어 열기·저장·내보내기."""
 import os
+import re
+import tempfile
 import threading
 from collections import defaultdict
 from tkinter import filedialog
@@ -17,6 +19,18 @@ from ..srt_io import (
     write_srt,
     write_srt_tagged,
 )
+
+_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+_RESERVED = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
+             *(f"LPT{i}" for i in range(1, 10))}
+
+
+def _safe_filename(name):
+    """파일 이름에 쓸 수 없는 문자를 뺀 이름."""
+    name = _BAD_CHARS.sub("", name).strip().rstrip(".")
+    if name.upper() in _RESERVED:
+        name = f"_{name}"
+    return name
 
 
 class FileMixin:
@@ -411,7 +425,11 @@ class FileMixin:
         if not self.subtitles:
             messagebox.showwarning("내보내기", "자막이 없습니다.", parent=self)
             return
-        init_dir = os.path.dirname(self.filepath) if self.filepath else ""
+        src = getattr(self, "save_path", None) or self.filepath
+        init_dir = os.path.dirname(os.path.abspath(src)) if src else ""
+        if init_dir and os.path.normcase(init_dir) == os.path.normcase(
+                os.path.abspath(tempfile.gettempdir())):
+            init_dir = ""   # 임시 폴더면 같은 폴더로 내보내지 않음
         mode = self._opt("export_dir_mode")
         if mode == "same" and init_dir:
             out_dir = init_dir
@@ -433,14 +451,20 @@ class FileMixin:
             else:
                 untagged_subs.append(entry)
 
-        saved = []
+        saved, used = [], set()
         for speaker, subs in sorted(speaker_subs.items()):
-            path = os.path.join(out_dir, f"{speaker}.srt")
+            name = _safe_filename(speaker) or "화자"
+            base_name, n = name, 2
+            while name.lower() in used:   # 문자를 빼서 이름이 겹치면 번호 붙임
+                name = f"{base_name} ({n})"
+                n += 1
+            used.add(name.lower())
+            path = os.path.join(out_dir, f"{name}.srt")
             write_srt(subs, path)   # 내보내기는 태그 없는 순수 자막
-            saved.append(f"{speaker}.srt  ({len(subs)}개)")
+            saved.append(f"{name}.srt  ({len(subs)}개)")
 
         if untagged_subs:
-            base = os.path.splitext(os.path.basename(self.filepath or "output"))[0]
+            base = os.path.splitext(os.path.basename(src or "output"))[0]
             path = os.path.join(out_dir, f"{base}_untagged.srt")
             write_srt(untagged_subs, path)
             saved.append(f"{base}_untagged.srt  ({len(untagged_subs)}개)")
