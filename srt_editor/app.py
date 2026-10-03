@@ -16,6 +16,7 @@ from .ui.files import FileMixin
 from .ui.correct import CorrectionMixin
 from .ui.tutorial import TutorialMixin
 from .ui.shortcuts import ShortcutsMixin
+from .ui.options import OptionsMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
@@ -61,6 +62,7 @@ class SRTEditor(
     CorrectionMixin,
     TutorialMixin,
     ShortcutsMixin,
+    OptionsMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -136,9 +138,13 @@ class SRTEditor(
         self._ime_overlay = ImeCompositionOverlay(self)
 
         # 업데이트 체크 (백그라운드, 앱 시작 3초 후)
-        self.after(3000, self._check_update_async)
-        # 첫 실행이면 튜토리얼 안내
+        if self._opt("update_check"):
+            self.after(3000, self._check_update_async)
+        # 첫 실행이면 튜토리얼 안내 → 남은 백업 복구 → 마지막 파일 열기
         self.after(500, self._tutorial_maybe_ask)
+        self.after(700, self._offer_backup_restore)
+        self.after(900, self._open_last_file)
+        self._start_backup_timer()
 
         # 단축키
         self.bind("<Control-s>", lambda e: self.save_file())
@@ -328,13 +334,14 @@ class SRTEditor(
             cv.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
                                 tags="hintbg")
             cv.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne", font=_hfont, tags="hint")
-            cv.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
-            state = {"on": False, "hover": False}
+            state = {"on": False, "lit": False, "hover": False}
 
             def _paint():
                 on, hv = state["on"], state["hover"]
                 if on:
                     fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), ON_BORDER, ON_FG
+                elif state["lit"]:   # 점등 (예: 저장할 변경이 있을 때)
+                    fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), None, ON_FG
                 else:
                     fill = hover if hv else bg
                     outline, lfg = None, (fg_hover if hv else fg)
@@ -362,15 +369,18 @@ class SRTEditor(
                     bb = cv.bbox("hint")
                 if bb:
                     cv.coords("hintbg", bb[0] - 3, bb[1], bb[2] + 2, bb[3])
-                x1 = (bb[0] - 6) if bb else w - 5   # 배지가 있으면 그 왼쪽에 점
-                cv.coords("dot", x1 - 8, 3, x1, 11)
 
             def _set_on(on):
                 state["on"] = on
                 _paint()
 
+            def _set_lit(lit):
+                state["lit"] = lit
+                _paint()
+
             cv.relayout = _layout
             cv.set_on = _set_on
+            cv.set_lit = _set_lit
             _layout()
             _paint()
             run = _defocus(cmd)
@@ -507,8 +517,8 @@ class SRTEditor(
         self.__dict__["_unsaved_flag"] = value
         self._update_title()
         ic = getattr(self, "_tb_icons", {}).get("저장")
-        if ic is not None:   # 저장 안 된 변경이 있으면 저장 버튼에 점 표시
-            ic.itemconfigure("dot", state="normal" if value else "hidden")
+        if ic is not None:   # 저장 안 된 변경이 있으면 저장 버튼을 연보라로 점등
+            ic.set_lit(value)
 
     # 버튼 우상단에 표시할 단축키
     _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
@@ -756,6 +766,8 @@ class SRTEditor(
                 return
             if ans:            # 예 → 저장 후 종료
                 self.save_file()
+            else:              # 아니오 → 변경을 버리므로 백업도 지움
+                self._clear_backup()
         self._remember_view()
         self._stop_progress_poll()
         self.player.stop()
