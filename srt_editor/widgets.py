@@ -713,17 +713,24 @@ def show_toast(root, text, duration_ms=1600):
 
 
 class FlatButton(tk.Canvas):
-    """테두리 없는 평평한 버튼 (글자를 바꾸면 크기도 맞춰짐)."""
+    """둥근 모서리의 평평한 버튼 (글자를 바꾸면 크기도 맞춰짐)."""
 
     def __init__(self, parent, text, command, bg, fg=FG, hover=BG3, font=None,
                  padx=10, pady=3):
-        super().__init__(parent, bg=bg, highlightthickness=0, cursor="hand2")
+        try:
+            outer = parent.cget("bg")   # 모서리 바깥은 부모 배경과 같게
+        except tk.TclError:
+            outer = bg
+        super().__init__(parent, bg=outer, highlightthickness=0, cursor="hand2")
         import tkinter.font as tkfont
         self._font = tkfont.Font(self, font=font or (theme.FONT_FAMILY, 9))
         self._padx, self._pady, self._bg, self._hover = padx, pady, bg, hover
+        self.create_polygon(0, 0, 0, 0, smooth=True, fill=bg, outline=bg, tags="box")
         self.create_text(0, 0, text=text, fill=fg, font=self._font, tags="label")
-        self.bind("<Enter>", lambda e: tk.Canvas.configure(self, bg=self._hover))
-        self.bind("<Leave>", lambda e: tk.Canvas.configure(self, bg=self._bg))
+        self.bind("<Enter>", lambda e: self.itemconfigure("box", fill=self._hover,
+                                                          outline=self._hover))
+        self.bind("<Leave>", lambda e: self.itemconfigure("box", fill=self._bg,
+                                                          outline=self._bg))
         # 버튼 위에서 뗐을 때만 실행
         self.bind("<ButtonRelease-1>", lambda e: command()
                   if 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height() else None)
@@ -733,6 +740,10 @@ class FlatButton(tk.Canvas):
         w = self._font.measure(self.itemcget("label", "text")) + 2 * self._padx
         h = self._font.metrics("linespace") + 2 * self._pady
         tk.Canvas.configure(self, width=w, height=h)
+        r = min(theme.ON_RADIUS, h // 2)
+        x0, y0, x1, y1 = 0, 0, w - 1, h - 1
+        self.coords("box", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+                    x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
         self.coords("label", w / 2, h / 2)
 
     def configure(self, cnf=None, **kw):

@@ -302,99 +302,66 @@ class SRTEditor(
                 self.focus_set()
             return wrapper
 
+        import tkinter.font as tkfont
+        _ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
+        _lfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=8)
+        _hfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=7)
+        _ICON_H = _ifont.metrics("linespace") + 10   # 위쪽 얇은 줄은 단축키 배지 자리
+        _TB_H = _ICON_H + _lfont.metrics("linespace") + 9
+
         def _tool(icon, label, cmd, tip, side="left", bg=TB_BG, hover=TB_HOVER,
                   fg=FG_DIM, fg_hover=FG):
-            """아이콘 + 이름을 세로로 둔 툴바 버튼. 마우스를 올리면 배경이 밝아진다."""
-            box = tk.Frame(top, bg=bg, cursor="hand2")
-            box.pack(side=side, padx=1, pady=5)
-            # 아이콘은 캔버스에 그려 단축키·저장 표시를 배경 없이 겹쳐 그릴 수 있게 함
-            import tkinter.font as tkfont
-            ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
-            icon_w = ifont.measure(icon)
-            # 위쪽 얇은 줄은 단축키 배지 자리 (켜고 꺼도 버튼 크기 그대로)
-            ic = tk.Canvas(box, bg=bg, highlightthickness=0, cursor="hand2",
-                           width=icon_w + 24, height=ifont.metrics("linespace") + 10)
-            ic.pack(fill="x")
-            ic.create_text(0, 0, text=icon, fill=fg_hover, font=ifont, tags="icon")
-            ic.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
-                                tags="hintbg")
-            ic.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne",
-                           font=(theme.FONT_FAMILY, 7), tags="hint")
-            box._fg = fg   # 이름 글자색 (토글 켜짐 표시에 사용)
-            ic.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
-
-            def _layout(e=None, c=ic):
-                w, h = c.winfo_width(), c.winfo_height()
-                c.coords("icon", w / 2, h / 2 + 5)
-                c.coords("hint", w - 4, 0)
-                bb = c.bbox("hint") if c.itemcget("hint", "text") else None
-                if bb and bb[0] < 3:   # 버튼 폭을 넘으면 가운데 정렬해 양쪽이 잘리지 않게
-                    c.coords("hint", (w + bb[2] - bb[0]) / 2, 0)
-                    bb = c.bbox("hint")
-                if bb:
-                    c.coords("hintbg", bb[0] - 3, bb[1], bb[2] + 2, bb[3])
-                x1 = (bb[0] - 6) if bb else w - 4   # 배지가 있으면 그 왼쪽에 점
-                c.coords("dot", x1 - 8, 2, x1, 10)
-            ic.bind("<Configure>", _layout)
-            ic.relayout = _layout
-            tx = tk.Label(box, text=label, bg=bg, fg=fg, cursor="hand2",
-                          font=(theme.FONT_FAMILY, 8))
-            tx.pack(padx=8, pady=(0, 5))
-            parts = (box, ic, tx)
-
-            def _enter(e):
-                for w in (box,) + tuple(box.winfo_children()):
-                    w.configure(bg=hover)
-                tx.configure(fg=fg_hover)
-
-            def _leave(e):
-                for w in (box,) + tuple(box.winfo_children()):
-                    w.configure(bg=bg)
-                tx.configure(fg=box._fg)
-
-            run = _defocus(cmd)
-            for w in parts:
-                w.bind("<Enter>", _enter)
-                w.bind("<Leave>", _leave)
-                w.bind("<Button-1>", lambda e: run())
-            for w in (ic, tx):
-                Tooltip(w, tip, delay=500)
-            self._tb_btns[label] = box
-            self._tb_icons[label] = ic
-            box._label = tx
-            return box
-
-        def _toggle_tool(icon, label, cmd, tip, side="right"):
-            """켜짐 상태를 둥근 테두리와 연한 배경으로 보여 주는 툴바 토글 버튼."""
-            import tkinter.font as tkfont
-            ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
-            lfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=8)
-            w = max(ifont.measure(icon) + 24, lfont.measure(label) + 16)
-            h = ifont.metrics("linespace") + 10 + lfont.metrics("linespace") + 9   # 다른 툴바 버튼과 같은 높이
-            cv = tk.Canvas(top, width=w, height=h, bg=TB_BG, highlightthickness=0, cursor="hand2")
+            """아이콘 + 이름을 세로로 둔 툴바 버튼 (둥근 모서리 배경, set_on으로 켜짐 표시)."""
+            w = max(_ifont.measure(icon) + 24, _lfont.measure(label) + 16)
+            cv = tk.Canvas(top, width=w, height=_TB_H, bg=TB_BG, highlightthickness=0,
+                           cursor="hand2")
             cv.pack(side=side, padx=1, pady=5)
-            rounded_rect(cv, 1, 1, w - 2, h - 2, ON_RADIUS, fill=TB_BG, outline=TB_BG, tags="box")
-            iy = (ifont.metrics("linespace") + 10) / 2 + 5
-            cv.create_text(w / 2, iy, text=icon, fill=FG, font=ifont)
-            cv.create_text(w / 2, h - 7 - lfont.metrics("linespace") / 2, text=label,
-                           fill=FG_DIM, font=lfont, tags="label")
+            rounded_rect(cv, 1, 1, w - 2, _TB_H - 2, ON_RADIUS, fill=bg, outline=bg, tags="box")
+            cv.create_text(w / 2, _ICON_H / 2 + 5, text=icon, fill=fg_hover if bg == TB_BG else fg,
+                           font=_ifont)
+            cv.create_text(w / 2, _TB_H - 7 - _lfont.metrics("linespace") / 2, text=label,
+                           fill=fg, font=_lfont, tags="label")
+            cv.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
+                                tags="hintbg")
+            cv.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne", font=_hfont, tags="hint")
+            cv.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
             state = {"on": False, "hover": False}
 
             def _paint():
                 on, hv = state["on"], state["hover"]
-                fill = (ON_BG_HOVER if hv else ON_BG) if on else (TB_HOVER if hv else TB_BG)
-                cv.itemconfigure("box", fill=fill, outline=ON_BORDER if on else fill)
-                cv.itemconfigure("label", fill=ON_FG if on else (FG if hv else FG_DIM))
+                if on:
+                    fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), ON_BORDER, ON_FG
+                else:
+                    fill = hover if hv else bg
+                    outline, lfg = fill, (fg_hover if hv else fg)
+                cv.itemconfigure("box", fill=fill, outline=outline)
+                cv.itemconfigure("label", fill=lfg)
+
+            def _layout():
+                cv.coords("hint", w - 5, 2)
+                bb = cv.bbox("hint") if cv.itemcget("hint", "text") else None
+                if bb and bb[0] < 3:   # 버튼 폭을 넘으면 가운데 정렬해 잘리지 않게
+                    cv.coords("hint", (w + bb[2] - bb[0]) / 2, 2)
+                    bb = cv.bbox("hint")
+                if bb:
+                    cv.coords("hintbg", bb[0] - 3, bb[1], bb[2] + 2, bb[3])
+                x1 = (bb[0] - 6) if bb else w - 5   # 배지가 있으면 그 왼쪽에 점
+                cv.coords("dot", x1 - 8, 3, x1, 11)
 
             def _set_on(on):
                 state["on"] = on
                 _paint()
+
+            cv.relayout = _layout
             cv.set_on = _set_on
+            _layout()
+            run = _defocus(cmd)
             cv.bind("<Enter>", lambda e: (state.update(hover=True), _paint()))
             cv.bind("<Leave>", lambda e: (state.update(hover=False), _paint()))
-            cv.bind("<Button-1>", lambda e: _defocus(cmd)())
+            cv.bind("<Button-1>", lambda e: run())
             Tooltip(cv, tip, delay=500)
             self._tb_btns[label] = cv
+            self._tb_icons[label] = cv
             return cv
 
         def _sep(side="left"):
@@ -421,7 +388,7 @@ class SRTEditor(
                                  side="right", bg="#5B3FA0", hover="#6B4DB4",
                                  fg="white", fg_hover="white")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
-        _toggle_tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기")
+        _tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기", side="right")
         _sep(side="right")
 
         # 미지정 카운터
@@ -524,7 +491,7 @@ class SRTEditor(
             ic.itemconfigure("dot", state="normal" if value else "hidden")
 
     # 버튼 우상단에 표시할 단축키
-    _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+⇧+S",
+    _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
                      "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y", "자막 삭제": "Del"}
 
     def _toggle_key_hints(self):
