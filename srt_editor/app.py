@@ -19,7 +19,7 @@ from .ui.shortcuts import ShortcutsMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
-from .media import MEDIA_EXTS, MediaPlayer
+from .media import MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
 from .theme import (
     ACCENT,
@@ -433,42 +433,35 @@ class SRTEditor(
 
     # ── 드롭 존 오버레이 ─────────────────────
     def _build_drop_overlay(self):
-        """파일 미로드 상태에서 보이는 드래그앤드롭 안내 오버레이"""
-        self.overlay = tk.Frame(self, bg=BG, cursor="hand2")
+        """파일 미로드 상태에서 보이는 홈 화면 (열기 카드 + 최근 파일)."""
+        self.overlay = tk.Frame(self, bg=BG)
         self.overlay.place(relx=0, rely=0, relwidth=1, relheight=1)
 
-        # 중앙 카드
-        card = tk.Frame(self.overlay, bg=BG2, padx=60, pady=50,
-                        highlightbackground=BORDER, highlightthickness=2)
-        card.place(relx=0.5, rely=0.5, anchor="center")
+        wrap = tk.Frame(self.overlay, bg=BG)
+        wrap.place(relx=0.5, rely=0.45, anchor="center")
 
+        # 열기 카드
+        card = tk.Frame(wrap, bg=BG2, padx=70, pady=36,
+                        highlightbackground=BORDER, highlightthickness=1)
+        card.pack(fill="x")
         tk.Label(card, text="📄 🎬", bg=BG2, fg=FG,
-                 font=(theme.FONT_FAMILY, 40)).pack(pady=(0, 8))
-        tk.Label(card, text="자막 또는 음성/영상 파일을 여기에 드래그하세요",
-                 bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 16, "bold")).pack()
-        tk.Label(card,
-                 text="SRT 자막 → 바로 편집 (같은 이름의 음성/영상도 함께 열림)\n"
-                      "음성/영상만 → 같은 이름의 SRT를 열거나, 없으면 자막 자동 생성",
-                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 10),
-                 justify="center").pack(pady=(10, 0))
-        tk.Label(card, text="또는",
-                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 11)).pack(pady=8)
-
-        btn_open = flat_button(card, "📂  파일 열기", self.open_file,
-                               bg=ACCENT, fg="white", hover="#AE96E2",
-                               font=(theme.FONT_FAMILY, 12, "bold"), padx=20, pady=10)
-        btn_open.pack(pady=(0, 4))
-
-        tk.Label(card,
-                 text="지원: .srt  ·  " + " ".join(e.lstrip(".") for e in MEDIA_EXTS),
-                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(pady=(8, 0))
+                 font=(theme.FONT_FAMILY, 28)).pack(pady=(0, 6))
+        tk.Label(card, text="파일을 여기에 끌어다 놓으세요",
+                 bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 15, "bold")).pack()
+        tk.Label(card, text="SRT 자막 또는 음성·영상 파일",
+                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 10)).pack(pady=(6, 18))
+        flat_button(card, "📂  파일 열기", self.open_file,
+                    bg=ACCENT, fg="white", hover="#AE96E2",
+                    font=(theme.FONT_FAMILY, 11, "bold"), padx=22, pady=9).pack()
 
         # 최근 파일 (홈 화면이 보일 때마다 갱신)
-        self._recent_box = tk.Frame(card, bg=BG2)
+        self._recent_box = tk.Frame(wrap, bg=BG)
 
-        tut = tk.Label(card, text="튜토리얼 다시 보기", bg=BG2, fg=ACCENT,
-                       cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
-        tut.pack(pady=(14, 0))
+        tut = tk.Label(wrap, text="튜토리얼 다시 보기", bg=BG, fg="#5A5A66",
+                       cursor="hand2", font=(theme.FONT_FAMILY, 9))
+        tut.pack(pady=(18, 0))
+        tut.bind("<Enter>", lambda e: tut.configure(fg=FG_DIM))
+        tut.bind("<Leave>", lambda e: tut.configure(fg="#5A5A66"))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
         self._tut_link = tut
         self._render_recent_files()
@@ -551,19 +544,24 @@ class SRTEditor(
         if not paths:
             box.pack_forget()
             return
-        box.pack(fill="x", pady=(18, 0), before=self._tut_link)
-        tk.Label(box, text="최근 파일", bg=BG2, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 9, "bold")).pack(anchor="w", pady=(0, 4))
+        box.pack(fill="x", pady=(22, 0), before=self._tut_link)
+        tk.Label(box, text="최근 파일", bg=BG, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 9, "bold")).pack(anchor="w", padx=2, pady=(0, 6))
         for p in paths:
             row = tk.Frame(box, bg=BG2, cursor="hand2")
-            row.pack(fill="x")
-            name = tk.Label(row, text=os.path.basename(p), bg=BG2, fg=FG, cursor="hand2",
-                            font=(theme.FONT_FAMILY, 10), anchor="w")
-            name.pack(side="left", padx=(8, 8), pady=3)
-            folder = tk.Label(row, text=os.path.dirname(p), bg=BG2, fg=FG_DIM, cursor="hand2",
-                              font=(theme.FONT_FAMILY, 8), anchor="w")
-            folder.pack(side="left", fill="x", expand=True)
-            parts = (row, name, folder)
+            row.pack(fill="x", pady=2)
+            icon = tk.Label(row, text="📄", bg=BG2, fg=FG_DIM, cursor="hand2",
+                            font=(theme.FONT_FAMILY, 13))
+            icon.pack(side="left", padx=(12, 8), pady=6)
+            text = tk.Frame(row, bg=BG2, cursor="hand2")
+            text.pack(side="left", fill="x", expand=True, pady=6)
+            name = tk.Label(text, text=os.path.basename(p), bg=BG2, fg=FG, cursor="hand2",
+                            font=(theme.FONT_FAMILY, 10, "bold"), anchor="w")
+            name.pack(fill="x")
+            folder = tk.Label(text, text=os.path.dirname(p), bg=BG2, fg="#6A6A76",
+                              cursor="hand2", font=(theme.FONT_FAMILY, 8), anchor="w")
+            folder.pack(fill="x")
+            parts = (row, icon, text, name, folder)
             for w in parts:
                 w.bind("<Enter>", lambda e, ps=parts: [x.configure(bg=BG3) for x in ps])
                 w.bind("<Leave>", lambda e, ps=parts: [x.configure(bg=BG2) for x in ps])
