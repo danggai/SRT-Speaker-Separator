@@ -380,6 +380,10 @@ class SRTEditor(
             ("✏  자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기"),
         )
 
+        # 하단 타임라인(미디어 패널) — 화자 목록 아래까지 창 전체 폭을 쓰도록
+        # 본문보다 먼저 창 맨 아래에 배치한다.
+        self._build_media_panel(self)
+
         # 본문 영역 (사이드바 + 테이블)
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
@@ -389,7 +393,6 @@ class SRTEditor(
         right_col.pack(side="left", fill="both", expand=True)
 
         self._build_table(right_col)
-        self._build_media_panel(right_col)
         self.after(200, self._attach_tooltips)
         # 시작 후 잠시 뒤 업데이트 확인 (백그라운드, UI 렌더링을 막지 않음)
         self.after(1500, self._check_update_async)
