@@ -32,7 +32,7 @@ class SubtitleTableMixin:
     _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
     _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
     _COL_IDS   = ["num", "time", "speaker"]
-    _COL_DEF_W = {"num": 44, "time": 150, "speaker": 220}
+    _COL_DEF_W = {"num": 34, "time": 150, "speaker": 220}
     ROW_H      = 38   # 행 높이 (카드 32 + 위아래 간격 6)
     _CARD_X    = 8    # 카드 좌우 바깥 여백
     _CARD_Y    = 3    # 카드 위아래 바깥 여백
@@ -57,7 +57,7 @@ class SubtitleTableMixin:
         hdr_c.pack(fill="x")
         self._hdr_canvas = hdr_c
 
-        _titles = {"num": "#", "time": "시간",
+        _titles = {"num": "", "time": "시간",
                    "content": "자막 내용", "speaker": "화자"}
         self._hdr_wins = {}
         for cid in list(self._COL_IDS) + ["content"]:
@@ -191,10 +191,11 @@ class SubtitleTableMixin:
         card_bg = self._CARD_BG
         c.create_polygon(0, 0, 0, 0, smooth=True, fill=card_bg, outline=BORDER,
                          tags=(t, t + "card"), state="hidden")
-        for k in range(3):   # 번호|시간|자막|화자 칸 구분선
-            c.create_line(0, 0, 0, 0, fill=BORDER, tags=(t, f"{t}div{k}"), state="hidden")
-        c.create_text(0, 0, text="", fill=FG_DIM, font=(theme.FONT_FAMILY, 9),
-                      tags=(t, t + "num"), state="hidden")
+        for k in range(3):   # 시간|자막|화자 칸 구분선 (번호와 시간 사이는 선 없음)
+            c.create_line(0, 0, 0, 0, fill="" if k == 0 else BORDER,
+                          tags=(t, f"{t}div{k}"), state="hidden")
+        c.create_text(0, 0, text="", anchor="e", fill="#5A5A66", font=(theme.FONT_FAMILY, 8),
+                      tags=(t, t + "num"), state="hidden")   # 줄 번호 (시간 바로 왼쪽)
         c.create_line(0, 0, 0, 0, width=3, capstyle="round", fill="",
                       tags=(t, t + "bar"), state="hidden")   # 화자 색 띠
         c.create_text(0, 0, text="", anchor="w", fill="#B9A6EC",
@@ -909,8 +910,7 @@ class SubtitleTableMixin:
             for k, cid in enumerate(("time", "content", "speaker")):
                 x = pos[cid][0]
                 c.coords(f"{t}div{k}", x, y0 + 1, x, y1 - 1)
-            nx, nw = pos["num"]
-            c.coords(t + "num", nx + nw / 2, cy)
+            c.coords(t + "num", tx + 6, cy + 1)
             c.coords(t + "tlbl", tx + 11, cy)
             c.coords(t + "txt", cx + 8, cy)
             c.coords(wi["content_win"], cx + 6, y0 + 5)
