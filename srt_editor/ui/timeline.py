@@ -3,6 +3,7 @@ import threading
 import tkinter as tk
 
 from .. import theme
+from ..config import _load_config, _save_config
 from ..theme import ACCENT, BG2, BG3, FG, FG_DIM, MEDIA_BG
 from ..widgets import Tooltip
 
@@ -43,10 +44,11 @@ class TimelineMixin:
         self._track_hdr.bind("<Button-1>", self._track_hdr_click)
         self._track_hdr.bind("<Motion>", self._track_hdr_motion)
 
-        self.lbl_media = tk.Label(self._track_hdr, text="🎵\n미디어 없음",
+        self.lbl_media = tk.Label(self._track_hdr, text="",
                                   bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8),
                                   justify="left", anchor="nw",
                                   wraplength=self._TRACK_HDR_W - 14)
+        self._set_media_label(None)
 
         def _add_row_and_defocus():
             if self.media_path:
@@ -197,6 +199,13 @@ class TimelineMixin:
         self._vol_canvas.bind("<ButtonRelease-1>", self._vol_release)
         self._vol_canvas.bind("<Configure>",       self._vol_redraw)
         self.after(100, self._vol_redraw)
+        # 마지막으로 쓰던 음량 복원 (설정 파일에 자동 저장됨)
+        self._vol_save_job = None
+        try:
+            saved_vol = int(_load_config().get("volume", 100))
+        except Exception:
+            saved_vol = 100
+        self._set_volume(saved_vol, save=False)
 
         for w in [panel, inner, tl_row, self.lbl_media, ctrl, btn_group]:
             w.bind("<Enter>", lambda e: None)
@@ -1081,6 +1090,27 @@ class TimelineMixin:
         c.create_window(8, y + 6, window=self.lbl_media, anchor="nw", width=w - 12)
         self._track_hdr_zones = zones
 
+    def _set_media_label(self, name=None):
+        """트랙 헤더의 파일명 표시. 헤더 폭에 맞게 한 줄로 줄이고(…),
+        전체 이름은 마우스를 올리면 툴팁으로 보여준다."""
+        import tkinter.font as tkfont
+        if not getattr(self, "_media_tip", None):
+            self._media_tip = Tooltip(self.lbl_media, "", delay=300)
+        if not name:
+            self.lbl_media.configure(text="🎵\n미디어 없음", fg=FG_DIM)
+            self._media_tip._text = ("음성/영상 파일을 창에 끌어다 놓거나\n"
+                                     "파일 열기로 불러오세요 (mp3, mp4, wav 등)")
+            return
+        font = tkfont.Font(font=self.lbl_media.cget("font"))
+        max_w = self._TRACK_HDR_W - 16
+        short = name
+        if font.measure(short) > max_w:
+            while short and font.measure(short + "…") > max_w:
+                short = short[:-1]
+            short += "…"
+        self.lbl_media.configure(text=f"🎵\n{short}", fg=FG)
+        self._media_tip._text = name
+
     def _track_hdr_zone(self, e):
         for x0, y0, x1, y1, action in getattr(self, "_track_hdr_zones", []):
             if x0 <= e.x <= x1 and y0 <= e.y <= y1:
@@ -1300,9 +1330,17 @@ class TimelineMixin:
         self._vol_dragging = False
         self._set_volume(self._vol_from_x(event.x))
 
-    def _set_volume(self, v):
-        """볼륨 값(0~100) 반영: 플레이어·UI·아이콘 모두 갱신."""
+    def _set_volume(self, v, save=True):
+        """볼륨 값(0~100) 반영: 플레이어·UI·아이콘 모두 갱신하고 설정에 저장."""
         v = max(0, min(100, v))
+        if save:
+            # 드래그 중 매 움직임마다 파일을 쓰지 않도록, 멈춘 뒤 한 번만 저장
+            if getattr(self, "_vol_save_job", None):
+                try:
+                    self.after_cancel(self._vol_save_job)
+                except Exception:
+                    pass
+            self._vol_save_job = self.after(400, self._save_volume)
         self._vol_var = v
         self.player._volume = v
         self._vol_pct.configure(text=f"{v}%")
@@ -1316,6 +1354,13 @@ class TimelineMixin:
         self._vol_redraw()
         # 재생 중이어도 끊김 없이 실시간으로 볼륨만 반영
         self.player.set_volume(v)
+
+    def _save_volume(self):
+        self._vol_save_job = None
+        cfg = _load_config()
+        if cfg.get("volume") != self._vol_var:
+            cfg["volume"] = self._vol_var
+            _save_config(cfg)
 
     def _toggle_mute(self, event=None):
         """볼륨 아이콘 클릭 → 음소거/복원 토글."""

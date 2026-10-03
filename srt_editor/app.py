@@ -466,7 +466,6 @@ class SRTEditor(
         T(self._vol_canvas, "볼륨 조절  (드래그)\n현재: " + str(self._vol_var) + "%")
         T(self._pb_canvas,  "재생 위치 이동  (클릭/드래그)")
         T(self.lbl_dur, "총 재생 시간")
-        T(self.lbl_media, "미디어 파일 드래그 또는 버튼으로 불러오기\n지원: mp3, mp4, wav, m4a 등")
 
         # ── 헤더 / 카운터 ─────────────────────
         T(self._hdr_canvas, "컬럼 경계를 좌우로 드래그해 너비 조절")

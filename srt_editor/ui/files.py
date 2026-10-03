@@ -15,7 +15,6 @@ from ..srt_io import (
     write_srt,
     write_srt_tagged,
 )
-from ..theme import FG, FG_DIM
 
 
 class FileMixin:
@@ -63,7 +62,7 @@ class FileMixin:
         self._waveform_pts = []
         self._wf_loading   = False
         try:
-            self.lbl_media.configure(text="🎵\n미디어 없음", fg=FG_DIM)
+            self._set_media_label(None)
         except Exception:
             pass
 
@@ -190,7 +189,7 @@ class FileMixin:
         self.media_path = path
 
         name = os.path.basename(path)
-        self.lbl_media.configure(text=f"🎵\n{name}", fg=FG)
+        self._set_media_label(name)
         self.media_progress_var.set(0)
         self.lbl_dur.configure(text="…")   # 조회 중 표시
         self.lbl_pos.configure(text="0:00:00")
