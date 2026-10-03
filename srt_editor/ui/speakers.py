@@ -174,6 +174,9 @@ class SpeakerMixin:
         row = tk.Frame(self.speaker_inner, bg=_ROW_BG)
         row._spk_name = name
         row._spk_idx  = i
+        # 마우스를 올렸을 때 보이는 둥근 배경 (맨 아래 깔림)
+        hl = tk.Label(row, bg=_ROW_BG, bd=0, highlightthickness=0)
+        hl.place(x=0, y=0, relwidth=1, relheight=1)
 
         bar = tk.Frame(row, bg=color, width=3)   # 색 표시 (배치하지 않음)
 
@@ -282,7 +285,7 @@ class SpeakerMixin:
                    if getattr(self, "_spk_edit_row", None) is r else None)
         entry.bind("<KeyPress>", _on_entry_key)
 
-        for widget in [row, cnt_lbl]:
+        for widget in [row, hl, cnt_lbl]:
             widget.bind("<Button-1>",
                 lambda e, r=row: self._assign_speaker_from_sidebar(r._spk_name))
 
@@ -292,7 +295,7 @@ class SpeakerMixin:
         drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
 
         # 우클릭 메뉴 (이름 변경·색상 변경·삭제)
-        for widget in (row, drag_lbl, badge, dot_c, name_canvas, cnt_lbl):
+        for widget in (row, hl, drag_lbl, badge, dot_c, name_canvas, cnt_lbl):
             widget.bind("<Button-3>", lambda e, r=row: self._speaker_menu(e, r))
 
         Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
@@ -302,20 +305,22 @@ class SpeakerMixin:
         self._set_speaker_tips(row)
 
         # 마우스를 올리면 줄을 밝게 하고 드래그 핸들 표시
-        hover_parts = (row, drag_lbl, dot_c, name_frame, name_canvas, cnt_lbl, badge)
+        hover_parts = (drag_lbl, dot_c, name_frame, name_canvas, cnt_lbl, badge)
 
         def _hover(on, r=row):
             bg = _ROW_HOVER if on else _ROW_BG
             for w in hover_parts:
                 w.configure(bg=bg)
             drag_lbl.configure(fg=FG_DIM if on else bg)
+            w, h = r.winfo_width(), r.winfo_height()
+            hl.configure(image=rounded_rect_image(w, h, 6, _ROW_HOVER) if on and w > 12 else "")
 
         def _leave(e, r=row):
             x, y = r.winfo_pointerxy()
             w = r.winfo_containing(x, y)
             if w is None or not str(w).startswith(str(r)):
                 _hover(False)
-        for w in hover_parts + (badge, bar):
+        for w in hover_parts + (row, hl, bar):
             w.bind("<Enter>", lambda e: _hover(True), add="+")
             w.bind("<Leave>", _leave, add="+")
         # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
