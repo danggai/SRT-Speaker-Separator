@@ -51,7 +51,7 @@ class FileMixin:
         self._redo_stack   = []
 
         self.player.stop()
-        self.title("SRT Speaker Editer")
+        self._set_doc_title(None)
 
         self._rebuild_ts_cache()
         self._update_scrollregion()
@@ -120,7 +120,7 @@ class FileMixin:
         self._undo_stack = []
         self._redo_stack = []
         _fname = os.path.splitext(os.path.basename(path))[0]
-        self.title(f"{_fname} - SRT Speaker Editer")
+        self._set_doc_title(_fname)
 
         self.speaker_colors = {}
         # ── 파일 끝 메타 복원 ──────────────────
@@ -232,8 +232,9 @@ class FileMixin:
             self._unsaved = False
             self.save_path = path
             _fn = os.path.splitext(os.path.basename(path))[0]
-            self.title(f"{_fn} - SRT Speaker Editer  ✓")
-            self.after(800, lambda fn=_fn: self.title(f"{fn} - SRT Speaker Editer"))
+            self._set_doc_title(_fn)
+            self._update_title("  ✓")
+            self.after(800, self._update_title)
             show_toast(self, f"저장했습니다  ·  {os.path.basename(path)}")
             return True
         except Exception as e:

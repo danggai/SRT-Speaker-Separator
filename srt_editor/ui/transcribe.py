@@ -799,7 +799,7 @@ class TranscribeMixin:
                     self.save_path = _os.path.join(_media_dir, _base + ".srt")
                     self.filepath  = self.save_path
                     self._unsaved  = True
-                    self.title(f"{_base} (미저장) - SRT Speaker Editer")
+                    self._set_doc_title(f"{_base} (미저장)")
                 self.after(0, _done)
 
             except ImportError:

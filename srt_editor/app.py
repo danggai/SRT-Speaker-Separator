@@ -56,7 +56,7 @@ class SRTEditor(
 
     def __init__(self):
         super().__init__()
-        self.title("SRT Speaker Editer")
+        self._set_doc_title(None)
         self.geometry("1200x820")
         self.minsize(900, 620)
         self.configure(bg=BG)
@@ -431,6 +431,16 @@ class SRTEditor(
                        cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
         tut.pack(pady=(14, 0))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
+
+    def _set_doc_title(self, name):
+        """창 제목에 표시할 파일 이름을 바꾼다 (None이면 앱 이름만)."""
+        self._doc_name = name
+        self._update_title()
+
+    def _update_title(self, suffix=""):
+        base = f"SRT Speaker Editer v{APP_VERSION}"
+        name = getattr(self, "_doc_name", None)
+        self.title((f"{name} - {base}" if name else base) + suffix)
 
     def _hide_overlay(self):
         self.overlay.place_forget()
