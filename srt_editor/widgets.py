@@ -439,6 +439,7 @@ class PopupMenu:
         self._items   = []   # (type, label, command, submenu, state, accel, fg)
         self._win     = None
         self._sub_win = None
+        self._parent_menu = None
 
     def add_command(self, label="", command=None, state="normal",
                     accelerator="", foreground=None, activeforeground=None):
@@ -457,12 +458,14 @@ class PopupMenu:
     def tk_popup(self, x, y):
         self._show(x, y)
 
-    def _show(self, x, y):
+    def _show(self, x, y, parent_menu=None):
         self._destroy()
-        prev = PopupMenu._active
-        if prev is not None and prev is not self:
-            prev._destroy()   # 이전 메뉴가 늦게 닫히며 겹쳐 보이지 않게 바로 닫음
-        PopupMenu._active = self
+        self._parent_menu = parent_menu
+        if parent_menu is None:   # 하위 메뉴가 아닐 때만 이전 메뉴를 바로 닫음 (겹침 방지)
+            prev = PopupMenu._active
+            if prev is not None and prev is not self:
+                prev._destroy()
+            PopupMenu._active = self
         win = tk.Toplevel(self._root)
         win.attributes("-alpha", 0.0)   # 제자리로 옮기기 전까지 투명
         win.overrideredirect(True)
@@ -497,6 +500,13 @@ class PopupMenu:
         def _on_focus_out(e):
             def _check():
                 try:
+                    # 마우스가 메뉴(하위 메뉴 포함) 위에 있으면 닫지 않음
+                    px, py = self._root.winfo_pointerxy()
+                    under = self._root.winfo_containing(px, py)
+                    for w in [self._win, self._sub_win]:
+                        if under is not None and w and w.winfo_exists() \
+                                and str(under).startswith(str(w)):
+                            return
                     focused = self._root.focus_get()
                     for w in [self._win, self._sub_win]:
                         if w and w.winfo_exists():
@@ -574,20 +584,30 @@ class PopupMenu:
 
             if kind == "cmd" and cmd:
                 def _click(e, c=cmd):
+                    top = self
+                    while getattr(top, "_parent_menu", None) is not None:
+                        top = top._parent_menu
                     self._destroy()
+                    top._destroy()   # 하위 메뉴에서 골라도 부모 메뉴까지 닫음
                     self._root.after(10, c)  # destroy 완료 후 실행
                 row.bind("<Button-1>", _click)
                 lbl.bind("<Button-1>", _click)
 
             elif kind == "cascade" and submenu:
                 def _hover_cascade(e, r=row, sub=submenu):
+                    if self._sub_win is not None and self._sub_win is sub._win:
+                        try:
+                            if self._sub_win.winfo_exists():
+                                return   # 이미 열린 하위 메뉴는 다시 만들지 않음
+                        except Exception:
+                            pass
                     rx = r.winfo_rootx() + r.winfo_width()
                     ry = r.winfo_rooty()
                     if self._sub_win:
                         try: self._sub_win.destroy()
                         except Exception: pass
                         self._sub_win = None
-                    sub._show(rx, ry)
+                    sub._show(rx, ry, parent_menu=self)
                     self._sub_win = sub._win
                     # 서브메뉴 FocusOut도 부모 기준으로 처리
                     if sub._win:
