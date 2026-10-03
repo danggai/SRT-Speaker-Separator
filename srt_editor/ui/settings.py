@@ -89,7 +89,7 @@ class SettingsMixin:
         return outer, inner
 
     def _open_settings(self, tab_idx=0):
-        """설정 창 (탭: 패턴 / 자동자막 / 모델관리)"""
+        """설정 창 (탭: 자동 자막 / 모델 관리 / 화자 구분 패턴)"""
         win = tk.Toplevel(self)
         _apply_dark_titlebar(win)
         win.title("설정")
@@ -201,7 +201,17 @@ class SettingsMixin:
         content_host = tk.Frame(win, bg=BG)
         content_host.pack(fill="both", expand=True)
 
-        # ── 탭 1: 화자 구분 패턴 ──────────────────
+        # ── 탭 1: 자동 자막 ────────────────────
+        tab2_outer, tab2 = self._make_scrollable(content_host)
+        _add_tab("자동 자막", tab2_outer)
+        self._build_transcribe_settings_tab(tab2)
+
+        # ── 탭 2: 모델 관리 ────────────────────
+        tab3_outer, tab3 = self._make_scrollable(content_host)
+        _add_tab("모델 관리", tab3_outer)
+        self._build_model_mgmt_tab(tab3)
+
+        # ── 탭 3: 화자 구분 패턴 ──────────────────
         tab1_outer, tab1, tab1_footer = self._make_scrollable(content_host, with_footer=True)
         _add_tab("화자 구분 패턴", tab1_outer)
 
@@ -273,15 +283,6 @@ class SettingsMixin:
                   font=(theme.FONT_FAMILY, 10), padx=12, pady=5,
                   activebackground="#333333",
                   command=win.destroy).pack(side="right", padx=(0, 8))
-
-        # ── 탭 2: 자동 자막 ────────────────────
-        tab2_outer, tab2 = self._make_scrollable(content_host)
-        _add_tab("자동 자막", tab2_outer)
-        self._build_transcribe_settings_tab(tab2)
-
-        tab3_outer, tab3 = self._make_scrollable(content_host)
-        _add_tab("모델 관리", tab3_outer)
-        self._build_model_mgmt_tab(tab3)
 
         _select_tab(tab_idx if 0 <= tab_idx < len(_tabs) else 0)
 
