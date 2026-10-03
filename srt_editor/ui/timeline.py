@@ -238,6 +238,12 @@ class TimelineMixin:
 
     def _pb_configure(self, event=None):
         """창 크기 변경 시 디바운싱 — 100ms 내 추가 이벤트 없을 때만 redraw."""
+        # 레이어 추가처럼 이미 새 크기로 그려둔 경우엔 다시 그리지 않는다
+        if event is not None and getattr(self, "_pb_drawn_size", None):
+            hl = int(self._pb_canvas.cget("highlightthickness"))
+            dw, dh = self._pb_drawn_size
+            if abs(event.width - dw) <= 2 * hl and abs(event.height - (dh + 2 * hl)) <= 2 * hl:
+                return
         if self._pb_configure_job:
             try:
                 self.after_cancel(self._pb_configure_job)
@@ -365,8 +371,17 @@ class TimelineMixin:
         # 올바르게 갱신된다.
         target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H
         if abs(ch - target_ch) > 1:
+            # 재생바와 트랙 헤더 높이를 동시에 바꾸고 배치를 즉시 끝낸다.
+            # (따로따로 바뀌면 창 전체 배치가 여러 번 다시 계산되며 하단 영역이
+            #  깜빡이고 버튼이 겹쳐 보이는 중간 상태가 화면에 나타났다)
             c.configure(height=target_ch)
+            hdr = getattr(self, "_track_hdr", None)
+            if hdr is not None:
+                hdr.configure(height=target_ch)
+            self.update_idletasks()
+            cw = c.winfo_width()
         ch = target_ch
+        self._pb_drawn_size = (cw, ch)
 
         sub_top = 0
         sub_bot = SUB_H
@@ -504,9 +519,13 @@ class TimelineMixin:
                     pts_vis = wf
 
                 # 데이터 포인트 → x픽셀 매핑 (최대값)
+                # 보이는 구간은 그리는 동안 바뀌지 않으므로 _wf_ratio_to_x와 같은
+                # 식을 한 번 계산한 값으로 바로 적용한다 (점이 수만 개라 함수 호출만으로도 느렸음)
+                span_r = end_r - start_r
+                scale = cw / span_r if span_r > 0 else 0.0
                 x_amp_raw = {}
                 for rx, amp in pts_vis:
-                    x = int(self._wf_ratio_to_x(rx, cw))
+                    x = int((rx - start_r) * scale) if scale else 0
                     if 0 <= x < cw:
                         x_amp_raw[x] = max(x_amp_raw.get(x, 0.0), amp)
 
@@ -1068,26 +1087,33 @@ class TimelineMixin:
             return
         self._track_hdr_key = key
         w = self._TRACK_HDR_W
-        c.configure(height=ch)
-        c.delete("all")
+        if int(c.cget("height")) != ch:
+            c.configure(height=ch)
+        # 파일명 레이블(창 항목)은 지우지 않고 위치만 옮긴다 — 지웠다 다시 붙이면 깜빡인다
+        c.delete("hdr")
         zones = []
         for i in range(num_lanes):
             y0 = i * lane_h
-            c.create_rectangle(0, y0, w + 2, y0 + lane_h, fill="#131318", outline="#1E1E2A")
+            c.create_rectangle(0, y0, w + 2, y0 + lane_h, fill="#131318", outline="#1E1E2A",
+                               tags="hdr")
             c.create_text(10, y0 + lane_h / 2, text=f"레이어 {i + 1}", anchor="w",
-                          fill=FG_DIM, font=(theme.FONT_FAMILY, 8))
+                          fill=FG_DIM, font=(theme.FONT_FAMILY, 8), tags="hdr")
             if i == num_lanes - 1 and num_lanes > 1:
                 c.create_text(w - 12, y0 + lane_h / 2, text="×", fill="#8A8A9A",
-                              font=(theme.FONT_FAMILY, 10), tags="rm")
+                              font=(theme.FONT_FAMILY, 10), tags="hdr")
                 zones.append((w - 24, y0, w + 2, y0 + lane_h, "remove"))
         y = num_lanes * lane_h + 1
         if can_add:
             c.create_text(10, y + 11, text="+ 레이어", anchor="w", fill=ACCENT,
-                          font=(theme.FONT_FAMILY, 8, "bold"), tags="add")
+                          font=(theme.FONT_FAMILY, 8, "bold"), tags="hdr")
             zones.append((0, y, w + 2, y + 22, "add"))
             y += 22
-        c.create_line(6, y + 1, w - 6, y + 1, fill="#24243A")
-        c.create_window(8, y + 6, window=self.lbl_media, anchor="nw", width=w - 12)
+        c.create_line(6, y + 1, w - 6, y + 1, fill="#24243A", tags="hdr")
+        if not c.find_withtag("media"):
+            c.create_window(8, y + 6, window=self.lbl_media, anchor="nw", width=w - 12,
+                            tags="media")
+        else:
+            c.coords("media", 8, y + 6)
         self._track_hdr_zones = zones
 
     def _set_media_label(self, name=None):
@@ -1108,7 +1134,7 @@ class TimelineMixin:
             while short and font.measure(short + "…") > max_w:
                 short = short[:-1]
             short += "…"
-        self.lbl_media.configure(text=f"🎵\n{short}", fg=FG)
+        self.lbl_media.configure(text=f"🎵\n{short}", fg=FG_DIM)   # 레이어 이름과 같은 색
         self._media_tip._text = name
 
     def _track_hdr_zone(self, e):
