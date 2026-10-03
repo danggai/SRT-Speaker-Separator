@@ -159,8 +159,9 @@ class SpeakerMixin:
         dot_c.pack(side="left", padx=(4, 2), pady=6)
         dot_c.create_oval(2, 2, 12, 12, fill=color, outline="white", width=1,
                           tags="dot")
-        def _dot_click(e, n=name, dc=dot_c, rf=row):
-            self._pick_speaker_color(n, dc, rf)
+        # 줄은 이름·색이 바뀌어도 재사용되므로, 이벤트에서는 항상 row._spk_name을 읽는다
+        def _dot_click(e, dc=dot_c, rf=row):
+            self._pick_speaker_color(rf._spk_name, dc, rf)
             return "break"
         dot_c.bind("<Button-1>", _dot_click)
         dot_c.bind("<Enter>", lambda e, dc=dot_c: dc.configure(bg="#3A3A3A"))
@@ -172,7 +173,7 @@ class SpeakerMixin:
         del_btn = tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
                   font=(theme.FONT_FAMILY, 10), bd=0, cursor="hand2",
                   activebackground=BG3, activeforeground="#FF6B8A",
-                  command=lambda n=name: self.delete_speaker(n))
+                  command=lambda r=row: self.delete_speaker(r._spk_name))
         del_btn.pack(side="right", padx=(1, 4))
 
         cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
@@ -195,18 +196,15 @@ class SpeakerMixin:
             4, 11, text=name, fill=color,
             font=(theme.FONT_FAMILY, 10, "bold"), anchor="w")
 
-        def _trim_name(canvas=name_canvas, text_id=_name_text_id,
-                       full=name, c=color):
-            """캔버스 너비에 맞게 이름을 잘라 … 로 표시.
-            화자 목록이 새로고침되며 위젯이 이미 파괴된 뒤에도 지연된
-            <Configure> 이벤트가 들어올 수 있으므로, 위젯 존재 여부를
-            먼저 확인하고 모든 Tk 호출을 예외 처리로 감싼다."""
+        def _trim_name(canvas=name_canvas, text_id=_name_text_id, r=row):
+            """캔버스 너비에 맞게 이름을 잘라 … 로 표시 (파괴된 뒤 늦게 온 이벤트는 무시)."""
             try:
                 if not canvas.winfo_exists():
                     return
                 w = canvas.winfo_width()
             except Exception:
                 return
+            full = r._spk_name
             if w <= 4:
                 return
             avail = max(10, w - 8)
@@ -260,19 +258,18 @@ class SpeakerMixin:
 
         for widget in [row, cnt_lbl]:
             widget.bind("<Button-1>",
-                lambda e, n=name: self._assign_speaker_from_sidebar(n))
+                lambda e, r=row: self._assign_speaker_from_sidebar(r._spk_name))
 
         # 드래그 바인딩 (핸들에만)
         drag_lbl.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_drag_start(e, r))
         drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
         drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
 
-        # 툴팁 — 위젯별 개별 힌트
-        key_hint = f"  단축키: {i+1}" if i < 9 else ""
-        Tooltip(row,      f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}", delay=600)
         Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
-        Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
-        Tooltip(del_btn, f"'{name}' 화자 삭제", delay=400)
+        row._tips = (Tooltip(row, "", delay=600), Tooltip(dot_c, "", delay=400),
+                     Tooltip(del_btn, "", delay=400))
+        row._badge, row._dot, row._name_text_id = badge, dot_c, _name_text_id
+        self._set_speaker_tips(row)
         # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
         row.pack(fill="x", padx=6, pady=3, ipady=2,
                  **({"before": before} if before is not None else {}))
@@ -289,27 +286,48 @@ class SpeakerMixin:
         self._make_speaker_row(len(self.speakers) - 1, name, before=add_row)
         self._refresh_speaker_counts()
 
+    def _set_speaker_tips(self, row):
+        name, i = row._spk_name, row._spk_idx
+        key_hint = f"  단축키: {i+1}" if i < 9 else ""
+        tip_row, tip_dot, tip_del = row._tips
+        tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}"
+        tip_dot._text = f"클릭 → '{name}' 색상 변경"
+        tip_del._text = f"'{name}' 화자 삭제"
+
+    def _restyle_speaker_row(self, row, i, name):
+        """기존 줄을 i번째 화자(name)로 바꾼다 — 줄을 새로 만들지 않아 깜빡이지 않음."""
+        color = self._speaker_color(name)
+        if (row._spk_name, row._spk_idx, row._spk_color) == (name, i, color):
+            return
+        renamed = row._spk_name != name
+        row._spk_name, row._spk_idx, row._spk_color = name, i, color
+        row.configure(highlightbackground=color)
+        row._badge.configure(text=str(i + 1) if i < 9 else "")
+        row._dot.itemconfigure("dot", fill=color)
+        row._name_canvas.itemconfigure(row._name_text_id, fill=color)
+        row._name_entry.configure(fg=color, insertbackground=color,
+                                  highlightbackground=color, highlightcolor=color)
+        row._name_var.set(name)
+        if renamed:
+            row._name_trim()
+        self._set_speaker_tips(row)
+
     def _update_speaker_rows(self):
-        """기존 줄을 재사용해 화자 목록을 맞춘다. 처리하지 못하면 False (전체 다시 그리기)."""
+        """i번째 줄을 i번째 화자로 맞춰 재사용하고, 모자라거나 남는 줄만 끝에서 추가·삭제.
+        처리하지 못하면 False (전체 다시 그리기)."""
         add_row = getattr(self, "_spk_add_row", None)
-        rows = [w for w in self.speaker_inner.winfo_children() if hasattr(w, "_spk_name")]
+        rows = [w for w in self.speaker_inner.pack_slaves() if hasattr(w, "_spk_name")]
         if not self.speakers or not rows or add_row is None or not add_row.winfo_exists():
             return False
-        want = [(n, self._speaker_color(n)) for n in self.speakers]
-        keep = {}
-        for r in rows:
-            key = (r._spk_name, r._spk_color)
-            if key in want and want.index(key) == r._spk_idx and r._spk_name not in keep:
-                keep[r._spk_name] = r
+        for r in rows[len(self.speakers):]:
+            r.destroy()
+        rows = rows[:len(self.speakers)]
+        for i, name in enumerate(self.speakers):
+            if i < len(rows):
+                self._restyle_speaker_row(rows[i], i, name)
             else:
-                r.destroy()
-        for i in range(len(want) - 1, -1, -1):
-            name = want[i][0]
-            if name in keep:
-                continue
-            nxt = next((keep[n] for n, _ in want[i + 1:] if n in keep), add_row)
-            keep[name] = self._make_speaker_row(i, name, before=nxt)
-        self._spk_count_lbls = {n: keep[n]._cnt_lbl for n in self.speakers}
+                rows.append(self._make_speaker_row(i, name, before=add_row))
+        self._spk_count_lbls = {n: r._cnt_lbl for n, r in zip(self.speakers, rows)}
         edit = getattr(self, "_spk_edit_row", None)
         if edit is not None and not edit.winfo_exists():
             self._spk_edit_row = None
