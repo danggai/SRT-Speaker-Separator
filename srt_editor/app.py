@@ -15,7 +15,7 @@ from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
 from . import theme
 from .config import _load_config
-from .media import MediaPlayer
+from .media import MEDIA_EXTS, MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
 from .theme import (
     ACCENT,
@@ -409,10 +409,15 @@ class SRTEditor(
                         highlightbackground=BORDER, highlightthickness=2)
         card.place(relx=0.5, rely=0.5, anchor="center")
 
-        tk.Label(card, text="📄", bg=BG2, fg=FG,
-                 font=(theme.FONT_FAMILY, 48)).pack(pady=(0, 8))
-        tk.Label(card, text="SRT 파일을 여기에 드래그하세요",
+        tk.Label(card, text="📄 🎬", bg=BG2, fg=FG,
+                 font=(theme.FONT_FAMILY, 40)).pack(pady=(0, 8))
+        tk.Label(card, text="자막 또는 음성/영상 파일을 여기에 드래그하세요",
                  bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 16, "bold")).pack()
+        tk.Label(card,
+                 text="SRT 자막 → 바로 편집 (같은 이름의 음성/영상도 함께 열림)\n"
+                      "음성/영상만 → 같은 이름의 SRT를 열거나, 없으면 자막 자동 생성",
+                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 10),
+                 justify="center").pack(pady=(10, 0))
         tk.Label(card, text="또는",
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 11)).pack(pady=8)
 
@@ -425,7 +430,8 @@ class SRTEditor(
                              activebackground="#c73550", activeforeground="white")
         btn_open.pack(pady=(0, 4))
 
-        tk.Label(card, text="지원: .srt",
+        tk.Label(card,
+                 text="지원: .srt  ·  " + " ".join(e.lstrip(".") for e in MEDIA_EXTS),
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(pady=(8, 0))
 
     def _hide_overlay(self):
