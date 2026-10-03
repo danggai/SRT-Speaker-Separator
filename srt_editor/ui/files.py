@@ -441,6 +441,9 @@ class FileMixin:
                                               parent=self)
         if not out_dir:
             return
+        if self._opt("export_subfolder"):
+            out_dir = os.path.join(out_dir, "srts")
+            os.makedirs(out_dir, exist_ok=True)
 
         speaker_subs  = defaultdict(list)
         untagged_subs = []

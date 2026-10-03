@@ -21,6 +21,7 @@ OPTION_DEFAULTS = {
     "backup_minutes": 3,          # 자동 백업 간격 (분)
     "export_dir_mode": "ask",     # 내보내기 폴더: ask | same | fixed
     "export_dir": "",             # fixed일 때 폴더
+    "export_subfolder": False,    # 내보낼 때 srts 폴더에 모아 저장
 }
 
 BACKUP_DIR = pathlib.Path.home() / ".srt_speaker_editor_backup"

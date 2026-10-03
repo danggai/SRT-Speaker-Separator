@@ -194,7 +194,7 @@ class SettingsMixin:
         "edit": ("advance_after_assign", "seek_step", "seek_step_shift", "click_seek",
                  "new_sub_len", "lock_timeline"),
         "storage": ("backup_enabled", "backup_minutes"),
-        "export": ("export_dir_mode", "export_dir"),
+        "export": ("export_dir_mode", "export_dir", "export_subfolder"),
     }
 
     def _reset_settings_section(self, section):
@@ -758,6 +758,10 @@ class SettingsMixin:
             else:
                 folder.pack_forget()
         _changed()
+
+        _, right = self._settings_row(card, "▣", "srts 폴더에 모아 저장",
+                                      "고른 위치 안에 srts 폴더를 만들어 저장")
+        self._opt_toggle(right, "export_subfolder")
 
     def _build_model_mgmt_tab(self, parent):
         """다운로드된 모델 캐시 관리 탭."""
