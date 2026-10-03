@@ -17,7 +17,7 @@ from .ui.correct import CorrectionMixin
 from .ui.tutorial import TutorialMixin
 from .ui.shortcuts import ShortcutsMixin
 from . import theme
-from .config import _load_config
+from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
 from .media import MEDIA_EXTS, MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
@@ -121,6 +121,7 @@ class SRTEditor(
 
         self._build_styles()
         self._build_ui()
+        self._apply_key_hints(_cfg.get("show_key_hints", False))
         self._setup_dnd()        # 드래그 앤 드롭
         # Windows에서 한글 조합 중인 글자가 입력창에 바로 보이도록
         self._ime_overlay = ImeCompositionOverlay(self)
@@ -297,15 +298,24 @@ class SRTEditor(
             # 아이콘은 캔버스에 그려 단축키·저장 표시를 배경 없이 겹쳐 그릴 수 있게 함
             import tkinter.font as tkfont
             ifont = tkfont.Font(self, family=theme.FONT_FAMILY, size=15)
+            icon_w = ifont.measure(icon)
             ic = tk.Canvas(box, bg=bg, highlightthickness=0, cursor="hand2",
-                           width=ifont.measure(icon) + 24, height=ifont.metrics("linespace") + 4)
+                           width=icon_w + 24, height=ifont.metrics("linespace") + 4)
             ic.pack(fill="x")
             ic.create_text(0, 0, text=icon, fill=fg_hover, font=ifont, tags="icon")
             ic.create_text(0, 0, text="", fill=FG_DIM, anchor="ne",
                            font=(theme.FONT_FAMILY, 7), tags="hint")
+            box._fg = fg   # 이름 글자색 (토글 켜짐 표시에 사용)
             ic.create_oval(0, 0, 0, 0, fill=ACCENT, outline="", state="hidden", tags="dot")
 
+            hfont = tkfont.Font(self, family=theme.FONT_FAMILY, size=7)
+
             def _layout(e=None, c=ic):
+                hint = c.itemcget("hint", "text")
+                # 단축키 글자가 아이콘과 겹치지 않을 만큼 폭 확보
+                need = icon_w + 2 * (hfont.measure(hint) + 4) if hint else icon_w + 24
+                if int(c.cget("width")) != max(icon_w + 24, need):
+                    c.configure(width=max(icon_w + 24, need))
                 w, h = c.winfo_width(), c.winfo_height()
                 c.coords("icon", w / 2, h / 2 + 2)
                 c.coords("hint", w - 3, 1)
@@ -327,7 +337,7 @@ class SRTEditor(
             def _leave(e):
                 for w in (box,) + tuple(box.winfo_children()):
                     w.configure(bg=bg)
-                tx.configure(fg=fg)
+                tx.configure(fg=box._fg)
 
             run = _defocus(cmd)
             for w in parts:
@@ -338,6 +348,7 @@ class SRTEditor(
                 Tooltip(w, tip, delay=500)
             self._tb_btns[label] = box
             self._tb_icons[label] = ic
+            box._label = tx
             return box
 
         def _sep(side="left"):
@@ -363,6 +374,7 @@ class SRTEditor(
                                  side="right", bg="#5B3FA0", hover="#6B4DB4",
                                  fg="white", fg_hover="white")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
+        _tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기", side="right")
         _sep(side="right")
 
         # 미지정 카운터
@@ -454,10 +466,6 @@ class SRTEditor(
         tut.pack(pady=(14, 0))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
         self._tut_link = tut
-        keys = tk.Label(card, text="단축키 보기  ( ? )", bg=BG2, fg=FG_DIM,
-                        cursor="hand2", font=(theme.FONT_FAMILY, 9, "underline"))
-        keys.pack(pady=(6, 0))
-        keys.bind("<Button-1>", lambda e: self._show_shortcuts())
         self._render_recent_files()
 
     @property
@@ -474,6 +482,33 @@ class SRTEditor(
         ic = getattr(self, "_tb_icons", {}).get("저장")
         if ic is not None:   # 저장 안 된 변경이 있으면 저장 버튼에 점 표시
             ic.itemconfigure("dot", state="normal" if value else "hidden")
+
+    # 버튼 우상단에 표시할 단축키
+    _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
+                     "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y"}
+
+    def _toggle_key_hints(self):
+        on = not getattr(self, "_key_hints_on", False)
+        self._apply_key_hints(on)
+        cfg = _load_config()
+        cfg["show_key_hints"] = on
+        _save_config(cfg)
+
+    def _apply_key_hints(self, on):
+        """주요 버튼 우상단에 단축키를 작게 표시하거나 숨긴다."""
+        self._key_hints_on = on
+        for label, key in self._TB_KEY_HINTS.items():
+            ic = self._tb_icons.get(label)
+            if ic is not None:
+                ic.itemconfigure("hint", text=key if on else "")
+                ic.relayout()
+        for btn, key in ((self._split_btn, "S"), (self.btn_play, "Space"),
+                         (self.btn_prev, "←"), (self.btn_next, "→")):
+            btn.set_hint(key if on else "")
+        toggle = self._tb_btns.get("단축키")
+        if toggle is not None:   # 켜져 있으면 이름을 강조색으로
+            toggle._fg = ACCENT if on else FG_DIM
+            toggle._label.configure(fg=toggle._fg)
 
     def _set_doc_title(self, name):
         """창 제목에 표시할 파일 이름을 바꾼다 (None이면 앱 이름만)."""

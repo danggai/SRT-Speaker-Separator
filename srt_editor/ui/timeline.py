@@ -117,6 +117,7 @@ class TimelineMixin:
         # 자막 도구 (재생 위치 기준으로 나누기 / 추가)
         b_split = flat_button(ctrl, "✂ 나누기", _split_and_defocus, bg=MEDIA_BG)
         b_split.pack(side="left", padx=(8, 2))
+        self._split_btn = b_split
         Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
         b_add.pack(side="left")
@@ -134,7 +135,7 @@ class TimelineMixin:
         self.btn_prev.pack(side="left", padx=1)
 
         self.btn_play = flat_button(btn_group, "▶", self._media_play_pause,
-                                    bg=ACCENT, fg="white", hover="#AE96E2",
+                                    bg=ACCENT, fg="white", hover="#AE96E2", hint_fg="#E8E0FF",
                                     font=(theme.FONT_FAMILY, 13, "bold"), padx=14)
         self.btn_play.pack(side="left", padx=6)
 
