@@ -1017,7 +1017,7 @@ class SubtitleTableMixin:
 
     def _hdr_divider_at(self, mx):
         pos = self._get_col_positions()
-        for cid in ["time", "content", "speaker"]:
+        for cid in ["content", "speaker"]:   # 시간 칸 너비는 고정
             x, w = pos[cid]
             if abs(mx - (x + w)) <= 5:
                 return cid
