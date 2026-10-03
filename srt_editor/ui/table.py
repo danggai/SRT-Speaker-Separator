@@ -8,6 +8,8 @@ from .. import theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, ROW_HL
 from ..widgets import PopupMenu, Tooltip
 
+_BR = " ↵ "   # 입력칸·목록에서 줄바꿈 표시
+
 
 class SubtitleTableMixin:
     """자막 표(가상 스크롤 슬롯) 렌더링·선택·열 레이아웃."""
@@ -268,6 +270,7 @@ class SubtitleTableMixin:
 
         txt_e.bind("<FocusOut>", _txt_focus_out)
         txt_e.bind("<Return>",   lambda e: (self.focus_set(), "break")[1])   # 확정 → FocusOut에서 저장
+        txt_e.bind("<Shift-Return>", lambda e: self._txt_insert_br(e.widget))
         txt_e.bind("<FocusIn>",  lambda e, s=slot_idx: self._slot_focus_in(s))
 
         self._slot_data.append(-1)
@@ -375,6 +378,14 @@ class SubtitleTableMixin:
             return
         self._txt_edit_start(slot)
         self._slot_widgets[slot]["content"].icursor("end")
+        return "break"
+
+    @staticmethod
+    def _txt_insert_br(ent):
+        """Shift+Enter: 커서 위치에 줄바꿈 삽입."""
+        if ent.selection_present():
+            ent.delete("sel.first", "sel.last")
+        ent.insert("insert", _BR)
         return "break"
 
     def _txt_edit_end(self, slot_idx):
@@ -637,7 +648,7 @@ class SubtitleTableMixin:
             di = self._slot_data_idx(slot_idx)
         if di < 0 or di >= len(self.subtitles):
             return
-        val = wi["txt_var"].get()
+        val = re.sub(r" ?↵ ?", "\n", wi["txt_var"].get())
         if self.subtitles[di].get("text", "") != val:
             self._push_undo()   # 실제로 바뀐 경우에만 undo 스냅샷 기록
             self.subtitles[di]["text"] = val
@@ -661,7 +672,7 @@ class SubtitleTableMixin:
         # 내용이 복제 저장되는 문제가 생긴다. 그래서 편집을 "시작하는" 이 시점에는
         # 가드를 우회하고 반드시 지금 자막의 실제 저장값으로 강제 갱신한다.
         sub = self.subtitles[di] if di < len(self.subtitles) else {}
-        wi["txt_var"].set(sub.get("text", ""))
+        wi["txt_var"].set(sub.get("text", "").replace("\n", _BR))
         ts_full = sub.get("timestamp", "")
         parts   = ts_full.split("-->")
         wi["ts_s_var"].set(parts[0].strip() if len(parts) >= 2 else ts_full.strip())
@@ -796,7 +807,7 @@ class SubtitleTableMixin:
             c.itemconfigure(t + "dur", text="")
 
         if focus is not wi["content"]:
-            wi["txt_var"].set(sub.get("text", ""))
+            wi["txt_var"].set(sub.get("text", "").replace("\n", _BR))
         if wi["_paint"].get("bg") != bg:   # 바뀔 때만 위젯 설정
             wi["content"].configure(bg=bg, highlightbackground=bg)
             wi["_paint"]["bg"] = bg
