@@ -5,7 +5,7 @@ import tkinter.font as tkfont
 from tkinter import ttk
 
 from .. import theme
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, ROW_HL
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FONT_MONO, ROW_HL
 from ..widgets import PopupMenu, Tooltip
 
 _BR = " ↵ "   # 입력칸·목록에서 줄바꿈 표시
@@ -915,9 +915,9 @@ class SubtitleTableMixin:
             is_sel = val == current
             color = self._speaker_color(val)
             c.itemconfigure(f"{t}pb{pi}", fill=color if is_sel else bg,
-                            outline=color if is_sel else "#2A2A2A")
+                            outline=color if is_sel else "#3A3A44")
             c.itemconfigure(f"{t}pt{pi}", text=label,
-                            fill=_on_color(color) if is_sel else "#444455",
+                            fill=_on_color(color) if is_sel else FG_FAINT,
                             font=self._pill_font(is_sel))
             wi["pill_values"][pi] = val
             wi["pill_w"][pi] = self._pill_text_w(label, is_sel) + 2 * self._PILL_PADX

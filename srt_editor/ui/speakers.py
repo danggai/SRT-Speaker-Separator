@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..config import _load_config, _save_config
-from ..theme import BG2, BG3, BORDER, FG, FG_DIM, SPEAKER_COLORS
+from ..theme import BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS
 
 _ROW_BG    = BG2         # 화자 줄 배경
 _ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
@@ -30,7 +30,7 @@ class SpeakerMixin:
         _hdr_row.pack(fill="x", padx=(14, 8), pady=(16, 6))
         ttk.Label(_hdr_row, text="화자", style="Header.TLabel",
                   background=BG2).pack(side="left")
-        self._spk_total_lbl = tk.Label(_hdr_row, text="", bg=BG2, fg="#5A5A66",
+        self._spk_total_lbl = tk.Label(_hdr_row, text="", bg=BG2, fg=FG_HINT,
                                        font=(theme.FONT_FAMILY, 9))
         self._spk_total_lbl.pack(side="left", padx=(6, 0))
 
@@ -463,7 +463,7 @@ class SpeakerMixin:
         btn.bind("<Enter>", lambda e: btn.configure(bg=_ROW_HOVER, fg=FG))
         btn.bind("<Leave>", lambda e: btn.configure(bg=BG2, fg=FG_DIM))
         btn.bind("<ButtonRelease-1>", lambda e: self.add_speaker())
-        tk.Label(add_row, text="숫자 키로 지정  ·  ` 키로 해제", bg=BG2, fg="#4A4A55",
+        tk.Label(add_row, text="숫자 키로 지정  ·  ` 키로 해제", bg=BG2, fg=FG_FAINT,
                  font=(theme.FONT_FAMILY, 8), anchor="w").pack(fill="x", padx=10, pady=(2, 0))
         return add_row
 

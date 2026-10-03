@@ -523,11 +523,11 @@ class SRTEditor(
         # 최근 파일 (홈 화면이 보일 때마다 갱신)
         self._recent_box = tk.Frame(wrap, bg=BG)
 
-        tut = tk.Label(wrap, text="튜토리얼 다시 보기", bg=BG, fg="#5A5A66",
+        tut = tk.Label(wrap, text="튜토리얼 다시 보기", bg=BG, fg=theme.FG_HINT,
                        cursor="hand2", font=(theme.FONT_FAMILY, 9))
         tut.pack(pady=(18, 0))
         tut.bind("<Enter>", lambda e: tut.configure(fg=FG_DIM))
-        tut.bind("<Leave>", lambda e: tut.configure(fg="#5A5A66"))
+        tut.bind("<Leave>", lambda e: tut.configure(fg=theme.FG_HINT))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
         self._tut_link = tut
         self._render_recent_files()

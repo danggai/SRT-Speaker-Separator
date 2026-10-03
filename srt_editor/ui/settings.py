@@ -8,7 +8,7 @@ from tkinter import ttk
 from .. import srt_io, theme
 from ..config import _load_config, _save_config
 from ..srt_io import display_to_regex
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
 from ..version import APP_VERSION, GITHUB_LATEST_API
 from .options import OPTION_DEFAULTS
 from ..widgets import PurpleSlider, Segmented, ToggleSwitch, flat_button, rounded_rect_image
@@ -309,7 +309,7 @@ class SettingsMixin:
         tk.Label(ver, text=f"현재 버전  v{APP_VERSION}", bg=BG2, fg=FG_DIM,
                  font=(theme.FONT_FAMILY, 8)).pack(anchor="w")
         self._settings_latest_lbl = tk.Label(ver, text="최신 버전  확인 중…", bg=BG2,
-                                             fg="#5A5A66", font=(theme.FONT_FAMILY, 8))
+                                             fg=FG_HINT, font=(theme.FONT_FAMILY, 8))
         self._settings_latest_lbl.pack(anchor="w", pady=(2, 6))
         import webbrowser as _wb
         _gh_lbl = tk.Label(ver, text="GitHub", bg=BG2, fg="#6A8FC8", cursor="hand2",

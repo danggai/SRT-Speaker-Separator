@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import messagebox
 
 from .. import correction, theme
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, _apply_dark_titlebar
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
 from ..widgets import ToggleSwitch, flat_button
 
 _WRONG_FG = "#E08080"
@@ -181,7 +181,7 @@ class CorrectionMixin:
             check_btn.pack()
         else:
             tk.Label(right_box, text="미디어를 열면 음성으로\n다시 확인할 수 있어요",
-                     bg=BG, fg="#5A5A66", justify="right",
+                     bg=BG, fg=FG_HINT, justify="right",
                      font=(theme.FONT_FAMILY, 8)).pack()
 
         # ── 하단 버튼 ─────────────────────────
