@@ -34,7 +34,7 @@ class SubtitleTableMixin:
     _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
     _COL_IDS   = ["num", "time", "speaker"]
     _COL_DEF_W = {"num": 44, "time": 150, "speaker": 220}
-    ROW_H      = 44   # 행 높이 (카드 38 + 위아래 간격 6)
+    ROW_H      = 38   # 행 높이 (카드 32 + 위아래 간격 6)
     _CARD_X    = 8    # 카드 좌우 바깥 여백
     _CARD_Y    = 3    # 카드 위아래 바깥 여백
     _CARD_R    = 8    # 카드 모서리 둥글기
