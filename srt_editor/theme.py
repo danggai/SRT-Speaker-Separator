@@ -62,6 +62,14 @@ BG2       = "#141414"
 BG3       = "#242424"
 ACCENT    = "#9B7FD4"   # 연보라 포인트
 FG        = "#E0E0E0"
+def is_hex_color(c):
+    """'#RRGGBB' 형식의 색 문자열인지."""
+    try:
+        return isinstance(c, str) and len(c) == 7 and c[0] == "#" and int(c[1:], 16) >= 0
+    except ValueError:
+        return False
+
+
 FG_DIM    = "#808080"
 FG_HINT   = "#707080"   # 안내·보조 설명 (FG_DIM보다 한 단계 흐림)
 FG_FAINT  = "#666678"   # 아직 선택 안 된 화자 버튼·사이드바 안내 (가장 흐림)

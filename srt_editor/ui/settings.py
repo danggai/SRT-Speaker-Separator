@@ -8,7 +8,7 @@ from .. import srt_io, theme
 from ..config import _load_config, _save_config
 from ..srt_io import display_to_regex
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
-from ..version import APP_VERSION, GITHUB_LATEST_API
+from ..version import APP_VERSION, fetch_latest_version
 from .options import OPTION_DEFAULTS
 from ..widgets import (CheckBox, DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, flat_button,
                        rounded_rect_image)
@@ -236,7 +236,14 @@ class SettingsMixin:
 
     def _open_settings(self, tab_idx=0):
         """설정 창 (왼쪽 메뉴 + 오른쪽 카드 묶음)."""
+        old = getattr(self, "_settings_win", None)
+        if old is not None and old.winfo_exists():
+            old.deiconify()
+            old.lift()
+            old.focus_force()
+            return
         win = tk.Toplevel(self)
+        self._settings_win = win
         win.withdraw()
         win.title("설정")
         win.configure(bg=BG)
@@ -328,29 +335,15 @@ class SettingsMixin:
             _update_latest_lbl(self._latest_version_cache)
         else:
             import threading
+
             def _fetch_for_settings():
-                import urllib.request, json
-                headers = {"User-Agent": "Mozilla/5.0 SRT-Speaker-Separator",
-                           "Accept": "application/vnd.github+json"}
-                for url, extractor in [
-                    ("https://api.github.com/repos/danggai/SRT-Speaker-Separator/releases/latest",
-                     lambda d: d.get("tag_name", "")),
-                    ("https://api.github.com/repos/danggai/SRT-Speaker-Separator/git/refs/tags",
-                     lambda d: d[-1]["ref"].split("/")[-1] if d else ""),
-                    (GITHUB_LATEST_API,
-                     lambda d: d[0]["name"] if d else ""),
-                ]:
-                    try:
-                        req = urllib.request.Request(url, headers=headers)
-                        with urllib.request.urlopen(req, timeout=5) as resp:
-                            tag = extractor(json.loads(resp.read().decode()))
-                        if tag:
-                            self._latest_version_cache = tag.lstrip("v")
-                            self.after(0, lambda v=tag.lstrip("v"): _update_latest_lbl(v))
-                            return
-                    except Exception:
-                        continue
-                self.after(0, lambda: _update_latest_lbl("확인 실패"))
+                tag = fetch_latest_version(timeout=5)
+                if tag:
+                    self._latest_version_cache = tag
+                try:
+                    self.after(0, lambda: _update_latest_lbl(tag or "확인 실패"))
+                except (RuntimeError, tk.TclError):   # 그 사이 앱이 닫힘
+                    pass
             threading.Thread(target=_fetch_for_settings, daemon=True).start()
 
         # ── 섹션 ──────────────────────────────
@@ -412,7 +405,7 @@ class SettingsMixin:
         from tkinter import filedialog
         path = filedialog.asksaveasfilename(
             title="설정 내보내기", parent=win, defaultextension=".json",
-            initialfile="srt_speaker_editer_settings.json",
+            initialfile="srt_speaker_editor_settings.json",
             filetypes=[("JSON", "*.json"), ("모든 파일", "*.*")])
         if not path:
             return

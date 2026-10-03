@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..config import _load_config, _save_config
-from ..theme import BG2, BG3, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS
+from ..theme import BG2, BG3, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS, is_hex_color
 
 _ROW_BG    = BG2         # 화자 줄 배경
 _ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
@@ -111,19 +111,22 @@ class SpeakerMixin:
         auto = self._auto_speaker_colors()
         return {n: auto[n] for n in self.speakers if n in auto}
 
-    def _restore_auto_colors(self, saved):
-        """파일에서 읽은 자동 배정 색을 복원 (형식이 잘못된 항목은 무시)."""
-        self._auto_kept = {}
-        self._auto_color_cache = None
+    @staticmethod
+    def _valid_color_map(saved):
+        """파일에서 읽은 {화자: '#RRGGBB'} 중 형식이 맞는 것만."""
         if not isinstance(saved, dict):
-            return
-        for n, c in saved.items():
-            try:
-                ok = isinstance(n, str) and isinstance(c, str) and len(c) == 7 and c[0] == "#" and int(c[1:], 16) >= 0
-            except ValueError:
-                ok = False
-            if ok:
-                self._auto_kept[n] = c
+            return {}
+        return {n: c for n, c in saved.items() if isinstance(n, str) and is_hex_color(c)}
+
+    def _restore_speaker_colors(self, saved):
+        """파일에서 읽은 화자 색 복원 (잘못된 값은 무시)."""
+        self.speaker_colors = self._valid_color_map(saved)
+        self._auto_color_cache = None
+
+    def _restore_auto_colors(self, saved):
+        """파일에서 읽은 자동 배정 색 복원 (잘못된 값은 무시)."""
+        self._auto_kept = self._valid_color_map(saved)
+        self._auto_color_cache = None
 
     def _save_global_speaker_color(self, name, color):
         """화자 색상을 로컬 스토리지(config)에도 저장 — 다른 자막 파일을
@@ -141,6 +144,7 @@ class SpeakerMixin:
         current_color = self._speaker_color(name)
         result = _ColorPickerDialog(self, current_color, title=f"{name} 색상 선택").show()
         if result and result != current_color:
+            self.speaker_colors.setdefault(name, current_color)   # 실행 취소하면 이 색으로 돌아오도록 먼저 기록
             self._push_undo()
             self.speaker_colors[name] = result   # 1순위: 현재 파일에 반영
             self._save_global_speaker_color(name, result)  # 2순위: 로컬 스토리지에도 반영
@@ -522,8 +526,7 @@ class SpeakerMixin:
         self._fill_slots(self._vscroll_top)
 
     def _on_speaker_key(self, event):
-        """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자.
-        항상 현재 선택된 행(_selected_rows)에 적용."""
+        """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자. 선택한 줄에 적용."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         key = event.keysym
@@ -536,47 +539,39 @@ class SpeakerMixin:
             val = self.speakers[spk_idx]
         else:
             return
+        if self._assign_speaker_to_selection(val, advance=True):
+            return "break"
 
+    def _assign_speaker_to_selection(self, val, advance=False):
+        """선택한 줄(없으면 마지막으로 누른 줄)에 화자 지정. 지정했으면 True.
+        advance: 옵션이 켜져 있고 한 줄만 지정했으면 다음 줄로 넘어감."""
         selected = getattr(self, "_selected_rows", set())
-        focused  = getattr(self, "_last_focused_idx", None)
+        focused = getattr(self, "_last_focused_idx", None)
         if selected:
-            targets = sorted(selected)
+            targets = sorted(i for i in selected if i < len(self.subtitles))
         elif focused is not None and focused < len(self.subtitles):
             targets = [focused]
         else:
-            return
-
+            targets = []
         if not targets:
-            return
-
+            return False
         self._push_undo()
         for idx in targets:
-            if idx < len(self.subtitles):
-                self.subtitles[idx]["speaker"] = val
-                self._refresh_row(idx)
+            self.subtitles[idx]["speaker"] = val
+            self._refresh_row(idx)
         self._unsaved = True
         self._refresh_speaker_counts()
         self._wf_img_cache = None
         self._pb_redraw()   # 타임라인에도 바로 반영
-        # 설정: 한 줄 지정 후 다음 줄로
-        if self._opt("advance_after_assign") and len(targets) == 1 \
+        if advance and self._opt("advance_after_assign") and len(targets) == 1 \
                 and targets[0] + 1 < len(self.subtitles):
             nxt = targets[0] + 1
             self._select_row(nxt)
             self._scroll_to_row(nxt)
-        return "break"
+        return True
 
     def _assign_speaker_from_sidebar(self, name):
-        idx = getattr(self, "_last_focused_idx", None)
-        if idx is None or idx >= len(self.subtitles):
-            return
-        self._push_undo()
-        self.subtitles[idx]["speaker"] = name
-        self._unsaved = True
-        self._refresh_row(idx)
-        self._refresh_speaker_counts()
-        self._wf_img_cache = None
-        self._pb_redraw()   # 타임라인에도 바로 반영
+        self._assign_speaker_to_selection(name)
 
     def add_speaker(self):
         # 고유 기본 이름 생성 (새화자1, 새화자2 ...)

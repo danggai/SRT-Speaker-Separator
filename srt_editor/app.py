@@ -44,7 +44,7 @@ from .theme import (
     _apply_dark_titlebar,
     _pick_font,
 )
-from .version import APP_VERSION, GITHUB_TAGS_URL
+from .version import APP_VERSION, GITHUB_TAGS_URL, fetch_latest_version, is_newer
 from .widgets import Tooltip, flat_button, rounded_rect_image
 
 
@@ -594,7 +594,7 @@ class SRTEditor(
         self._update_title()
 
     def _update_title(self, suffix=""):
-        base = f"SRT Speaker Editer v{APP_VERSION}"
+        base = f"SRT Speaker Editor v{APP_VERSION}"
         name = getattr(self, "_doc_name", None)
         mark = "● " if self._unsaved and name else ""   # 저장 안 된 변경 표시
         self.title(mark + (f"{name} - {base}" if name else base) + suffix)
@@ -697,65 +697,15 @@ class SRTEditor(
         _threading.Thread(target=self._fetch_latest_version, daemon=True).start()
 
     def _fetch_latest_version(self):
-        import urllib.request, json, pathlib, datetime
-
-        log_path = pathlib.Path.home() / ".srt_speaker_update.log"
-        def _log(msg):
-            try:
-                with open(log_path, "a", encoding="utf-8") as f:
-                    f.write(f"[{datetime.datetime.now():%H:%M:%S}] {msg}\n")
-            except Exception:
-                pass
-
-        def _parse(v):
-            try:
-                return tuple(int(x) for x in v.strip().lstrip("v").split("."))
-            except Exception:
-                return (0,)
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 SRT-Speaker-Separator",
-            "Accept": "application/vnd.github+json",
-        }
-
-        latest = None
-
-        # 1차: git/refs/tags (가장 안정적)
-        try:
-            req = urllib.request.Request(
-                "https://api.github.com/repos/danggai/SRT-Speaker-Separator/git/refs/tags",
-                headers=headers)
-            with urllib.request.urlopen(req, timeout=6) as resp:
-                refs = json.loads(resp.read().decode())
-            if refs:
-                latest = refs[-1]["ref"].split("/")[-1].lstrip("v")
-                _log(f"git/refs/tags → {latest}")
-        except Exception as e:
-            _log(f"git/refs/tags FAIL: {e}")
-
-        # 2차: /tags API
+        latest = fetch_latest_version()
         if not latest:
-            try:
-                req = urllib.request.Request(
-                    "https://api.github.com/repos/danggai/SRT-Speaker-Separator/tags",
-                    headers=headers)
-                with urllib.request.urlopen(req, timeout=6) as resp:
-                    tags = json.loads(resp.read().decode())
-                if tags:
-                    latest = tags[0]["name"].lstrip("v")
-                    _log(f"/tags → {latest}")
-            except Exception as e:
-                _log(f"/tags FAIL: {e}")
-
-        if not latest:
-            _log("모든 엔드포인트 실패")
             return
-
         self._latest_version_cache = latest
-        _log(f"current={APP_VERSION} latest={latest} newer={_parse(latest) > _parse(APP_VERSION)}")
-
-        if _parse(latest) > _parse(APP_VERSION):
-            self.after(0, lambda v=latest: self._show_update_badge(v))
+        if is_newer(latest, APP_VERSION):
+            try:
+                self.after(0, lambda v=latest: self._show_update_badge(v))
+            except (RuntimeError, tk.TclError):   # 그 사이 앱이 닫힘
+                pass
 
     def _show_update_badge(self, latest_ver):
         import webbrowser
@@ -792,11 +742,17 @@ class SRTEditor(
                 parent=self)
             if ans is None:    # 취소
                 return
-            if ans:            # 예 → 저장 후 종료
+            if ans:            # 예 → 저장 후 종료 (저장 실패·취소면 종료하지 않음)
                 self.save_file()
-            else:              # 아니오 → 변경을 버리므로 백업도 지움
+                if self._unsaved:
+                    self.save_file_as()
+                    if self._unsaved:
+                        return
+            else:             # 아니오 → 변경을 버리므로 백업도 지움
                 self._clear_backup()
         self._remember_view()
+        if getattr(self, "_vol_save_job", None):
+            self._save_volume()
         self._stop_progress_poll()
         self.player.stop()
         self.destroy()

@@ -203,8 +203,7 @@ class FileMixin:
             if sp and sp not in self.speakers:
                 self.speakers.append(sp)
 
-        if "speaker_colors" in meta:
-            self.speaker_colors = meta["speaker_colors"]
+        self._restore_speaker_colors(meta.get("speaker_colors"))
         self._restore_auto_colors(meta.get("auto_colors"))
         if "display_pattern" in meta:
             srt_io.g_display_pattern = meta["display_pattern"]
