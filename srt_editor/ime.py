@@ -9,7 +9,9 @@ _GWLP_WNDPROC = -4
 _CFS_POINT = 0x0002
 _OFFSCREEN = -32000
 _IACE_DEFAULT = 0x10
-_PREVIEW_TAG = "ImePreview"
+_PRE_TAG = "ImePreBefore"    # 입력칸 기본 동작 전
+_POST_TAG = "ImePreAfter"    # 입력칸 기본 동작 후
+_WM_IME_ENDCOMPOSITION = 0x010E
 
 
 class ImeCompositionOverlay:
@@ -23,9 +25,10 @@ class ImeCompositionOverlay:
         self._no_ime = set()   # 입력기를 떼어 둔 창 (입력칸이 아닌 곳)
         if sys.platform != "win32":
             return
-        # 글자 입력·포커스 이동 전에 임시 글자부터 지움
-        root.bind_class(_PREVIEW_TAG, "<KeyPress>", lambda e: self._clear_preview())
-        root.bind_class(_PREVIEW_TAG, "<FocusOut>", lambda e: self._clear_preview())
+        # 글자가 확정돼 들어가기 전에 임시 글자를 빼고, 들어간 뒤 바로 다시 채움
+        root.bind_class(_PRE_TAG, "<KeyPress>", lambda e: self._clear_preview())
+        root.bind_class(_PRE_TAG, "<FocusOut>", lambda e: self._clear_preview())
+        root.bind_class(_POST_TAG, "<KeyPress>", lambda e: self._sync_preview())
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -79,9 +82,11 @@ class ImeCompositionOverlay:
 
         def proc(h, msg, wp, lp):
             res = self._user32.CallWindowProcW(holder["orig"], h, msg, wp, lp)
-            if msg in (_WM_IME_STARTCOMPOSITION, _WM_IME_COMPOSITION):
+            if msg in (_WM_IME_STARTCOMPOSITION, _WM_IME_COMPOSITION, _WM_IME_ENDCOMPOSITION):
                 try:
-                    self._push_ime_window_offscreen(h)
+                    if msg != _WM_IME_ENDCOMPOSITION:
+                        self._push_ime_window_offscreen(h)
+                    self._sync_preview()   # 조합 글자 즉시 반영
                 except Exception:
                     pass
             return res
@@ -138,14 +143,7 @@ class ImeCompositionOverlay:
                     # 입력칸으로 돌아오면 입력기 다시 연결
                     self._imm.ImmAssociateContextEx(hwnd, None, _IACE_DEFAULT)
                     self._no_ime.discard(hwnd)
-            text = self._composition() if isinstance(widget, tk.Entry) else ""
-            if text:
-                self._push_ime_window_offscreen(hwnd)
-                if self._preview is None:
-                    self._replace_selection(widget)
-                self._set_preview(widget, text)
-            else:
-                self._clear_preview()
+            self._sync_preview(widget)
         except Exception:
             self._clear_preview()
         try:
@@ -161,14 +159,30 @@ class ImeCompositionOverlay:
             entry.delete("sel.first", "sel.last")
             entry.icursor(first)
 
+    def _sync_preview(self, widget=None):
+        """지금 조합 중인 글자를 입력칸에 맞춰 넣거나 뺀다."""
+        if widget is None:
+            try:
+                widget = self.root.focus_get()
+            except Exception:
+                widget = None
+        text = self._composition() if isinstance(widget, tk.Entry) else ""
+        if not text:
+            self._clear_preview()
+            return
+        if self._preview == (widget, text):
+            return
+        if self._preview is None:
+            self._replace_selection(widget)
+        self._set_preview(widget, text)
+
     def _set_preview(self, entry, text):
         """커서 자리에 조합 중인 글자를 넣는다 (커서는 그 뒤)."""
-        if self._preview == (entry, text):
-            return
         self._clear_preview()
         tags = entry.bindtags()
-        if _PREVIEW_TAG not in tags:
-            entry.bindtags((_PREVIEW_TAG,) + tags)
+        if _PRE_TAG not in tags:
+            k = tags.index("Entry") + 1 if "Entry" in tags else len(tags)
+            entry.bindtags((_PRE_TAG,) + tags[:k] + (_POST_TAG,) + tags[k:])
         entry.insert("insert", text)
         try:
             entry.tk.call("::tk::EntrySeeInsert", entry._w)
