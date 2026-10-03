@@ -69,6 +69,7 @@ class OptionsMixin:
             meta = {"backup_of": os.path.abspath(src) if src else "",
                     "speakers": list(self.speakers),
                     "speaker_colors": self.speaker_colors}
+            self._add_lane_meta(meta)
             write_srt_tagged(self.subtitles, str(self._backup_path()), meta)
             self._last_backup = time.time()
         except Exception as e:

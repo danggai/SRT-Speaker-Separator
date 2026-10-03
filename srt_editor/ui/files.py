@@ -197,6 +197,8 @@ class FileMixin:
             except Exception:
                 pass
 
+        self._restore_lanes(meta)
+
         self._hide_overlay()
         self._unsaved = False
         self._rebuild_ts_cache()
@@ -206,6 +208,26 @@ class FileMixin:
 
         # 동명 미디어 파일 자동 로드
         self._try_load_sibling_media(path)
+
+    def _add_lane_meta(self, meta):
+        """레이어 수와 자막별 레이어를 메타에 기록."""
+        n = getattr(self, "_wf_manual_lanes", 1)
+        if n > 1:
+            meta["lanes"] = n
+            meta["sub_lanes"] = [s.get("_lane", 0) if isinstance(s.get("_lane"), int) else 0
+                                 for s in self.subtitles]
+
+    def _restore_lanes(self, meta):
+        """메타의 레이어 수와 자막별 레이어를 복원."""
+        n = meta.get("lanes", 1)
+        self._wf_manual_lanes = max(1, min(n, self._WF_ABS_MAX_LANES)) if isinstance(n, int) else 1
+        sub_lanes = meta.get("sub_lanes")
+        if isinstance(sub_lanes, list) and len(sub_lanes) == len(self.subtitles):
+            for sub, ln in zip(self.subtitles, sub_lanes):
+                if isinstance(ln, int):
+                    sub["_lane"] = ln
+        self._wf_lanes_src = None
+        self._wf_img_cache = None
 
     def _try_load_sibling_media(self, srt_path):
         """SRT와 같은 폴더, 같은 이름의 미디어 파일이 있으면 자동 로드"""
@@ -284,6 +306,7 @@ class FileMixin:
                 meta["speaker_colors"] = self.speaker_colors
             if srt_io.g_display_pattern != DEFAULT_DISPLAY_PATTERN:
                 meta["display_pattern"] = srt_io.g_display_pattern
+            self._add_lane_meta(meta)
             write_srt_tagged(self.subtitles, path, meta or None)
             self._clear_backup()   # 저장했으니 백업은 필요 없음 (경로가 바뀌기 전 이름으로 지움)
             self._unsaved = False
