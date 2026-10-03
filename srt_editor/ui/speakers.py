@@ -8,9 +8,11 @@ from .. import theme
 from ..config import _load_config, _save_config
 from ..theme import BG2, BG3, BORDER, FG, FG_DIM, SPEAKER_COLORS
 
-_ROW_BG    = "#1F1F24"   # 화자 줄 배경
-_ROW_HOVER = "#2A2A32"   # 마우스를 올렸을 때
-from ..widgets import PopupMenu, Tooltip, _ColorPickerDialog
+_ROW_BG    = BG2         # 화자 줄 배경
+_ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
+_KEY_BG    = "#2C2C36"   # 단축키 키캡 배경
+_KEY_FG    = "#C9C9D4"   # 단축키 숫자
+from ..widgets import PopupMenu, Tooltip, _ColorPickerDialog, _circle_image, rounded_rect_image
 
 
 class SpeakerMixin:
@@ -173,9 +175,7 @@ class SpeakerMixin:
         row._spk_name = name
         row._spk_idx  = i
 
-        # 왼쪽 색 띠 (자막 목록의 색 띠와 같은 표시)
-        bar = tk.Frame(row, bg=color, width=3)
-        bar.pack(side="left", fill="y")
+        bar = tk.Frame(row, bg=color, width=3)   # 색 표시 (배치하지 않음)
 
         # 드래그 핸들 — 마우스를 올렸을 때만 보임
         drag_lbl = tk.Label(row, text="⠿", bg=_ROW_BG, fg=_ROW_BG,
@@ -184,8 +184,8 @@ class SpeakerMixin:
 
         dot_c = tk.Canvas(row, width=14, height=14, bg=_ROW_BG,
                           highlightthickness=0, cursor="hand2")
-        dot_c.pack(side="left", padx=(2, 4), pady=8)
-        dot_c.create_oval(2, 2, 12, 12, fill=color, outline="", tags="dot")
+        dot_c.pack(side="left", padx=(2, 6), pady=10)
+        dot_c.create_image(2, 2, anchor="nw", image=_circle_image(10, color), tags="dot")
         # 줄은 이름·색이 바뀌어도 재사용되므로, 이벤트에서는 항상 row._spk_name을 읽는다
         def _dot_click(e, dc=dot_c, rf=row):
             self._pick_speaker_color(rf._spk_name, dc, rf)
@@ -195,15 +195,16 @@ class SpeakerMixin:
         name_var = tk.StringVar(value=name)
 
         # 단축키 배지·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
-        badge = tk.Label(row, text=str(i + 1) if i < 9 else "", bg=BG2, fg=FG_DIM,
-                         font=(theme.FONT_FAMILY, 8, "bold"), width=2,
-                         highlightthickness=1, highlightbackground=BORDER)
-        badge.pack(side="right", padx=(4, 8))
+        badge = tk.Canvas(row, width=20, height=20, bg=_ROW_BG, highlightthickness=0)
+        badge.create_image(0, 0, anchor="nw", image=rounded_rect_image(20, 20, 5, _KEY_BG))
+        badge.create_text(10, 10, text=str(i + 1) if i < 9 else "", fill=_KEY_FG,
+                          font=(theme.FONT_FAMILY, 9, "bold"), tags="key")
+        badge.pack(side="right", padx=(6, 8))
         if i >= 9:
             badge.pack_forget()
         cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
         cnt_lbl = tk.Label(row, text=str(cnt), bg=_ROW_BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8))
+                 font=(theme.FONT_FAMILY, 9))
         cnt_lbl.pack(side="right", padx=2)
         self._spk_count_lbls[name] = cnt_lbl
         row._cnt_lbl = cnt_lbl
@@ -219,7 +220,7 @@ class SpeakerMixin:
         name_canvas.pack(fill="x", expand=True)
         _name_text_id = name_canvas.create_text(
             2, 11, text=name, fill=FG,
-            font=(theme.FONT_FAMILY, 10, "bold"), anchor="w")
+            font=(theme.FONT_FAMILY, 10), anchor="w")
 
         def _trim_name(canvas=name_canvas, text_id=_name_text_id, r=row):
             """캔버스 너비에 맞게 이름을 잘라 … 로 표시 (파괴된 뒤 늦게 온 이벤트는 무시)."""
@@ -235,7 +236,7 @@ class SpeakerMixin:
             avail = max(10, w - 8)
             try:
                 import tkinter.font as tkfont
-                f = tkfont.Font(font=(theme.FONT_FAMILY, 10, "bold"))
+                f = tkfont.Font(font=(theme.FONT_FAMILY, 10))
                 if f.measure(full) <= avail:
                     canvas.itemconfigure(text_id, text=full)
                     return
@@ -301,7 +302,7 @@ class SpeakerMixin:
         self._set_speaker_tips(row)
 
         # 마우스를 올리면 줄을 밝게 하고 드래그 핸들 표시
-        hover_parts = (row, drag_lbl, dot_c, name_frame, name_canvas, cnt_lbl)
+        hover_parts = (row, drag_lbl, dot_c, name_frame, name_canvas, cnt_lbl, badge)
 
         def _hover(on, r=row):
             bg = _ROW_HOVER if on else _ROW_BG
@@ -318,7 +319,7 @@ class SpeakerMixin:
             w.bind("<Enter>", lambda e: _hover(True), add="+")
             w.bind("<Leave>", _leave, add="+")
         # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
-        row.pack(fill="x", padx=6, pady=2,
+        row.pack(fill="x", padx=6, pady=0,
                  **({"before": before} if before is not None else {}))
         return row
 
@@ -361,12 +362,12 @@ class SpeakerMixin:
         renamed = row._spk_name != name
         row._spk_name, row._spk_idx, row._spk_color = name, i, color
         row._bar.configure(bg=color)
-        row._badge.configure(text=str(i + 1) if i < 9 else "")
+        row._badge.itemconfigure("key", text=str(i + 1) if i < 9 else "")
         if i < 9:
-            row._badge.pack(side="right", padx=(4, 8), before=row._cnt_lbl)
+            row._badge.pack(side="right", padx=(6, 8), before=row._cnt_lbl)
         else:
             row._badge.pack_forget()
-        row._dot.itemconfigure("dot", fill=color)
+        row._dot.itemconfigure("dot", image=_circle_image(10, color))
         row._name_entry.configure(highlightbackground=color, highlightcolor=color)
         row._name_var.set(name)
         if renamed:
