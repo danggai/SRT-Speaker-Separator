@@ -62,6 +62,7 @@ class FileMixin:
         self.subtitles     = []
         self.speakers      = []
         self.speaker_colors = {}
+        self._auto_kept    = {}
         self.save_path     = None
         self.media_path    = None
         self._unsaved      = False
@@ -192,6 +193,7 @@ class FileMixin:
         self._set_doc_title(_fname)
 
         self.speaker_colors = {}
+        self._auto_kept = {}
         # ── 파일 끝 메타 복원 ──────────────────
         meta = read_srt_meta(path)
         # 저장된 화자 순서를 먼저 따르고, 없는 화자는 등장 순서로 뒤에 추가

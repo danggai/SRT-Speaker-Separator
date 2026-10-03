@@ -87,6 +87,7 @@ class SRTEditor(
         self.subtitles      = []
         self.speakers       = []
         self.speaker_colors = {}   # 화자명 → 사용자 지정 색상 (없으면 팔레트 자동 배정)
+        self._auto_kept = {}       # 화자명 → 자동 배정된 색 (순서를 바꿔도 유지)
         self.filepath   = None
         self.save_path  = None
         self.edited_row = None

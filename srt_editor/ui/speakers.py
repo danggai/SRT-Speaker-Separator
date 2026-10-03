@@ -86,17 +86,23 @@ class SpeakerMixin:
         cache = getattr(self, "_auto_color_cache", None)
         if cache and cache[0] == key:
             return cache[1]
-        used = {c.upper() for c in fixed.values() if c}
+        kept = getattr(self, "_auto_kept", {})   # 이름 → 이미 받은 자동 색 (순서가 바뀌어도 유지)
+        fixed_used = {c.upper() for c in fixed.values() if c}
+        # 받은 색은 지정색과 겹치지 않는 한 유지 (프리셋이 모자라 겹쳐 받은 화자도 그대로)
+        result = {n: kept[n] for n in self.speakers
+                  if not fixed[n] and kept.get(n) and kept[n].upper() not in fixed_used}
+        used = fixed_used | {c.upper() for c in result.values()}
         free = [c for c in SPEAKER_COLORS if c.upper() not in used]
-        result, k = {}, 0
+        k = 0
         for n in self.speakers:
-            if fixed[n]:
+            if fixed[n] or n in result:
                 continue
             if free:
                 result[n] = free.pop(0)
             else:   # 프리셋을 다 쓰면 순환
                 result[n] = SPEAKER_COLORS[k % len(SPEAKER_COLORS)]
                 k += 1
+        self._auto_kept = dict(result)
         self._auto_color_cache = (key, result)
         return result
 
@@ -635,6 +641,9 @@ class SpeakerMixin:
         # 커스텀 색상 매핑 이전
         if old_name in self.speaker_colors:
             self.speaker_colors[new_name] = self.speaker_colors.pop(old_name)
+        kept = getattr(self, "_auto_kept", {})
+        if old_name in kept:
+            kept[new_name] = kept.pop(old_name)
         for sub in self.subtitles:
             if sub["speaker"] == old_name:
                 sub["speaker"] = new_name
