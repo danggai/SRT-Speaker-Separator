@@ -127,6 +127,7 @@ class ImeCompositionOverlay:
             text = self._composition() if isinstance(widget, tk.Entry) else ""
             if text:
                 self._push_ime_window_offscreen(hwnd)
+                self._replace_selection(widget)
                 self._show(widget, text)
             else:
                 self._hide()
@@ -136,6 +137,14 @@ class ImeCompositionOverlay:
             self.root.after(self.POLL_MS, self._poll)
         except tk.TclError:   # 앱 종료
             pass
+
+    @staticmethod
+    def _replace_selection(entry):
+        """조합이 시작되면 선택된 글자를 지운다 (Tk는 조합이 끝나야 지워서 글자가 겹쳐 보임)."""
+        if entry.selection_present():
+            first = entry.index("sel.first")
+            entry.delete("sel.first", "sel.last")
+            entry.icursor(first)
 
     def _font_for(self, entry):
         """Entry 글꼴에 밑줄만 더한 글꼴 (조합 중 표시)."""
