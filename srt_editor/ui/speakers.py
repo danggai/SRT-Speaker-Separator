@@ -106,6 +106,25 @@ class SpeakerMixin:
         self._auto_color_cache = (key, result)
         return result
 
+    def _auto_color_meta(self):
+        """저장용: 색을 따로 지정하지 않은 화자의 자동 배정 색 (다시 열어도 같은 색)."""
+        auto = self._auto_speaker_colors()
+        return {n: auto[n] for n in self.speakers if n in auto}
+
+    def _restore_auto_colors(self, saved):
+        """파일에서 읽은 자동 배정 색을 복원 (형식이 잘못된 항목은 무시)."""
+        self._auto_kept = {}
+        self._auto_color_cache = None
+        if not isinstance(saved, dict):
+            return
+        for n, c in saved.items():
+            try:
+                ok = isinstance(n, str) and isinstance(c, str) and len(c) == 7 and c[0] == "#" and int(c[1:], 16) >= 0
+            except ValueError:
+                ok = False
+            if ok:
+                self._auto_kept[n] = c
+
     def _save_global_speaker_color(self, name, color):
         """화자 색상을 로컬 스토리지(config)에도 저장 — 다른 자막 파일을
         열었을 때도 같은 이름의 화자면 이 색상이 기본으로 쓰이도록 한다."""

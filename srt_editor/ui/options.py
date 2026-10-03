@@ -69,7 +69,8 @@ class OptionsMixin:
             src = getattr(self, "save_path", None) or getattr(self, "filepath", None)
             meta = {"backup_of": os.path.abspath(src) if src else "",
                     "speakers": list(self.speakers),
-                    "speaker_colors": self.speaker_colors}
+                    "speaker_colors": self.speaker_colors,
+                    "auto_colors": self._auto_color_meta()}
             self._add_lane_meta(meta)
             write_srt_tagged(self.subtitles, str(self._backup_path()), meta)
             self._last_backup = time.time()

@@ -193,7 +193,6 @@ class FileMixin:
         self._set_doc_title(_fname)
 
         self.speaker_colors = {}
-        self._auto_kept = {}
         # ── 파일 끝 메타 복원 ──────────────────
         meta = read_srt_meta(path)
         # 저장된 화자 순서를 먼저 따르고, 없는 화자는 등장 순서로 뒤에 추가
@@ -206,6 +205,7 @@ class FileMixin:
 
         if "speaker_colors" in meta:
             self.speaker_colors = meta["speaker_colors"]
+        self._restore_auto_colors(meta.get("auto_colors"))
         if "display_pattern" in meta:
             srt_io.g_display_pattern = meta["display_pattern"]
             try:
@@ -323,6 +323,9 @@ class FileMixin:
                 meta["speakers"] = list(self.speakers)
             if self.speaker_colors:
                 meta["speaker_colors"] = self.speaker_colors
+            auto = self._auto_color_meta()
+            if auto:
+                meta["auto_colors"] = auto
             if srt_io.g_display_pattern != DEFAULT_DISPLAY_PATTERN:
                 meta["display_pattern"] = srt_io.g_display_pattern
             self._add_lane_meta(meta)
