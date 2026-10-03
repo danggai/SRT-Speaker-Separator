@@ -12,7 +12,7 @@ class PlaybackMixin:
     def _on_space_key(self, event):
         """스페이스바: 글자 입력칸 편집 중이면 무시, 그 외 재생/정지."""
         focused = self.focus_get()
-        if isinstance(focused, (tk.Entry, tk.Text)):
+        if isinstance(focused, (tk.Entry, tk.Text)) or isinstance(event.widget, (tk.Entry, tk.Text)):
             return
         # 버튼에 포커스가 있으면 앱으로 돌려서 이중 호출 방지
         if isinstance(focused, (tk.Button, ttk.Button)):
@@ -236,22 +236,6 @@ class PlaybackMixin:
             # 재생 안정화 후 poll 시작
             self.after(150, self._start_progress_poll)
 
-    def _on_seek_drag(self, val):
-        """진행바 드래그 중 위치 레이블만 갱신 (호환용)"""
-        self.lbl_pos.configure(text=self._fmt_time(float(val)))
-
-    def _on_seek_release(self, event):
-        """진행바 놓았을 때 해당 위치로 seek (호환용) — 선택 자막은 변경하지 않음"""
-        if not self.media_path:
-            return
-        pos = self.media_progress_var.get()
-        was_playing = self.player.is_playing
-        self._stop_progress_poll()
-        self.player.seek_to(pos)
-        if was_playing:
-            self.btn_play.configure(text="⏸")
-            self.after(150, self._start_progress_poll)
-
     # ── 진행바 폴링 ──────────────────────────
     def _start_progress_poll(self):
         self._stop_progress_poll()
@@ -277,13 +261,6 @@ class PlaybackMixin:
         return result
 
     ROW_PLAYING = "#1A2A1A"   # 재생 중 하이라이트 색상 (어두운 초록)
-
-    def _set_playing_highlight(self, idx, on: bool):
-        """재생 위치 하이라이트를 켜거나 끔 — 슬롯 재렌더로 처리."""
-        is_selected = (idx == getattr(self, "_selected_row_idx", None) or idx in getattr(self, "_selected_rows", set()))
-        if is_selected:
-            return
-        self._redraw_slot_for(idx)
 
     def _update_playback_highlight(self, pos_sec):
         """재생 위치 하이라이트만 갱신 — 선택(_selected_rows)은 건드리지 않음."""

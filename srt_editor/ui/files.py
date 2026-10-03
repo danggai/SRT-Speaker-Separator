@@ -253,19 +253,6 @@ class FileMixin:
                 self._load_media(candidate)
                 return
 
-    # ── 미디어 열기 ───────────────────────────
-    def open_media(self):
-        path = filedialog.askopenfilename(
-            title="음성/영상 파일 선택",
-            filetypes=[
-                ("미디어 파일", MEDIA_PATTERN),
-                ("모든 파일", "*.*")
-            ],
-            parent=self)
-        if not path:
-            return
-        self._load_media(path)
-
     def _load_media(self, path):
         if not self.player._init_pygame():
             messagebox.showwarning(

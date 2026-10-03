@@ -289,7 +289,7 @@ class TranscribeMixin:
 
     def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
-        import threading, tempfile, time as _time
+        import threading, time as _time
 
         # ── 진행 창 ──────────────────────────────────────────────
         prog = tk.Toplevel(self)
@@ -873,28 +873,3 @@ class TranscribeMixin:
                     padx=22, pady=7).pack(side="right")
         present_dialog(win, self)
         entry.focus_set()
-
-    def _build_proper_noun_section(self, parent):
-        """'고유명사 사전' 요약 + 관리 버튼 (자동자막 설정 탭 / 자막 생성
-        팝업 공용). 등록된 단어는 항상 자동 반영된다. 새 Frame을 만들어
-        parent에 pack하고 반환한다."""
-        self._ensure_proper_nouns_init()
-        pn_frame = tk.Frame(parent, bg=BG)
-        pn_frame.pack(fill="x", padx=20, pady=(4, 2))
-
-        tk.Label(pn_frame, text="고유명사 사전", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold")).pack(side="left")
-
-        _pn_count_lbl = tk.Label(pn_frame, bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
-        _pn_count_lbl.pack(side="left", padx=(6, 0))
-
-        def _refresh_count():
-            _pn_count_lbl.configure(text=f"({len(getattr(self, '_proper_nouns', None) or [])}개 등록됨)")
-        _refresh_count()
-
-        flat_button(pn_frame, "사전 관리", lambda: self._open_proper_noun_manager(on_close=_refresh_count),
-                    bg=BG3, hover="#33333C", font=(theme.FONT_FAMILY, 8), padx=10, pady=3).pack(side="right")
-        tk.Label(parent, text="  자주 나오는 이름·용어를 등록하면 더 잘 알아들어요.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
-                 ).pack(fill="x", padx=20, pady=(0, 6))
-        return pn_frame

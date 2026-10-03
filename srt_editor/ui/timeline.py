@@ -12,17 +12,6 @@ from ..widgets import IconButton, Tooltip, flat_button
 class TimelineMixin:
     """미디어 패널: 재생바·파형·자막 레이어·확대/스크롤·볼륨."""
 
-    def _setup_media_dnd(self, widget):
-        """미디어 패널 위젯에 드래그드롭 바인딩 (tkinterdnd2)"""
-        if not self._dnd_enabled:
-            return
-        try:
-            from tkinterdnd2 import DND_FILES
-            widget.drop_target_register(DND_FILES)
-            widget.dnd_bind("<<Drop>>", self._on_dnd_drop)
-        except Exception:
-            pass
-
     def _build_media_panel(self, parent):
         panel = tk.Frame(parent, bg=MEDIA_BG)
         panel.pack(fill="x", side="bottom")

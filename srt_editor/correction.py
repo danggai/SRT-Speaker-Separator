@@ -136,11 +136,6 @@ def _occurrences(texts):
     return counts, whole, lines
 
 
-def _tokens(text):
-    """[(조사 뗀 형태, 붙은 조사·호칭)] 목록."""
-    return [split_josa(m.group()) for m in _TOKEN_RE.finditer(text or "")]
-
-
 def _contexts(texts):
     """형태별 문맥: {형태: [(줄, 앞 단어, 뒤 단어, 붙은 말)]}. 조사 뗀 형태와 단어 전체 둘 다 기록."""
     ctx = defaultdict(list)

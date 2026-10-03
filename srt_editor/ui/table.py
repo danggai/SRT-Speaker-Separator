@@ -442,11 +442,6 @@ class SubtitleTableMixin:
 
     def _show_context_menu(self, event, anchor_idx):
         """자막 행 컨텍스트 메뉴."""
-        MENU_BG     = BG3
-        MENU_FG     = FG
-        MENU_ACT_BG = ACCENT
-        MENU_DIM    = FG_DIM
-
         def make_menu(parent=None):
             return PopupMenu(self)
 
@@ -539,24 +534,6 @@ class SubtitleTableMixin:
         self._last_focused_idx = di
         # 변경된 슬롯만 재렌더
         for idx in old.symmetric_difference(self._selected_rows):
-            self._redraw_slot_for(idx)
-
-    def _slot_drag(self, slot_idx, event):
-        """드래그 중: 시작 행부터 현재 행까지 범위 선택."""
-        di = self._slot_data_idx(slot_idx)
-        if di < 0:
-            return
-        anchor = getattr(self, "_selected_row_idx", None)
-        if anchor is None:
-            return
-        lo, hi = min(anchor, di), max(anchor, di)
-        new_sel = set(range(lo, hi + 1))
-        if new_sel == self._selected_rows:
-            return
-        old = set(self._selected_rows)
-        self._selected_rows = new_sel
-        self._last_focused_idx = di
-        for idx in old.symmetric_difference(new_sel):
             self._redraw_slot_for(idx)
 
     # ── Canvas 레벨 드래그 범위 선택 ───────────
@@ -697,12 +674,6 @@ class SubtitleTableMixin:
         self._last_focused_idx = di
         self._select_row(di)
 
-    def _slot_delete(self, slot_idx):
-        di = self._slot_data_idx(slot_idx)
-        if di < 0:
-            return
-        self.delete_row(di)
-
     def _slot_pill_click(self, slot_idx, pill_idx):
         """pill 클릭 → 해당 슬롯의 자막에 화자 지정."""
         di = self._slot_data_idx(slot_idx)
@@ -829,13 +800,6 @@ class SubtitleTableMixin:
             wi["_paint"]["bg"] = bg
         self._update_slot_pills(slot_idx, sub, bg)
         self._apply_col_to_slot(slot_idx, pos, cw)
-
-    def _update_slot_bg(self, slot_idx, bg=None):
-        """선택/재생 하이라이트만 다시 반영 (카드 색은 자막 상태로 결정)."""
-        di = self._slot_data[slot_idx]
-        if 0 <= di < len(self.subtitles):
-            self._paint_slot(slot_idx, di, self._get_col_positions(),
-                             max(self.canvas.winfo_width(), 100))
 
     # ── 시간 편집 (더블클릭) ─────────────────
     def _ts_edit_start(self, slot_idx):
@@ -1154,15 +1118,6 @@ class SubtitleTableMixin:
         self._redraw_slot_for(idx)
         self._update_count()
 
-    def _refresh_row_full(self, idx):
-        self._redraw_slot_for(idx)
-
-    def _refresh_speaker_pills(self, idx):
-        slot = self._find_slot(idx)
-        if slot < 0:
-            return
-        self._update_slot_pills(slot, self.subtitles[idx], self._slot_colors(idx)[0])
-
     def _find_slot(self, data_idx):
         """data_idx를 표시 중인 슬롯 번호 반환. 없으면 -1."""
         for s, di in enumerate(self._slot_data):
@@ -1207,10 +1162,6 @@ class SubtitleTableMixin:
         except Exception:
             pass
         self.focus_set()
-
-    # 하위호환
-    def _blur_content_entry(self):
-        self._blur_all_entries()
 
     def _select_row(self, idx, seek=True, defer_seek=False):
         """단독 선택 — 다중 선택 해제 후 idx만 선택. defer_seek: 재생 위치 이동을 잠시 미룸 (키 연타용)."""
@@ -1268,10 +1219,6 @@ class SubtitleTableMixin:
         self._wf_offset = new_offset
         self._pb_redraw()
 
-    def _set_row_highlight(self, idx, selected: bool):
-        """재생/선택 하이라이트 — 슬롯 재렌더로 처리."""
-        self._redraw_slot_for(idx)
-
     # ── 화자 칸 ──────────────────────────────
     def _auto_resize_speaker_col(self):
         # 모든 버튼이 굵게 표시돼도 들어가는 폭 + 오른쪽 여유
@@ -1311,26 +1258,6 @@ class SubtitleTableMixin:
         self._wf_img_cache = None
         self._pb_redraw()
 
-    # ── 데이터 저장 콜백 ──────────────────────
-    def _save_ts(self, idx, var):
-        self.subtitles[idx]["timestamp"] = var.get()
-        self._unsaved = True
-
-    def _save_text(self, idx, var):
-        self.subtitles[idx]["text"] = var.get()
-        self._unsaved = True
-
-    # ── 행 삽입/삭제 (데이터만, 뷰는 _render_rows로) ──
-    def _insert_row_widget(self, idx, sub):
-        """데이터 삽입 후 뷰를 스크롤하여 해당 행이 보이도록."""
-        self._update_scrollregion()
-        self._scroll_to_row(idx)
-
-    def _remove_row_widget(self, idx):
-        """데이터 삭제 후 뷰 갱신."""
-        self._update_scrollregion()
-        self._fill_slots(self._vscroll_top)
-
     def _renumber_rows(self, from_idx=0):
         """데이터 변경 후 현재 뷰포트 갱신."""
         self._update_scrollregion()
@@ -1349,34 +1276,11 @@ class SubtitleTableMixin:
         new_top = max(0, min(idx - visible_rows // 2, n - 1))
         self._vscroll_to(new_top)
 
-    def _scroll_to_row_paged(self, idx):
-        """재생 하이라이트용: idx가 뷰포트 밖이면 페이지(뷰포트 크기) 단위로 한 번 스크롤."""
-        n = len(self.subtitles)
-        if n == 0 or idx >= n:
-            return
-        ch = max(1, self.canvas.winfo_height())
-        visible_rows = max(1, ch // self.ROW_H)
-        cur_top = self._vscroll_top
-
-        if idx < cur_top:
-            # 위로 벗어남 → 한 페이지 위로
-            new_top = max(0, cur_top - visible_rows)
-        elif idx >= cur_top + visible_rows:
-            # 아래로 벗어남 → 한 페이지 아래로
-            new_top = min(n - 1, cur_top + visible_rows)
-        else:
-            return  # 이미 보임
-        self._vscroll_to(new_top)
-
     # ── _apply_col_layout_to_rows 하위호환 ───
     def _apply_col_layout_to_rows(self, visible_only=False):
         """가상 스크롤에서는 _relayout으로 위임."""
         self._layout_header()
         self._fill_slots(self._vscroll_top)
-
-    def _row_col_w(self, col_id):
-        return self._col_w.get(col_id, self._COL_DEF_W.get(col_id, 80))
-
 
 def _on_color(hex_color):
     """배경색 위에서 잘 읽히는 글자색 (밝은 배경 → 어두운 글자)."""

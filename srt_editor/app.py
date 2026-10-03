@@ -456,7 +456,6 @@ class SRTEditor(
         self.lbl_count.bind("<Button-1>", lambda e: self._goto_next_unassigned())
 
         # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
-        import webbrowser as _wb_top
         self._update_btn = tk.Button(
             top, text="🆕  새로운 버전!",
             bg="#1E3A1E", fg="#4CAF50",
@@ -663,7 +662,7 @@ class SRTEditor(
     def _setup_dnd(self):
         """tkinterdnd2가 있으면 DnD, 없으면 조용히 무시"""
         try:
-            from tkinterdnd2 import DND_FILES, TkinterDnD
+            from tkinterdnd2 import DND_FILES
             self._dnd_enabled = True
             self._dnd_register(DND_FILES)
         except Exception:
