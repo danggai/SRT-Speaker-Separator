@@ -1066,6 +1066,9 @@ class DiarizeMixin:
                 parent=self)
             return
 
+        # 화자 목록에 새 화자를 추가하기 전에 기록해야 실행 취소 시 함께 사라진다
+        self._push_undo()
+
         # WhisperX 화자 ID → 앱 화자명 매핑 (SPEAKER_00 → 화자 N)
         spk_ids = sorted(set(s for _, _, s in diar))
         spk_map = {}
@@ -1080,8 +1083,6 @@ class DiarizeMixin:
             self.speakers.append(name)
             spk_map[sid] = name
             n += 1  # 방금 쓴 번호는 건너뛰어 다음 sid가 중복되지 않도록
-
-        self._push_undo()
 
         cache = getattr(self, "_ts_cache", [])
         for i, sid in enumerate(_assign_speakers_by_overlap(cache, diar)):

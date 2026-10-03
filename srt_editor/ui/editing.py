@@ -15,12 +15,21 @@ class EditingMixin:
                 dict(self.speaker_colors), dict(self._col_w))
 
     def _push_undo(self):
-        self._undo_stack.append(self._snapshot())
+        self._commit_undo(self._snapshot())
+
+    def _commit_undo(self, snapshot):
+        """미리 찍어둔 스냅샷을 실행 취소 기록으로 확정한다. 드래그처럼 시작
+        시점에 상태를 기억해 두었다가 실제로 바뀐 경우에만 기록할 때 쓴다."""
+        self._undo_stack.append(snapshot)
         if len(self._undo_stack) > self._UNDO_MAX:
             self._undo_stack.pop(0)
         self._redo_stack.clear()
 
     def _undo(self):
+        # 입력 중이던 텍스트/타임스탬프를 먼저 확정해야, 이번 실행 취소가
+        # '입력 중이던 내용'을 되돌린다. (확정하지 않으면 이전 작업이 취소된
+        # 뒤 입력 내용이 그 위에 다시 저장되고 다시 실행 기록도 지워졌다)
+        self._blur_all_entries()
         if not self._undo_stack:
             return
         self._redo_stack.append(self._snapshot())
@@ -28,6 +37,7 @@ class EditingMixin:
         self._apply_snapshot(subs, spks, colors, col_w)
 
     def _redo(self):
+        self._blur_all_entries()
         if not self._redo_stack:
             return
         self._undo_stack.append(self._snapshot())

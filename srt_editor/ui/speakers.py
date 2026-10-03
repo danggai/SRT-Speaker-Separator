@@ -434,7 +434,9 @@ class SpeakerMixin:
         if not new_name or not new_name.strip():
             return
         new_name = new_name.strip()
-        if new_name in self.speakers and new_name != old_name:
+        if new_name == old_name:
+            return   # 바뀐 게 없으면 실행 취소 기록도 남기지 않음
+        if new_name in self.speakers:
             messagebox.showwarning("중복", f"'{new_name}' 화자가 이미 있습니다.", parent=self)
             return
         self._push_undo()

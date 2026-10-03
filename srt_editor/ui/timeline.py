@@ -831,10 +831,11 @@ class TimelineMixin:
         self._pb_redraw()
 
     def _start_handle_drag(self, mode, idx):
-        """리사이즈 핸들 드래그 상태 초기화. undo 스냅샷을 드래그 시작 시점에 찍음."""
+        """리사이즈 핸들 드래그 상태 초기화. 변경 전 상태를 여기서 찍어 두고,
+        실제로 바뀐 경우에만 release에서 실행 취소 기록으로 확정한다."""
         cache = getattr(self, "_ts_cache", [])
-        self._push_undo()   # 변경 전 상태를 여기서 snapshot
         self._wf_sub_drag = {
+            "undo_snap": self._snapshot(),
             "mode": mode, "idx": idx,
             "t_s": cache[idx][0],
             "t_e": cache[idx][1],
@@ -860,12 +861,12 @@ class TimelineMixin:
         """자막 바디 드래그 시작 — 기본적으로 길이 고정한 채 좌우(타이밍)로
         이동한다. 위아래로 움직이면 자막이 속한 레이어(레인)도 함께 바뀐다.
         shift_lock=True(Shift 누른 채 드래그)면 타이밍은 전혀 건드리지 않고
-        레이어 이동만 한다. undo 스냅샷은 여기서 찍고(실제 클릭으로 끝나면
-        release에서 취소)."""
+        레이어 이동만 한다. 변경 전 상태는 여기서 찍어 두고, 실제로 바뀐
+        경우에만 release에서 실행 취소 기록으로 확정한다."""
         cache = getattr(self, "_ts_cache", [])
         cur_lane = getattr(self, "_wf_lanes", {}).get(idx, 0)
-        self._push_undo()
         self._wf_sub_drag = {
+            "undo_snap": self._snapshot(),
             "mode": "move", "idx": idx,
             "t_s": cache[idx][0], "t_e": cache[idx][1],
             "orig_t_s": cache[idx][0], "orig_t_e": cache[idx][1],
@@ -1013,10 +1014,6 @@ class TimelineMixin:
             # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프/레이어 변경 없음)
             if moved <= CLICK_THR:
                 self._wf_sub_drag = None
-                # 드래그 시작 시 찍은 undo 스냅샷 취소 (실제 변경이 없었으므로)
-                if self._undo_stack:
-                    self._undo_stack.pop()
-
                 if drag["mode"] == "move":
                     # 자막 바디 클릭 — 같은 위치를 다시 클릭하면 겹친 자막들을 순환 선택
                     # (재생 위치는 옮기지 않고 '선택'만 한다)
@@ -1035,7 +1032,7 @@ class TimelineMixin:
                 return
 
             # 실제 드래그 → 타임스탬프(Shift 드래그면 생략) + 레이어 적용
-            # (undo는 드래그 시작 시 이미 찍음)
+            # (실제로 바뀐 경우에만 시작 시점 스냅샷을 실행 취소 기록으로 확정)
             changed = False
             if 0 <= idx < len(self.subtitles):
                 if drag["mode"] == "move" and drag.get("shift_lock"):
@@ -1048,9 +1045,11 @@ class TimelineMixin:
                         h=int(sec//3600); m=int((sec%3600)//60); s=int(sec%60)
                         ms=int(round((sec%1)*1000))
                         return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-                    self.subtitles[idx]["timestamp"] = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
-                    self._ts_cache[idx] = (t_s, t_e)
-                    changed = True
+                    new_ts = f"{_fmt_ts(t_s)} --> {_fmt_ts(t_e)}"
+                    if self.subtitles[idx].get("timestamp") != new_ts:
+                        self.subtitles[idx]["timestamp"] = new_ts
+                        self._ts_cache[idx] = (t_s, t_e)
+                        changed = True
 
                 if drag["mode"] == "move" and "target_lane" in drag:
                     new_lane = drag["target_lane"]
@@ -1060,10 +1059,9 @@ class TimelineMixin:
                         changed = True
 
                 if changed:
+                    self._commit_undo(drag["undo_snap"])
                     self._unsaved = True
                     self._redraw_slot_for(idx)
-            elif self._undo_stack:
-                self._undo_stack.pop()   # 변경할 게 없었으면 undo 스냅샷도 취소
             self._wf_sub_drag = None
             self._wf_img_cache = None   # 이미지 캐시 무효화
             self._pb_redraw()

@@ -119,6 +119,9 @@ class FileMixin:
 
         self.filepath  = path
         self.save_path = path
+        # 다른 파일의 편집 기록으로 실행 취소되지 않도록 기록을 비운다
+        self._undo_stack = []
+        self._redo_stack = []
         _fname = os.path.splitext(os.path.basename(path))[0]
         self.title(f"{_fname} - SRT Speaker Editer")
 
