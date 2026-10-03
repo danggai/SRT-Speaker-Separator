@@ -747,6 +747,7 @@ class SRTEditor(
                 return
             if ans:            # 예 → 저장 후 종료
                 self.save_file()
+        self._remember_view()
         self._stop_progress_poll()
         self.player.stop()
         self.destroy()

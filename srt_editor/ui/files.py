@@ -40,6 +40,7 @@ class FileMixin:
                     if self._unsaved:
                         return
 
+        self._remember_view()
         # 초기 상태로 리셋
         self._push_undo()
         self.subtitles     = []
@@ -98,6 +99,38 @@ class FileMixin:
         cfg["recent_files"] = [path] + recent[:self._MAX_RECENT_FILES - 1]
         _save_config(cfg)
 
+    _MAX_VIEW_STATES = 30
+
+    def _remember_view(self):
+        """지금 파일의 스크롤 위치와 선택한 줄을 기억 (다음에 열 때 복원)."""
+        path = getattr(self, "save_path", None) or getattr(self, "filepath", None)
+        if not path or not self.subtitles:
+            return
+        import tempfile
+        path = os.path.abspath(path)
+        if os.path.dirname(path) == os.path.abspath(tempfile.gettempdir()):
+            return   # 튜토리얼 예제 등 임시 파일은 기억하지 않음
+        cfg = _load_config()
+        views = cfg.get("view_states", {})
+        views.pop(path, None)
+        views[path] = {"top": self._vscroll_top, "sel": getattr(self, "_selected_row_idx", None)}
+        while len(views) > self._MAX_VIEW_STATES:   # 오래된 것부터 지움
+            views.pop(next(iter(views)))
+        cfg["view_states"] = views
+        _save_config(cfg)
+
+    def _restore_view(self, path):
+        view = _load_config().get("view_states", {}).get(os.path.abspath(path))
+        if not view or not self.subtitles:
+            return
+        n = len(self.subtitles)
+        top = view.get("top") or 0
+        if 0 < top < n:
+            self._vscroll_to(top)
+        sel = view.get("sel")
+        if isinstance(sel, int) and 0 <= sel < n:
+            self._select_row(sel, seek=False)
+
     def _recent_files(self):
         """존재하는 최근 파일 목록."""
         return [p for p in _load_config().get("recent_files", []) if os.path.isfile(p)]
@@ -126,6 +159,7 @@ class FileMixin:
             self._load_srt(paths[0])
 
     def _load_srt(self, path):
+        self._remember_view()   # 열려 있던 파일의 위치부터 기억
         try:
             self.subtitles = parse_srt(path)
         except Exception as e:
@@ -166,6 +200,7 @@ class FileMixin:
         self._rebuild_ts_cache()
         self._render_speakers()
         self._render_rows()
+        self.after_idle(lambda p=path: self._restore_view(p))   # 마지막으로 보던 위치로
 
         # 동명 미디어 파일 자동 로드
         self._try_load_sibling_media(path)
@@ -251,6 +286,7 @@ class FileMixin:
             self._unsaved = False
             self.save_path = path
             self._add_recent_file(path)
+            self._remember_view()
             _fn = os.path.splitext(os.path.basename(path))[0]
             self._set_doc_title(_fn)
             self._update_title("  ✓")
