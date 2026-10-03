@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "*"
 
   release:
     types: [published]
@@ -22,18 +20,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 릴리즈할 태그 결정: 태그 푸시면 그 태그, main 푸시면 version.json 버전 (태그가 아직 없을 때만)
-      - name: Resolve release tag
+      # version.json 버전의 태그가 아직 없으면(버전이 바뀌었으면) 릴리즈 대상
+      - name: Check version
         id: rel
+        if: github.event_name == 'push'
         shell: bash
         run: |
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event_name }}" = "push" ]; then
-            v=$(python -c "import json; print(json.load(open('version.json'))['version'])")
-            if ! git ls-remote --exit-code --tags origin "refs/tags/$v" > /dev/null; then
-              echo "tag=$v" >> "$GITHUB_OUTPUT"
-            fi
+          v=$(python -c "import json; print(json.load(open('version.json'))['version'])")
+          if ! git ls-remote --exit-code --tags origin "refs/tags/$v" > /dev/null; then
+            echo "tag=$v" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/setup-python@v5
