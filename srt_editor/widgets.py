@@ -640,3 +640,55 @@ def _gradient_bar_rows(width, height, fill_w, phase, bg_color):
             row.append(bg)
     row_str = "{" + " ".join(row) + "}"
     return " ".join([row_str] * height)
+
+
+def show_toast(root, text, duration_ms=1600):
+    """창 위쪽 가운데에 잠깐 나타났다가 서서히 사라지는 알림 (저장 완료 등).
+    확인을 누를 필요가 없고 작업을 막지 않는다. 새 알림이 오면 이전 것은 바로 닫는다."""
+    old = getattr(root, "_toast_win", None)
+    if old is not None:
+        try:
+            old.destroy()
+        except tk.TclError:
+            pass
+    win = tk.Toplevel(root)
+    win.overrideredirect(True)
+    win.attributes("-topmost", True)
+    try:
+        win.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
+    box = tk.Frame(win, bg="#2A2A33", highlightthickness=1, highlightbackground=ACCENT)
+    box.pack()
+    tk.Label(box, text="✓", bg="#2A2A33", fg="#7FD48F",
+             font=(theme.FONT_FAMILY, 11, "bold")).pack(side="left", padx=(14, 6), pady=8)
+    tk.Label(box, text=text, bg="#2A2A33", fg=FG,
+             font=(theme.FONT_FAMILY, 10)).pack(side="left", padx=(0, 16), pady=8)
+    win.update_idletasks()
+    x = root.winfo_rootx() + (root.winfo_width() - win.winfo_reqwidth()) // 2
+    y = root.winfo_rooty() + 86   # 상단 툴바 바로 아래
+    win.geometry(f"+{x}+{y}")
+    root._toast_win = win
+
+    def fade(alpha, step, then=None):
+        try:
+            if not win.winfo_exists():
+                return
+            win.attributes("-alpha", max(0.0, min(0.95, alpha)))
+            if (step > 0 and alpha < 0.95) or (step < 0 and alpha > 0):
+                win.after(20, lambda: fade(alpha + step, step, then))
+            elif then:
+                then()
+        except tk.TclError:
+            pass
+
+    def close():
+        try:
+            win.destroy()
+        except tk.TclError:
+            pass
+        if getattr(root, "_toast_win", None) is win:
+            root._toast_win = None
+
+    fade(0.0, 0.16, lambda: win.after(duration_ms, lambda: fade(0.95, -0.1, close)))
+    return win

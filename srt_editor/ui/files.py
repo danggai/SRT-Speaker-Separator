@@ -7,6 +7,7 @@ from tkinter import messagebox
 
 from .. import srt_io
 from ..media import MEDIA_EXTS, MEDIA_PATTERN
+from ..widgets import show_toast
 from ..srt_io import (
     DEFAULT_DISPLAY_PATTERN,
     display_to_regex,
@@ -232,6 +233,7 @@ class FileMixin:
             _fn = os.path.splitext(os.path.basename(path))[0]
             self.title(f"{_fn} - SRT Speaker Editer  ✓")
             self.after(800, lambda fn=_fn: self.title(f"{fn} - SRT Speaker Editer"))
+            show_toast(self, f"저장했습니다  ·  {os.path.basename(path)}")
             return True
         except Exception as e:
             messagebox.showerror("저장 오류", str(e), parent=self)
