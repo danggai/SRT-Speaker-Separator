@@ -13,6 +13,7 @@ from .ui.table import SubtitleTableMixin
 from .ui.editing import EditingMixin
 from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
+from .ui.correct import CorrectionMixin
 from . import theme
 from .config import _load_config
 from .ime import ImeCompositionOverlay
@@ -46,6 +47,7 @@ class SRTEditor(
     EditingMixin,
     PlaybackMixin,
     FileMixin,
+    CorrectionMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -373,6 +375,7 @@ class SRTEditor(
         )
         _right_group(
             ("🎙  화자 분석", self._open_diarize_dialog, "화자 자동 분석"),
+            ("✏  자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기"),
         )
 
         # 본문 영역 (사이드바 + 테이블)

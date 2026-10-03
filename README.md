@@ -8,6 +8,7 @@
 - **자막 편집**: 자막 표와 파형 타임라인에서 텍스트·시간·화자를 편집. 실행 취소, 자막 분할, 레이어 지원
 - **자막 자동 생성**: 음성/영상 파일에서 Whisper(whisperx)로 자막 생성. 한국어 고정, 고유명사 사전 지원
 - **화자 분석**: pyannote로 화자를 분리해 자막에 화자를 자동 지정
+- **자막 교정**: 같은 단어가 드물게 다르게 인식된 표기(루파/루바 등)나 고유명사 사전과 비슷한 표기를 찾아, 확인 후 일괄 수정
 - **화자별 내보내기**: 화자마다 `.srt` 파일로 저장. 화자가 없는 자막은 `*_untagged.srt`
 - 화자 정보는 SRT 안에 `[화자] 내용` 형식으로 저장되어 다시 열면 그대로 복원됩니다.
 
@@ -45,6 +46,7 @@ srt_speaker_separator.py   진입점 (필수 패키지 확인 후 실행, 빌드
 srt_editor/
   app.py                   메인 창
   speech.py                음성 인식·화자 분리 로직 (GUI 없음)
+  correction.py            자막 교정 제안 로직 (GUI 없음)
   srt_io.py, config.py, theme.py, media.py, widgets.py, ime.py, version.py
   ui/                      기능별 화면 코드 (자동 자막, 화자 분석, 타임라인, 자막 표 등)
 tools/eval_accuracy.py     정답 SRT 대비 자막·화자 분리 정확도 평가
