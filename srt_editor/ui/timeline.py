@@ -32,14 +32,21 @@ class TimelineMixin:
         inner = tk.Frame(panel, bg=MEDIA_BG)
         inner.pack(fill="x", padx=14, pady=(6, 6))
 
-        # ── 상단: 파일명 + 열기 버튼 ──────────
-        top_row = tk.Frame(inner, bg=MEDIA_BG)
-        top_row.pack(fill="x", pady=(0, 4))
+        # ── 타임라인 행: 왼쪽 트랙 헤더(레이어 이름·추가·제거, 파일명) + 재생바 ──
+        tl_row = tk.Frame(inner, bg=MEDIA_BG)
+        tl_row.pack(fill="x")
+        self._track_hdr = tk.Canvas(tl_row, width=self._TRACK_HDR_W, height=100,
+                                    bg=BG2, highlightthickness=1,
+                                    highlightbackground="#252535")
+        self._track_hdr.pack(side="left", fill="y")
+        self._track_hdr_key = None
+        self._track_hdr.bind("<Button-1>", self._track_hdr_click)
+        self._track_hdr.bind("<Motion>", self._track_hdr_motion)
 
-        self.lbl_media = tk.Label(top_row,
-            text="🎵  음성/영상 파일을 여기에 드래그하거나 버튼으로 여세요",
-            bg=MEDIA_BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9), anchor="w")
-        self.lbl_media.pack(side="left", fill="x", expand=True)
+        self.lbl_media = tk.Label(self._track_hdr, text="🎵\n미디어 없음",
+                                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8),
+                                  justify="left", anchor="nw",
+                                  wraplength=self._TRACK_HDR_W - 14)
 
         def _add_row_and_defocus():
             if self.media_path:
@@ -56,73 +63,13 @@ class TimelineMixin:
                 self.split_subtitle_at(idx, pos)
             self.focus_set()
 
-        def _add_layer_and_defocus():
-            self._wf_add_layer()
-            self.focus_set()
-            _refresh_layer_btn_state()
-
-        def _remove_layer_and_defocus():
-            if getattr(self, "_wf_manual_lanes", 1) > 1:
-                self._wf_remove_layer()
-                self.focus_set()
-            _refresh_layer_btn_state()
-
-        _IDLE, _HOVER, _DIM_FG = "#1A1A2A", BG2, "#45454F"
-
-        def _btn_group(parent, caption):
-            """캡션 + 아이콘 버튼들을 담는 그룹 프레임(하나의 테두리 공유)."""
-            wrap = tk.Frame(parent, bg=_IDLE,
-                            highlightthickness=1, highlightbackground="#252535")
-            row = tk.Frame(wrap, bg=_IDLE)
-            row.pack(side="top", padx=4, pady=(4, 0))
-            tk.Label(wrap, text=caption, bg=_IDLE, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 7)).pack(side="top", pady=(1, 3))
-            return wrap, row
-
-        def _icon_only_btn(parent, icon, command, tooltip):
-            """그룹 안에 들어가는 테두리 없는 작은 아이콘 버튼."""
-            lbl = tk.Label(parent, text=icon, bg=_IDLE, fg=FG,
-                           font=(theme.FONT_FAMILY, 13, "bold"), cursor="hand2", padx=7)
-            lbl.bind("<Button-1>", lambda e: command())
-            lbl.bind("<Enter>", lambda e: lbl.configure(bg=_HOVER)
-                     if getattr(lbl, "_enabled", True) else None)
-            lbl.bind("<Leave>", lambda e: lbl.configure(bg=_IDLE))
-            Tooltip(lbl, tooltip, delay=500)
-            return lbl
-
-        # ── '레이어' 그룹: 레이어 추가 / 제거 ──
-        layer_wrap, layer_row = _btn_group(top_row, "레이어")
-        _layer_minus_lbl = _icon_only_btn(layer_row, "－", _remove_layer_and_defocus,
-                                          "레이어 제거")
-        _layer_minus_lbl.pack(side="left")
-        _icon_only_btn(layer_row, "＋", _add_layer_and_defocus,
-                      "레이어 추가").pack(side="left")
-        layer_wrap.pack(side="right", padx=(6, 0))
-
-        def _refresh_layer_btn_state():
-            can_remove = getattr(self, "_wf_manual_lanes", 1) > 1
-            _layer_minus_lbl._enabled = can_remove
-            _layer_minus_lbl.configure(
-                fg=FG if can_remove else _DIM_FG,
-                cursor="hand2" if can_remove else "arrow",
-                bg=_IDLE)
-        _refresh_layer_btn_state()
-
-        # ── '자막' 그룹: 자막 추가 / 나누기 ──
-        sub_wrap, sub_row = _btn_group(top_row, "자막")
-        _icon_only_btn(sub_row, "✂", _split_and_defocus,
-                      "자막 나누기  [S]").pack(side="left")
-        _icon_only_btn(sub_row, "＋", _add_row_and_defocus,
-                      "자막 추가").pack(side="left")
-        sub_wrap.pack(side="right", padx=(6, 0))
-
         # ── 파형 Canvas (100px) ────────────────
         self.media_progress_var = tk.DoubleVar(value=0)
-        self._pb_canvas = tk.Canvas(inner, height=100, bg="#0D0D14",
+        self._pb_canvas = tk.Canvas(tl_row, height=100, bg="#0D0D14",
                                     highlightthickness=1,
                                     highlightbackground="#252535",
                                     cursor="hand2")
-        self._pb_canvas.pack(fill="x", pady=(0, 0))
+        self._pb_canvas.pack(side="left", fill="x", expand=True)
         self._pb_dragging  = False
         self._waveform_pts = []
         self._wf_loading   = False
@@ -146,7 +93,7 @@ class TimelineMixin:
         # ── 파형 스크롤바 ─────────────────────
         self._wf_hsb = tk.Canvas(inner, height=10, bg="#1A1A2A",
                                   highlightthickness=0, cursor="sb_h_double_arrow")
-        self._wf_hsb.pack(fill="x", pady=(1, 0))
+        self._wf_hsb.pack(fill="x", pady=(1, 0), padx=(self._TRACK_HDR_W + 2, 0))
         self._wf_hsb.bind("<ButtonPress-1>",   self._wf_hsb_press)
         self._wf_hsb.bind("<B1-Motion>",        self._wf_hsb_drag)
         self._wf_hsb.bind("<ButtonRelease-1>", self._wf_hsb_release)
@@ -164,6 +111,18 @@ class TimelineMixin:
         self.lbl_pos.pack(side="left")
         self.lbl_pos.bind("<Button-1>", self._copy_current_time)
         Tooltip(self.lbl_pos, "클릭: 현재 시간을 자막 타임스탬프 형식으로 복사", delay=400)
+
+        # 자막 도구 (재생 위치 기준으로 나누기 / 추가)
+        _tool = dict(bg=BG3, fg=FG, relief="flat", bd=0, cursor="hand2",
+                     activebackground=BG2, activeforeground=FG,
+                     font=(theme.FONT_FAMILY, 9), padx=9, pady=3, takefocus=0,
+                     highlightthickness=1, highlightbackground="#2A2A3A")
+        b_split = tk.Button(ctrl, text="✂ 나누기", command=_split_and_defocus, **_tool)
+        b_split.pack(side="left", padx=(8, 4))
+        Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
+        b_add = tk.Button(ctrl, text="+ 자막", command=_add_row_and_defocus, **_tool)
+        b_add.pack(side="left")
+        Tooltip(b_add, "재생 위치에 자막 추가", delay=400)
 
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)
         btn_group.pack(side="left", expand=True)
@@ -239,7 +198,7 @@ class TimelineMixin:
         self._vol_canvas.bind("<Configure>",       self._vol_redraw)
         self.after(100, self._vol_redraw)
 
-        for w in [panel, inner, top_row, self.lbl_media, ctrl, btn_group]:
+        for w in [panel, inner, tl_row, self.lbl_media, ctrl, btn_group]:
             w.bind("<Enter>", lambda e: None)
 
     # ── 파형 Canvas 헬퍼 ─────────────────────
@@ -287,6 +246,7 @@ class TimelineMixin:
     _WF_ABS_MAX_LANES = 6   # 수동으로 추가할 수 있는 레인 수의 절대 상한
     _WF_LANE_H    = 22    # 자막 레인(줄) 하나의 높이
     _PB_BASE_CANVAS_H = 100   # 자막 1레인 기준 재생바 캔버스 기본 높이
+    _TRACK_HDR_W = 86         # 재생바 왼쪽 트랙 헤더(레이어 이름·추가·제거) 너비
 
     def _compute_subtitle_lanes(self, cache):
         """자막들의 시간 겹침을 분석해 각 자막을 레인(줄) 번호(0부터)에
@@ -406,6 +366,7 @@ class TimelineMixin:
         wf_h    = wf_bot - wf_top
         wf_mid  = wf_top + wf_h // 2   # 파형 중앙 (두 채널 경계)
         self._wf_sub_h = SUB_H   # 히트테스트 등 다른 곳에서도 참조
+        self._draw_track_header(num_lanes, LANE_H, ch)
 
         # ── 캐시 키 ───────────────────────────
         cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
@@ -1084,6 +1045,58 @@ class TimelineMixin:
                 self._select_row(idx)
             self._show_context_menu(event, idx)
             return
+
+    # ── 트랙 헤더 (재생바 왼쪽: 레이어 이름·추가·제거, 파일명) ──
+    def _draw_track_header(self, num_lanes, lane_h, ch):
+        """레이어 줄마다 '레이어 N'을, 마지막 레이어에 ×(제거)를, 그 아래에
+        '+ 레이어' 줄과 파일명을 그린다. 재생바 레이어와 같은 높이로 맞춘다."""
+        c = getattr(self, "_track_hdr", None)
+        if c is None:
+            return
+        can_add = num_lanes < self._WF_ABS_MAX_LANES
+        key = (num_lanes, lane_h, ch, can_add)
+        if key == self._track_hdr_key:
+            return
+        self._track_hdr_key = key
+        w = self._TRACK_HDR_W
+        c.configure(height=ch)
+        c.delete("all")
+        zones = []
+        for i in range(num_lanes):
+            y0 = i * lane_h
+            c.create_rectangle(0, y0, w + 2, y0 + lane_h, fill="#131318", outline="#1E1E2A")
+            c.create_text(10, y0 + lane_h / 2, text=f"레이어 {i + 1}", anchor="w",
+                          fill=FG_DIM, font=(theme.FONT_FAMILY, 8))
+            if i == num_lanes - 1 and num_lanes > 1:
+                c.create_text(w - 12, y0 + lane_h / 2, text="×", fill="#8A8A9A",
+                              font=(theme.FONT_FAMILY, 10), tags="rm")
+                zones.append((w - 24, y0, w + 2, y0 + lane_h, "remove"))
+        y = num_lanes * lane_h + 1
+        if can_add:
+            c.create_text(10, y + 11, text="+ 레이어", anchor="w", fill=ACCENT,
+                          font=(theme.FONT_FAMILY, 8, "bold"), tags="add")
+            zones.append((0, y, w + 2, y + 22, "add"))
+            y += 22
+        c.create_line(6, y + 1, w - 6, y + 1, fill="#24243A")
+        c.create_window(8, y + 6, window=self.lbl_media, anchor="nw", width=w - 12)
+        self._track_hdr_zones = zones
+
+    def _track_hdr_zone(self, e):
+        for x0, y0, x1, y1, action in getattr(self, "_track_hdr_zones", []):
+            if x0 <= e.x <= x1 and y0 <= e.y <= y1:
+                return action
+        return None
+
+    def _track_hdr_motion(self, e):
+        self._track_hdr.configure(cursor="hand2" if self._track_hdr_zone(e) else "arrow")
+
+    def _track_hdr_click(self, e):
+        action = self._track_hdr_zone(e)
+        if action == "add":
+            self._wf_add_layer()
+        elif action == "remove":
+            self._wf_remove_layer()
+        self.focus_set()   # 스페이스바가 다른 곳에 먹히지 않도록
 
     def _wf_add_layer(self):
         """재생바 자막 레인을 하나 더 늘린다(수동, 절대 상한까지)."""
