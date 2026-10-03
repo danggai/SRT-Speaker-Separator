@@ -440,12 +440,10 @@ class TimelineMixin:
             except Exception:
                 font = None
 
-            # 레인 구분선 + 왼쪽에 레인 번호(1,2,3...) 표시
-            for _lane_i in range(num_lanes):
+            # 레인 구분선 (레이어 이름은 왼쪽 트랙 헤더에 표시)
+            for _lane_i in range(1, num_lanes):
                 _ly = _lane_i * LANE_H
-                if _lane_i > 0:
-                    draw.line([0, _ly, cw, _ly], fill="#20202A", width=1)
-                draw.text((3, _ly + 5), str(_lane_i + 1), fill="#55555F", font=font)
+                draw.line([0, _ly, cw, _ly], fill="#20202A", width=1)
 
             if cache and self.subtitles:
                 drag = getattr(self, "_wf_sub_drag", None)
@@ -472,32 +470,33 @@ class TimelineMixin:
                     raw   = self._speaker_color(spk) if spk else "#404055"
                     h_hex = raw.lstrip("#")
                     fr, fg_, fb = int(h_hex[0:2],16), int(h_hex[2:4],16), int(h_hex[4:6],16)
-                    # 어둡게 (화자 색 30% + 배경 70%)
+                    # 어두운 바탕에 화자 색을 살짝만 섞는다 (화자 색 22% + 배경 78%)
                     BG_R, BG_G, BG_B = 0x13, 0x13, 0x18
-                    fill_rgb = (int(fr*0.30+BG_R*0.70),
-                                int(fg_*0.30+BG_G*0.70),
-                                int(fb*0.30+BG_B*0.70))
+                    fill_rgb = (int(fr*0.22+BG_R*0.78),
+                                int(fg_*0.22+BG_G*0.78),
+                                int(fb*0.22+BG_B*0.78))
                     fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
-                    # 블록 채우기 (1px 위아래 여백)
-                    draw.rectangle([x1+1, ln_top+3, x2, ln_bot-3], fill=fill_hex)
-                    # 좌측 색상 강조선 (1px)
-                    draw.line([x1+1, ln_top+3, x1+1, ln_bot-3], fill=raw, width=1)
+                    # 블록 채우기 — 위아래 2px 여백, 다음 블록과 1px 간격
+                    # (앞쪽 화자 색 막대는 캔버스 위에 따로 그린다)
+                    draw.rectangle([x1, ln_top+2, max(x1, x2-1), ln_bot-2], fill=fill_hex)
 
-                    # 텍스트 (폭이 허용되는 만큼)
-                    box_w = x2 - x1 - 6
+                    # 텍스트 — 밝은 회색 한 줄, 실제 글꼴 폭으로 잘라 '…'
+                    box_w = x2 - x1 - 10
                     if box_w >= 14:
                         text = self.subtitles[i].get("text", "").replace("\n", " ").strip()
                         if text:
-                            CHAR_W = 6
-                            max_ch = max(1, box_w // CHAR_W)
-                            if len(text) > max_ch:
-                                text = text[:max_ch - 1] + "…"
-                            ty = ln_top + (LANE_H - 12) // 2
-                            text_col = f"#{min(255,fr+80):02x}{min(255,fg_+80):02x}{min(255,fb+80):02x}"
-                            if font:
-                                draw.text((x1 + 5, ty), text, fill=text_col, font=font)
-                            else:
-                                draw.text((x1 + 5, ty), text, fill=text_col)
+                            def _w(s):
+                                return font.getlength(s) if font else len(s) * 6
+                            if _w(text) > box_w:
+                                while text and _w(text + "…") > box_w:
+                                    text = text[:-1]
+                                text = text + "…" if text else ""
+                            if text:
+                                ty = ln_top + (LANE_H - 12) // 2
+                                if font:
+                                    draw.text((x1 + 7, ty), text, fill="#E0E0E0", font=font)
+                                else:
+                                    draw.text((x1 + 7, ty), text, fill="#E0E0E0")
 
                 # 레인 구분선 (2줄 이상일 때만, 겹침을 시각적으로 구분)
                 if num_lanes > 1:
@@ -661,11 +660,14 @@ class TimelineMixin:
                     # 이동 중인 자막은 테두리로 강조
                     c.create_rectangle(x1, ln_top+1, x2, ln_bot-1,
                                        outline="#FFFFFF", width=1)
-                # 핸들은 그 자막이 있는 레인 높이에
-                c.create_rectangle(x1,    ln_top, x1+HW, ln_bot,
+                # 앞쪽에만 화자 색 막대(3px). 크기 조절 핸들은 드래그 중일 때만 흰색으로
+                # 보여준다 (잡는 영역은 _wf_hit_test에서 따로 계산하므로 동작은 그대로)
+                c.create_rectangle(x1, ln_top+2, x1+3, ln_bot-2,
                                    fill="#FFFFFF" if snapped_s else color, outline="")
-                c.create_rectangle(x2-HW, ln_top, x2,    ln_bot,
-                                   fill="#FFFFFF" if snapped_e else color, outline="")
+                if snapped_s:
+                    c.create_rectangle(x1, ln_top, x1+HW, ln_bot, fill="#FFFFFF", outline="")
+                if snapped_e:
+                    c.create_rectangle(x2-HW, ln_top, x2, ln_bot, fill="#FFFFFF", outline="")
 
         if getattr(self, "_wf_loading", False):
             c.create_text(cw//2, wf_top + (wf_bot-wf_top)//2,
