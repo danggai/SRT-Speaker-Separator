@@ -1,2 +1,6 @@
 app/srt_speaker_separator.spec
 app/build/
+
+# 평가용 오디오/정답 (저작권 있는 원본 일부 — 커밋하지 않음)
+eval_cases/
+__pycache__/
