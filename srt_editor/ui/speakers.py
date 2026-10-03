@@ -234,35 +234,24 @@ class SpeakerMixin:
                          highlightthickness=1, highlightbackground=color,
                          highlightcolor=color)
 
-        def _start_edit(e, canvas=name_canvas, entry=entry, var=name_var):
-            if e.widget is not canvas:
-                return
-            canvas.pack_forget()
-            var.set(name)
-            entry.pack(fill="x", expand=True, ipady=2)
-            entry.focus_set(); entry.select_range(0, "end")
+        row._name_canvas = name_canvas
+        row._name_entry = entry
+        row._name_var = name_var
+        row._name_trim = _trim_name
 
-        def _commit_edit(e, old=name, var=name_var,
-                         canvas=name_canvas, entry=entry, trim=_trim_name):
-            new = var.get().strip()
-            entry.pack_forget()
-            if new and new != old and new not in self.speakers:
-                self.rename_speaker(old, new); return
-            var.set(old)
-            canvas.pack(fill="x", expand=True)
-            self.after(10, trim)
-
-        def _on_entry_key(e, old=name, var=name_var,
-                          canvas=name_canvas, entry=entry, trim=_trim_name):
+        def _on_entry_key(e, r=row):
             if e.keysym == "Return":
-                _commit_edit(e, old, var, canvas, entry, trim)
-            elif e.keysym == "Escape":
-                var.set(old); entry.pack_forget()
-                canvas.pack(fill="x", expand=True)
-                self.after(10, trim)
+                self._end_name_edit(commit=True)
+                return "break"
+            if e.keysym == "Escape":
+                self._end_name_edit(commit=False)
+                return "break"
 
-        name_canvas.bind("<Button-1>", _start_edit)
-        entry.bind("<FocusOut>", _commit_edit)
+        # "break": 전역 클릭 처리가 방금 준 포커스를 뺏지 않도록
+        name_canvas.bind("<Button-1>", lambda e, r=row: self._begin_name_edit(r))
+        entry.bind("<FocusOut>",
+                   lambda e, r=row: self._end_name_edit(commit=True)
+                   if getattr(self, "_spk_edit_row", None) is r else None)
         entry.bind("<KeyPress>", _on_entry_key)
 
         for widget in [row, cnt_lbl]:
@@ -297,6 +286,7 @@ class SpeakerMixin:
 
     def _render_speakers_body(self):
         self._spk_count_lbls = {}
+        self._spk_edit_row = None
 
         # 화자 해제 단축키 힌트
         tk.Label(self.speaker_inner,
@@ -452,33 +442,55 @@ class SpeakerMixin:
         self._fill_slots(self._vscroll_top)
         self._append_speaker_row(name)
         self._update_count()
-        # 화자 칸 너비·버튼 배치를 한 번에 끝내 중간 상태(버튼이 사라졌다 나타남)가 보이지 않게
+        # 배치 즉시 반영 (깜빡임 방지)
         self.update_idletasks()
         # 추가된 화자의 entry를 바로 편집 모드로
         self.after(50, lambda: self._start_speaker_edit(name))
 
     def _start_speaker_edit(self, name):
-        """화자 이름 레이블을 찾아 entry 편집 모드로 전환."""
-        for child in self.speaker_inner.winfo_children():
-            # 각 row 안에서 name_canvas / entry 찾기
-            for widget in child.winfo_children():
-                for sub in widget.winfo_children():
-                    # name_frame 안의 entry 찾기
-                    if isinstance(sub, tk.Entry):
-                        try:
-                            var = sub.cget("textvariable")
-                            if self.tk.globalgetvar(var) == name:
-                                # canvas 숨기고 entry 표시
-                                for sib in sub.master.winfo_children():
-                                    if isinstance(sib, tk.Canvas):
-                                        sib.pack_forget()
-                                        break
-                                sub.pack(fill="x", expand=True, ipady=2)
-                                sub.focus_set()
-                                sub.select_range(0, "end")
-                                return
-                        except Exception:
-                            pass
+        """화자 이름 편집 시작 (화자 추가 직후)."""
+        row = next((r for r in self.speaker_inner.winfo_children()
+                    if getattr(r, "_spk_name", None) == name), None)
+        if row is not None:
+            self._begin_name_edit(row)
+
+    def _begin_name_edit(self, row):
+        """화자 이름 편집 시작. 다른 화자를 편집 중이면 먼저 저장하고 닫는다."""
+        cur = getattr(self, "_spk_edit_row", None)
+        if cur is row:
+            return "break"
+        name = row._spk_name
+        if cur is not None:
+            self._end_name_edit(commit=True)
+            if not row.winfo_exists():   # 이름 변경으로 목록이 다시 그려진 경우
+                row = next((r for r in self.speaker_inner.winfo_children()
+                            if getattr(r, "_spk_name", None) == name), None)
+                if row is None:
+                    return "break"
+        self._spk_edit_row = row
+        row._name_canvas.pack_forget()
+        row._name_var.set(name)
+        row._name_entry.pack(fill="x", expand=True, ipady=2)
+        row._name_entry.focus_set()
+        row._name_entry.select_range(0, "end")
+        row._name_entry.icursor("end")
+        return "break"
+
+    def _end_name_edit(self, commit=True):
+        """화자 이름 편집 종료 (여러 번 불려도 한 번만 처리)."""
+        row = getattr(self, "_spk_edit_row", None)
+        self._spk_edit_row = None
+        if row is None or not row.winfo_exists():
+            return
+        old, new = row._spk_name, row._name_var.get().strip()
+        if self.focus_get() is row._name_entry:
+            self.focus_set()
+        row._name_entry.pack_forget()
+        row._name_var.set(old)
+        row._name_canvas.pack(fill="x", expand=True)
+        self.after(10, row._name_trim)
+        if commit and new and new != old and new not in self.speakers:
+            self.rename_speaker(old, new)
 
     def rename_speaker(self, old_name, new_name=None):
         if new_name is None:
