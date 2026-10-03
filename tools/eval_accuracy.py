@@ -21,10 +21,8 @@
   태그 없는 자막(편집 자막, 효과음 설명 등)은 평가에서 제외한다.
 """
 import argparse
-import ast
 import copy
 import gc
-import io
 import itertools
 import json
 import os
@@ -35,31 +33,12 @@ import sys
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-APP = ROOT / "srt_speaker_separator.py"
 CASES = ROOT / "eval_cases"
 SR = 16000
 
-# 앱에서 그대로 가져와 검증할 함수/상수 (GUI를 띄우지 않도록 AST로 필요한 것만 로드)
-_APP_NAMES = {"_ASR_MODES", "_DEFAULT_ASR_MODE", "_load_asr_model", "_diarize_exclusive",
-              "_split_segments_by_speaker", "_assign_speakers_by_overlap"}
-
-
-def load_app_helpers():
-    tree = ast.parse(APP.read_text(encoding="utf-8"))
-    nodes = [n for n in tree.body
-             if (isinstance(n, ast.FunctionDef) and n.name in _APP_NAMES)
-             or (isinstance(n, ast.Assign)
-                 and any(getattr(t, "id", None) in _APP_NAMES for t in n.targets))]
-    # 민감도 적용은 SRTEditor 메서드 → self 없이 호출할 수 있도록 함수로 가져온다
-    for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
-        nodes += [m for m in cls.body
-                  if isinstance(m, ast.FunctionDef) and m.name == "_apply_diarize_sensitivity"]
-    ns = {}
-    exec(compile(ast.Module(nodes, []), str(APP), "exec"), ns)
-    missing = _APP_NAMES - ns.keys()
-    if missing:
-        sys.exit(f"앱에서 찾지 못한 항목: {missing}")
-    return ns
+# 앱의 음성 인식/화자 분리 로직(GUI 의존성 없음)을 그대로 가져와 검증한다
+sys.path.insert(0, str(ROOT))
+from srt_editor import speech  # noqa: E402
 
 
 # ── SRT ────────────────────────────────────────────────────────────
@@ -255,7 +234,6 @@ def run(a):
     import logging
     warnings.filterwarnings("ignore")
     logging.disable(logging.WARNING)
-    H = load_app_helpers()
     import whisperx
     import torch
     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
@@ -267,16 +245,16 @@ def run(a):
     print(f"케이스 {a.name}: {len(audio) / SR:.1f}초, 화자 태그 자막 {len(ref)}줄, 장치 {device}")
 
     diar = DiarizationPipeline(token=_hf_token(), device=device)
-    H["_apply_diarize_sensitivity"](None, diar, a.sensitivity)
+    speech._apply_diarize_sensitivity(diar, a.sensitivity)
     intervals = [(r["start"], r["end"]) for r in ref]
     rows = []
 
     if a.diarize_only:
         t0 = time.time()
-        df = H["_diarize_exclusive"](diar, audio, a.num_speakers, a.exact)
+        df = speech._diarize_exclusive(diar, audio, a.num_speakers, a.exact)
         turns = [(float(r.start), float(r.end), r.speaker) for r in df.itertuples(index=False)]
         m = best_mapping(ref, turns)
-        errs = line_errors(ref, H["_assign_speakers_by_overlap"](intervals, turns), m)
+        errs = line_errors(ref, speech._assign_speakers_by_overlap(intervals, turns), m)
         print(f"화자수 설정={a.num_speakers or '자동'}{'(고정)' if a.exact else ''} "
               f"민감도={a.sensitivity} → 검출 화자 {len({t[2] for t in turns})}명, "
               f"SRT 매핑 화자(줄) {1 - len(errs) / len(ref):.1%}, "
@@ -287,18 +265,18 @@ def run(a):
 
     # ── 개선 후 (현재 앱 코드) ──
     t0 = time.time()
-    model, wname = H["_load_asr_model"](whisperx, a.mode, device, language="ko")
+    model, wname = speech._load_asr_model(whisperx, a.mode, device, language="ko")
     aligned, _ = _transcribe(whisperx, model, audio, device, "ko")
     del model; _free(device)
-    df = H["_diarize_exclusive"](diar, audio, a.num_speakers, a.exact)
-    segs = H["_split_segments_by_speaker"](
+    df = speech._diarize_exclusive(diar, audio, a.num_speakers, a.exact)
+    segs = speech._split_segments_by_speaker(
         assign_word_speakers(df, copy.deepcopy(aligned))["segments"])
     auto_turns = [(s["start"], s["end"], s.get("speaker", "")) for s in segs if s.get("speaker")]
     map_turns = [(float(r.start), float(r.end), r.speaker) for r in df.itertuples(index=False)]
     rows.append(_report(
         f"개선 후 ({a.mode}: {wname}, 한국어 고정)", ref, " ".join(s["text"] for s in segs),
-        auto_turns, H["_assign_speakers_by_overlap"](intervals, auto_turns),
-        map_turns, H["_assign_speakers_by_overlap"](intervals, map_turns),
+        auto_turns, speech._assign_speakers_by_overlap(intervals, auto_turns),
+        map_turns, speech._assign_speakers_by_overlap(intervals, map_turns),
         time.time() - t0))
     write_srt([{"start": s["start"], "end": s["end"], "speaker": s.get("speaker", ""),
                 "text": s["text"].strip()} for s in segs], d / "hyp_new.srt")
@@ -319,7 +297,7 @@ def run(a):
         rows.append(_report(
             "개선 전 (turbo, 언어 자동감지, 세그먼트 단위 화자)", ref,
             " ".join(s["text"] for s in segs_old),
-            old_turns, H["_assign_speakers_by_overlap"](intervals, old_turns),
+            old_turns, speech._assign_speakers_by_overlap(intervals, old_turns),
             old_turns, legacy_assign(intervals, old_turns),
             time.time() - t0, extra=f"감지 언어={lang}"))
         write_srt([{"start": s["start"], "end": s["end"], "speaker": s.get("speaker", ""),
