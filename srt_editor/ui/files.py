@@ -285,9 +285,9 @@ class FileMixin:
             if srt_io.g_display_pattern != DEFAULT_DISPLAY_PATTERN:
                 meta["display_pattern"] = srt_io.g_display_pattern
             write_srt_tagged(self.subtitles, path, meta or None)
+            self._clear_backup()   # 저장했으니 백업은 필요 없음 (경로가 바뀌기 전 이름으로 지움)
             self._unsaved = False
             self.save_path = path
-            self._clear_backup()   # 저장했으니 백업은 필요 없음
             self._add_recent_file(path)
             self._remember_view()
             _fn = os.path.splitext(os.path.basename(path))[0]
