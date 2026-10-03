@@ -287,6 +287,7 @@ class SubtitleTableMixin:
 
     def _canvas_press(self, e):
         """화자 버튼 → 지정 / 자막 칸 → 편집 / 선택된 자막의 시간 → 편집 / 그 외 → 선택."""
+        self._canvas_pressed = True
         s = self._slot_at(e)
         if s < 0:
             self._canvas_drag_start(e)
@@ -552,6 +553,9 @@ class SubtitleTableMixin:
         """드래그 중 Y 좌표로 범위 선택 갱신 + 경계 자동 스크롤."""
         if self._drag_sel_anchor is None or not self.subtitles:
             return
+        if not self._drag_from_main(event):
+            self._canvas_drag_end(event)
+            return
         self._drag_sel_active = True
         anchor = self._drag_sel_anchor
         cur    = self._canvas_y_to_idx(event.y)
@@ -578,7 +582,21 @@ class SubtitleTableMixin:
         else:
             self._cancel_autoscroll()
 
+    def _drag_from_main(self, event):
+        """메인 자막 영역에서 시작했고 다른 창이 위에 없을 때만 드래그 선택 허용."""
+        if not getattr(self, "_canvas_pressed", False):
+            return False
+        grab = self.grab_current()
+        if grab is not None and grab.winfo_toplevel() is not self:
+            return False
+        try:
+            over = self.winfo_containing(event.x_root, event.y_root)
+        except (KeyError, tk.TclError):
+            over = None
+        return over is None or over.winfo_toplevel() is self
+
     def _canvas_drag_end(self, event):
+        self._canvas_pressed = False
         self._drag_sel_active = False
         self._drag_sel_anchor = None
         self._cancel_autoscroll()
