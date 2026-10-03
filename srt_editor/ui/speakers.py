@@ -35,6 +35,8 @@ class SpeakerMixin:
         self.speaker_inner.bind("<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         _spk_win = canvas.create_window((0, 0), window=self.speaker_inner, anchor="nw")
+        self._spk_canvas = canvas   # 화자 목록을 통째로 교체할 때 사용
+        self._spk_win = _spk_win
         canvas.configure(yscrollcommand=scrollbar.set)
         # speaker_inner 너비를 canvas 너비에 고정 — 내용물이 사이드바를 밀어내지 않도록
         canvas.bind("<Configure>",
@@ -98,8 +100,7 @@ class SpeakerMixin:
 
     # ── 화자 사이드바 렌더 ───────────────────
     def _refresh_speaker_counts(self):
-        """화자별 자막 수만 갱신. 자막에 화자를 지정할 때는 화자 목록 자체가 바뀌지
-        않으므로, 목록을 통째로 다시 만들어 깜빡이게 하지 않고 숫자만 바꾼다."""
+        """화자별 자막 수만 갱신 (목록은 그대로)."""
         lbls = getattr(self, "_spk_count_lbls", {})
         if list(lbls) != list(self.speakers) or not all(l.winfo_exists() for l in lbls.values()):
             self._render_speakers()
@@ -113,8 +114,188 @@ class SpeakerMixin:
                 lbl.configure(text=text)
 
     def _render_speakers(self):
-        for w in self.speaker_inner.winfo_children():
-            w.destroy()
+        """화자 목록 전체 다시 그리기 (새 프레임에 만든 뒤 교체해 깜빡임 방지)."""
+        canvas = getattr(self, "_spk_canvas", None)
+        if canvas is None:
+            for w in self.speaker_inner.winfo_children():
+                w.destroy()
+            self._render_speakers_body()
+            return
+        old = self.speaker_inner
+        new = tk.Frame(canvas, bg=BG2)
+        self.speaker_inner = new
+        try:
+            self._render_speakers_body()
+        finally:
+            new.bind("<Configure>",
+                     lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.itemconfigure(self._spk_win, window=new)
+            old.destroy()
+
+    def _make_speaker_row(self, i, name, before=None):
+        """화자 목록의 한 줄(색 점·이름·개수·삭제)을 만든다. before를 주면 그 위젯 위에 넣는다."""
+        color = self._speaker_color(name)
+
+        row = tk.Frame(self.speaker_inner, bg=BG3,
+                       highlightbackground=color, highlightthickness=1)
+        row._spk_name = name
+        row._spk_idx  = i
+
+        # 드래그 핸들 (≡)
+        drag_lbl = tk.Label(row, text="≡", bg=BG3, fg="#444455",
+                            font=(theme.FONT_FAMILY, 10), cursor="fleur")
+        drag_lbl.pack(side="left", padx=(4, 0))
+
+        # 단축키 번호 배지 (1~9)
+        badge_text = str(i + 1) if i < 9 else ""
+        badge = tk.Label(row, text=badge_text, bg=BG3, fg="#555566",
+                         font=(theme.FONT_FAMILY, 8), width=1, anchor="center")
+        badge.pack(side="left", padx=(2, 0))
+
+        dot_c = tk.Canvas(row, width=14, height=14, bg=BG3,
+                          highlightthickness=0, cursor="hand2")
+        dot_c.pack(side="left", padx=(4, 2), pady=6)
+        dot_c.create_oval(2, 2, 12, 12, fill=color, outline="white", width=1,
+                          tags="dot")
+        def _dot_click(e, n=name, dc=dot_c, rf=row):
+            self._pick_speaker_color(n, dc, rf)
+            return "break"
+        dot_c.bind("<Button-1>", _dot_click)
+        dot_c.bind("<Enter>", lambda e, dc=dot_c: dc.configure(bg="#3A3A3A"))
+        dot_c.bind("<Leave>", lambda e, dc=dot_c: dc.configure(bg=BG3))
+
+        name_var = tk.StringVar(value=name)
+
+        # 삭제 버튼·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
+        del_btn = tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
+                  font=(theme.FONT_FAMILY, 10), bd=0, cursor="hand2",
+                  activebackground=BG3, activeforeground="#FF6B8A",
+                  command=lambda n=name: self.delete_speaker(n))
+        del_btn.pack(side="right", padx=(1, 4))
+
+        cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
+        cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 9))
+        cnt_lbl.pack(side="right", padx=2)
+        self._spk_count_lbls[name] = cnt_lbl
+
+        # name_frame: 버튼들 배치 후 마지막에 pack → 남은 공간만 차지
+        name_frame = tk.Frame(row, bg=BG3)
+        name_frame.pack(side="left", fill="x", expand=True, padx=2)
+
+        # Canvas 기반 말줄임 Label — 실제 너비에 맞게 텍스트를 잘라 표시
+        name_canvas = tk.Canvas(name_frame, bg=BG3, highlightthickness=0,
+                                height=22, cursor="xterm")
+        name_canvas.pack(fill="x", expand=True)
+        _name_text_id = name_canvas.create_text(
+            4, 11, text=name, fill=color,
+            font=(theme.FONT_FAMILY, 10, "bold"), anchor="w")
+
+        def _trim_name(canvas=name_canvas, text_id=_name_text_id,
+                       full=name, c=color):
+            """캔버스 너비에 맞게 이름을 잘라 … 로 표시.
+            화자 목록이 새로고침되며 위젯이 이미 파괴된 뒤에도 지연된
+            <Configure> 이벤트가 들어올 수 있으므로, 위젯 존재 여부를
+            먼저 확인하고 모든 Tk 호출을 예외 처리로 감싼다."""
+            try:
+                if not canvas.winfo_exists():
+                    return
+                w = canvas.winfo_width()
+            except Exception:
+                return
+            if w <= 4:
+                return
+            avail = max(10, w - 8)
+            try:
+                import tkinter.font as tkfont
+                f = tkfont.Font(font=(theme.FONT_FAMILY, 10, "bold"))
+                if f.measure(full) <= avail:
+                    canvas.itemconfigure(text_id, text=full)
+                    return
+                lo, hi = 0, len(full)
+                while lo < hi:
+                    mid = (lo + hi + 1) // 2
+                    if f.measure(full[:mid] + "…") <= avail:
+                        lo = mid
+                    else:
+                        hi = mid - 1
+                canvas.itemconfigure(text_id, text=full[:lo] + "…" if lo < len(full) else full)
+            except Exception:
+                try:
+                    canvas.itemconfigure(text_id, text=full)
+                except Exception:
+                    pass
+
+        name_canvas.bind("<Configure>", lambda e, fn=_trim_name: fn())
+
+        entry = tk.Entry(name_frame, textvariable=name_var,
+                         bg="#2A2A2A", fg=color, insertbackground=color,
+                         font=(theme.FONT_FAMILY, 10, "bold"), relief="flat",
+                         highlightthickness=1, highlightbackground=color,
+                         highlightcolor=color)
+
+        def _start_edit(e, canvas=name_canvas, entry=entry, var=name_var):
+            if e.widget is not canvas:
+                return
+            canvas.pack_forget()
+            var.set(name)
+            entry.pack(fill="x", expand=True, ipady=2)
+            entry.focus_set(); entry.select_range(0, "end")
+
+        def _commit_edit(e, old=name, var=name_var,
+                         canvas=name_canvas, entry=entry, trim=_trim_name):
+            new = var.get().strip()
+            entry.pack_forget()
+            if new and new != old and new not in self.speakers:
+                self.rename_speaker(old, new); return
+            var.set(old)
+            canvas.pack(fill="x", expand=True)
+            self.after(10, trim)
+
+        def _on_entry_key(e, old=name, var=name_var,
+                          canvas=name_canvas, entry=entry, trim=_trim_name):
+            if e.keysym == "Return":
+                _commit_edit(e, old, var, canvas, entry, trim)
+            elif e.keysym == "Escape":
+                var.set(old); entry.pack_forget()
+                canvas.pack(fill="x", expand=True)
+                self.after(10, trim)
+
+        name_canvas.bind("<Button-1>", _start_edit)
+        entry.bind("<FocusOut>", _commit_edit)
+        entry.bind("<KeyPress>", _on_entry_key)
+
+        for widget in [row, cnt_lbl]:
+            widget.bind("<Button-1>",
+                lambda e, n=name: self._assign_speaker_from_sidebar(n))
+
+        # 드래그 바인딩 (핸들에만)
+        drag_lbl.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_drag_start(e, r))
+        drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
+        drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
+
+        # 툴팁 — 위젯별 개별 힌트
+        key_hint = f"  단축키: {i+1}" if i < 9 else ""
+        Tooltip(row,      f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}", delay=600)
+        Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
+        Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
+        Tooltip(del_btn, f"'{name}' 화자 삭제", delay=400)
+        # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
+        row.pack(fill="x", padx=6, pady=3, ipady=2,
+                 **({"before": before} if before is not None else {}))
+
+    def _append_speaker_row(self, name):
+        """새 화자 한 줄만 추가 (불가능하면 전체 다시 그림)."""
+        add_row = getattr(self, "_spk_add_row", None)
+        lbls = getattr(self, "_spk_count_lbls", {})
+        if (add_row is None or not add_row.winfo_exists()
+                or list(lbls) != self.speakers[:-1] or self.speakers[-1] != name):
+            self._render_speakers()
+            return
+        self._make_speaker_row(len(self.speakers) - 1, name, before=add_row)
+        self._refresh_speaker_counts()
+
+    def _render_speakers_body(self):
         self._spk_count_lbls = {}
 
         # 화자 해제 단축키 힌트
@@ -143,157 +324,12 @@ class SpeakerMixin:
         self._spk_drag_ghost = None
 
         for i, name in enumerate(self.speakers):
-            color = self._speaker_color(name)
-
-            row = tk.Frame(self.speaker_inner, bg=BG3,
-                           highlightbackground=color, highlightthickness=1)
-            row.pack(fill="x", padx=6, pady=3, ipady=2)
-            row._spk_name = name
-            row._spk_idx  = i
-
-            # 드래그 핸들 (≡)
-            drag_lbl = tk.Label(row, text="≡", bg=BG3, fg="#444455",
-                                font=(theme.FONT_FAMILY, 10), cursor="fleur")
-            drag_lbl.pack(side="left", padx=(4, 0))
-
-            # 단축키 번호 배지 (1~9)
-            badge_text = str(i + 1) if i < 9 else ""
-            badge = tk.Label(row, text=badge_text, bg=BG3, fg="#555566",
-                             font=(theme.FONT_FAMILY, 8), width=1, anchor="center")
-            badge.pack(side="left", padx=(2, 0))
-
-            dot_c = tk.Canvas(row, width=14, height=14, bg=BG3,
-                              highlightthickness=0, cursor="hand2")
-            dot_c.pack(side="left", padx=(4, 2), pady=6)
-            dot_c.create_oval(2, 2, 12, 12, fill=color, outline="white", width=1,
-                              tags="dot")
-            def _dot_click(e, n=name, dc=dot_c, rf=row):
-                self._pick_speaker_color(n, dc, rf)
-                return "break"
-            dot_c.bind("<Button-1>", _dot_click)
-            dot_c.bind("<Enter>", lambda e, dc=dot_c: dc.configure(bg="#3A3A3A"))
-            dot_c.bind("<Leave>", lambda e, dc=dot_c: dc.configure(bg=BG3))
-
-            name_var = tk.StringVar(value=name)
-
-            # 삭제 버튼·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
-            del_btn = tk.Button(row, text="✕", bg=BG3, fg="#FF6B8A",
-                      font=(theme.FONT_FAMILY, 10), bd=0, cursor="hand2",
-                      activebackground=BG3, activeforeground="#FF6B8A",
-                      command=lambda n=name: self.delete_speaker(n))
-            del_btn.pack(side="right", padx=(1, 4))
-
-            cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
-            cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 9))
-            cnt_lbl.pack(side="right", padx=2)
-            self._spk_count_lbls[name] = cnt_lbl
-
-            # name_frame: 버튼들 배치 후 마지막에 pack → 남은 공간만 차지
-            name_frame = tk.Frame(row, bg=BG3)
-            name_frame.pack(side="left", fill="x", expand=True, padx=2)
-
-            # Canvas 기반 말줄임 Label — 실제 너비에 맞게 텍스트를 잘라 표시
-            name_canvas = tk.Canvas(name_frame, bg=BG3, highlightthickness=0,
-                                    height=22, cursor="xterm")
-            name_canvas.pack(fill="x", expand=True)
-            _name_text_id = name_canvas.create_text(
-                4, 11, text=name, fill=color,
-                font=(theme.FONT_FAMILY, 10, "bold"), anchor="w")
-
-            def _trim_name(canvas=name_canvas, text_id=_name_text_id,
-                           full=name, c=color):
-                """캔버스 너비에 맞게 이름을 잘라 … 로 표시.
-                화자 목록이 새로고침되며 위젯이 이미 파괴된 뒤에도 지연된
-                <Configure> 이벤트가 들어올 수 있으므로, 위젯 존재 여부를
-                먼저 확인하고 모든 Tk 호출을 예외 처리로 감싼다."""
-                try:
-                    if not canvas.winfo_exists():
-                        return
-                    w = canvas.winfo_width()
-                except Exception:
-                    return
-                if w <= 4:
-                    return
-                avail = max(10, w - 8)
-                try:
-                    import tkinter.font as tkfont
-                    f = tkfont.Font(font=(theme.FONT_FAMILY, 10, "bold"))
-                    if f.measure(full) <= avail:
-                        canvas.itemconfigure(text_id, text=full)
-                        return
-                    lo, hi = 0, len(full)
-                    while lo < hi:
-                        mid = (lo + hi + 1) // 2
-                        if f.measure(full[:mid] + "…") <= avail:
-                            lo = mid
-                        else:
-                            hi = mid - 1
-                    canvas.itemconfigure(text_id, text=full[:lo] + "…" if lo < len(full) else full)
-                except Exception:
-                    try:
-                        canvas.itemconfigure(text_id, text=full)
-                    except Exception:
-                        pass
-
-            name_canvas.bind("<Configure>", lambda e, fn=_trim_name: fn())
-
-            entry = tk.Entry(name_frame, textvariable=name_var,
-                             bg="#2A2A2A", fg=color, insertbackground=color,
-                             font=(theme.FONT_FAMILY, 10, "bold"), relief="flat",
-                             highlightthickness=1, highlightbackground=color,
-                             highlightcolor=color)
-
-            def _start_edit(e, canvas=name_canvas, entry=entry, var=name_var):
-                if e.widget is not canvas:
-                    return
-                canvas.pack_forget()
-                var.set(name)
-                entry.pack(fill="x", expand=True, ipady=2)
-                entry.focus_set(); entry.select_range(0, "end")
-
-            def _commit_edit(e, old=name, var=name_var,
-                             canvas=name_canvas, entry=entry, trim=_trim_name):
-                new = var.get().strip()
-                entry.pack_forget()
-                if new and new != old and new not in self.speakers:
-                    self.rename_speaker(old, new); return
-                var.set(old)
-                canvas.pack(fill="x", expand=True)
-                self.after(10, trim)
-
-            def _on_entry_key(e, old=name, var=name_var,
-                              canvas=name_canvas, entry=entry, trim=_trim_name):
-                if e.keysym == "Return":
-                    _commit_edit(e, old, var, canvas, entry, trim)
-                elif e.keysym == "Escape":
-                    var.set(old); entry.pack_forget()
-                    canvas.pack(fill="x", expand=True)
-                    self.after(10, trim)
-
-            name_canvas.bind("<Button-1>", _start_edit)
-            entry.bind("<FocusOut>", _commit_edit)
-            entry.bind("<KeyPress>", _on_entry_key)
-
-            for widget in [row, cnt_lbl]:
-                widget.bind("<Button-1>",
-                    lambda e, n=name: self._assign_speaker_from_sidebar(n))
-
-            # 드래그 바인딩 (핸들에만)
-            drag_lbl.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_drag_start(e, r))
-            drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
-            drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
-
-            # 툴팁 — 위젯별 개별 힌트
-            key_hint = f"  단축키: {i+1}" if i < 9 else ""
-            Tooltip(row,      f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}", delay=600)
-            Tooltip(drag_lbl, "위아래로 드래그해 화자 순서 변경", delay=400)
-            Tooltip(dot_c,    f"클릭 → '{name}' 색상 변경", delay=400)
-            Tooltip(del_btn, f"'{name}' 화자 삭제", delay=400)
+            self._make_speaker_row(i, name)
 
         # 목록 마지막에 '+ 화자 추가' 버튼
         add_row = tk.Frame(self.speaker_inner, bg=BG2)
         add_row.pack(fill="x", padx=6, pady=(2, 6))
+        self._spk_add_row = add_row
         add_btn = tk.Button(add_row, text="＋  화자 추가",
                             bg=BG2, fg=FG_DIM,
                             font=(theme.FONT_FAMILY, 9), bd=0, relief="flat",
@@ -414,8 +450,10 @@ class SpeakerMixin:
         self.speakers.append(name)
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)
-        self._render_speakers()
+        self._append_speaker_row(name)
         self._update_count()
+        # 화자 칸 너비·버튼 배치를 한 번에 끝내 중간 상태(버튼이 사라졌다 나타남)가 보이지 않게
+        self.update_idletasks()
         # 추가된 화자의 entry를 바로 편집 모드로
         self.after(50, lambda: self._start_speaker_edit(name))
 

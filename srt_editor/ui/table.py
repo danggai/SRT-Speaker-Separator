@@ -27,9 +27,7 @@ class SubtitleTableMixin:
 
 
     # ── 자막 테이블 (가상 스크롤, 한 줄 카드) ─────────────
-    # 컬럼 정의: num / time(시작 + 길이) / content(가변) / speaker
-    # 각 자막은 둥근 테두리 카드로 그리고, 선택된 자막의 시간을 클릭(또는 더블클릭)하면 시작/종료
-    # 타임스탬프 입력칸이 나타나 정확한 시각을 편집할 수 있다.
+    # 컬럼: num / time(시작 + 길이) / content(가변) / speaker
     _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
     _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
     _COL_IDS   = ["num", "time", "speaker"]
@@ -182,9 +180,7 @@ class SubtitleTableMixin:
             self._create_slot()
 
     def _create_slot(self):
-        """빈 카드(행)와 내부 위젯을 한 세트 생성해 풀에 추가.
-        행은 Canvas로 만들어 둥근 카드 테두리와 칸 구분선을 그리고, 위젯은
-        그 위에 배치한다. 실제 위치는 _apply_col_to_slot에서 정한다."""
+        """빈 카드(행) 한 세트 생성. 배치는 _apply_col_to_slot."""
         slot_idx = len(self._slot_frames)
         h   = self.ROW_H
         card_bg = self._CARD_BG
@@ -297,8 +293,7 @@ class SubtitleTableMixin:
         spk_frame.bind("<B1-Motion>",  _relay_motion)
         spk_frame.bind("<ButtonRelease-1>", _relay_release)
         spk_frame.bind("<Button-3>",   lambda e, s=slot_idx: self._slot_right_click(s, e))
-        # 시간 칸: 이미 선택된 자막이면 한 번 클릭으로 시각 편집, 아니면 먼저 선택.
-        #          (더블클릭은 선택 여부와 관계없이 바로 편집)
+        # 시간 칸: 선택된 자막이면 클릭으로 편집, 아니면 선택 (더블클릭은 항상 편집)
         def _time_press(e, s=slot_idx):
             di = self._slot_data_idx(s)
             if (di >= 0 and di == getattr(self, "_selected_row_idx", None)
@@ -806,6 +801,22 @@ class SubtitleTableMixin:
 
         choices = [("", "(없음)")] + [(sp, sp) for sp in self.speakers]
 
+        # 버튼 수가 바뀐 만큼만 끝에서 추가/숨김 (기존 버튼 순서 유지)
+        n_show = min(len(choices), len(pills))
+        prev = wi.get("_pill_n")
+        if prev is None:            # 처음이거나 헤더 드래그로 모두 숨겼던 경우
+            for lbl in pills:
+                lbl.pack_forget()
+            for lbl in pills[:n_show]:
+                lbl.pack(side="left", padx=2)
+        elif n_show > prev:
+            for lbl in pills[prev:n_show]:
+                lbl.pack(side="left", padx=2)
+        elif n_show < prev:
+            for lbl in pills[n_show:prev]:
+                lbl.pack_forget()
+        wi["_pill_n"] = n_show
+
         for pi, lbl in enumerate(pills):
             if pi < len(choices):
                 val, label = choices[pi]
@@ -823,14 +834,8 @@ class SubtitleTableMixin:
                     highlightbackground=color if is_sel else "#2A2A2A"
                 )
                 vals[pi] = val
-                # 보이게
-                if not lbl.winfo_ismapped():
-                    lbl.pack(side="left", padx=2)
             else:
-                # 화자 수보다 pill이 많으면 숨김
-                if lbl.winfo_ismapped():
-                    lbl.pack_forget()
-                vals[pi] = ""
+                vals[pi] = ""   # 화자 수보다 많은 pill은 위에서 이미 숨김
 
     def _apply_col_to_slot(self, slot_idx, pos, cw):
         """단일 슬롯의 카드 테두리·구분선과 위젯 위치를 pos에 맞게 재배치."""
@@ -895,8 +900,7 @@ class SubtitleTableMixin:
             total = self.winfo_width() - self._col_w.get("__sidebar__", 230)
         if total <= 1:
             total = 900
-        # 자막 목록 캔버스는 스크롤바 왼쪽까지라 스크롤바 폭은 이미 빠져 있다.
-        # 카드 좌우 바깥 여백만 빼고 열을 배치한다.
+        # 카드 좌우 여백만 제외 (스크롤바 폭은 캔버스 밖)
         total = max(total - 2 * self._CARD_X, 200)
         fixed = sum(self._col_w[c] for c in self._COL_IDS)
         content_w = max(60, total - fixed)
@@ -970,6 +974,8 @@ class SubtitleTableMixin:
                         pill.pack_forget()
                     except Exception:
                         pass
+                # 드래그가 끝나고 다시 채울 때 버튼을 처음부터 다시 배치하도록
+                self._slot_widgets[slot_idx]["_pill_n"] = None
 
     def _hdr_release(self, e):
         if self._drag_col:
