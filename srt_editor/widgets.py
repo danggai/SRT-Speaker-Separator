@@ -608,3 +608,35 @@ class PopupMenu:
             try: self._win.destroy()
             except Exception: pass
             self._win = None
+
+
+def _gradient_bar_rows(width, height, fill_w, phase, bg_color):
+    """진행 창의 그라데이션 웨이브 진행바 이미지를 PhotoImage.put() 형식으로 만든다.
+    채워진 부분은 보라→파랑→초록 그라데이션에 물결(phase)과 끝부분 광택을 더하고,
+    나머지는 bg_color로 채운다."""
+    import math
+    bg = "#{:02x}{:02x}{:02x}".format(int(bg_color[1:3], 16), int(bg_color[3:5], 16),
+                                      int(bg_color[5:7], 16))
+    row = []
+    for x in range(width):
+        if x < fill_w:
+            t = x / width
+            if t < 0.5:
+                k = t * 2
+                r0 = int(0x7B + (0x4A - 0x7B) * k)
+                g0 = int(0x4F + (0x90 - 0x4F) * k)
+                b0 = int(0xD4 + (0xE2 - 0xD4) * k)
+            else:
+                k = (t - 0.5) * 2
+                r0 = int(0x4A + (0x1A - 0x4A) * k)
+                g0 = int(0x90 + (0xBC - 0x90) * k)
+                b0 = int(0xE2 + (0x9C - 0xE2) * k)
+            wave = math.sin(phase - x * 0.045) * 0.20 + 0.85
+            glow = math.exp(-(fill_w - x) * 0.10) * 0.35
+            bri = min(1.15, wave + glow)
+            row.append("#{:02x}{:02x}{:02x}".format(
+                min(255, int(r0 * bri)), min(255, int(g0 * bri)), min(255, int(b0 * bri))))
+        else:
+            row.append(bg)
+    row_str = "{" + " ".join(row) + "}"
+    return " ".join([row_str] * height)

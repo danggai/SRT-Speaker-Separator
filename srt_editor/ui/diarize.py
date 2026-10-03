@@ -14,7 +14,7 @@ from ..speech import (
     _friendly_transcribe_error,
 )
 from ..theme import ACCENT, BG, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
-from ..widgets import PurpleSlider
+from ..widgets import PurpleSlider, _gradient_bar_rows
 
 
 class DiarizeMixin:
@@ -508,7 +508,7 @@ class DiarizeMixin:
         _save_config(_cfg)
 
         # 진행 다이얼로그
-        import math as _math, time as _time
+        import time as _time
         prog_win = tk.Toplevel(self)
         _apply_dark_titlebar(prog_win)
         prog_win.title("화자 분석 중...")
@@ -609,9 +609,6 @@ class DiarizeMixin:
         _pct_id = bar_canvas.create_text(BAR_W // 2, BAR_H // 2,
                                          text="0%", fill=FG_DIM,
                                          font=(theme.FONT_FAMILY, 8, "bold"))
-        _BG3R = int(BG3[1:3], 16)
-        _BG3G = int(BG3[3:5], 16)
-        _BG3B = int(BG3[5:7], 16)
 
         def _draw_bar():
             if not _prog_state["running"]:
@@ -622,32 +619,7 @@ class DiarizeMixin:
                 phase = _prog_state["wave_phase"]
                 fill_w = int(BAR_W * cur / 100)
 
-                # ── 픽셀 렌더 ──
-                row = []
-                for x in range(BAR_W):
-                    if x < fill_w:
-                        t = x / BAR_W
-                        if t < 0.5:
-                            k = t * 2
-                            r0 = int(0x7B + (0x4A - 0x7B) * k)
-                            g0 = int(0x4F + (0x90 - 0x4F) * k)
-                            b0 = int(0xD4 + (0xE2 - 0xD4) * k)
-                        else:
-                            k = (t - 0.5) * 2
-                            r0 = int(0x4A + (0x1A - 0x4A) * k)
-                            g0 = int(0x90 + (0xBC - 0x90) * k)
-                            b0 = int(0xE2 + (0x9C - 0xE2) * k)
-                        wave = _math.sin(phase - x * 0.045) * 0.20 + 0.85
-                        glow = _math.exp(-(fill_w - x) * 0.10) * 0.35
-                        bri  = min(1.15, wave + glow)
-                        row.append("#{:02x}{:02x}{:02x}".format(
-                            min(255, int(r0 * bri)),
-                            min(255, int(g0 * bri)),
-                            min(255, int(b0 * bri))))
-                    else:
-                        row.append("#{:02x}{:02x}{:02x}".format(_BG3R, _BG3G, _BG3B))
-                row_str = "{" + " ".join(row) + "}"
-                _bar_img.put(" ".join([row_str] * BAR_H))
+                _bar_img.put(_gradient_bar_rows(BAR_W, BAR_H, fill_w, phase, BG3))
                 bar_canvas.itemconfigure(_pct_id,
                     text=f"{int(cur)}%",
                     fill="white" if fill_w > BAR_W // 2 else FG_DIM)

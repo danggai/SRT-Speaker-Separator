@@ -17,7 +17,7 @@ from ..speech import (
     _split_segments_by_speaker,
 )
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
-from ..widgets import PurpleSlider
+from ..widgets import PurpleSlider, _gradient_bar_rows
 
 
 class TranscribeMixin:
@@ -416,7 +416,7 @@ class TranscribeMixin:
 
     def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
-        import threading, tempfile, math as _math, time as _time
+        import threading, tempfile, time as _time
 
         # ── 진행 창 ──────────────────────────────────────────────
         prog = tk.Toplevel(self)
@@ -445,7 +445,6 @@ class TranscribeMixin:
         _pct_id = _bar_cv.create_text(BAR_W//2, BAR_H//2, text="0%",
                                        fill=FG_DIM, font=(theme.FONT_FAMILY, 7, "bold"))
 
-        _BG3R = int(BG3[1:3],16); _BG3G = int(BG3[3:5],16); _BG3B = int(BG3[5:7],16)
         _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True, "cancelled": False}
 
         def _cancel(*_):
@@ -474,23 +473,7 @@ class TranscribeMixin:
             try:
                 cur = _pstate["cur"]; phase = _pstate["phase"]
                 fw = int(BAR_W * cur / 100)
-                row = []
-                for x in range(BAR_W):
-                    if x < fw:
-                        t = x / BAR_W
-                        k = t*2 if t < 0.5 else (t-0.5)*2
-                        if t < 0.5:
-                            r0=int(0x7B+(0x4A-0x7B)*k); g0=int(0x4F+(0x90-0x4F)*k); b0=int(0xD4+(0xE2-0xD4)*k)
-                        else:
-                            r0=int(0x4A+(0x1A-0x4A)*k); g0=int(0x90+(0xBC-0x90)*k); b0=int(0xE2+(0x9C-0xE2)*k)
-                        w = _math.sin(phase - x*0.045)*0.20+0.85
-                        g2 = _math.exp(-(fw-x)*0.10)*0.35
-                        br = min(1.15, w+g2)
-                        row.append("#{:02x}{:02x}{:02x}".format(min(255,int(r0*br)),min(255,int(g0*br)),min(255,int(b0*br))))
-                    else:
-                        row.append("#{:02x}{:02x}{:02x}".format(_BG3R,_BG3G,_BG3B))
-                rs = "{" + " ".join(row) + "}"
-                _bar_img.put(" ".join([rs]*BAR_H))
+                _bar_img.put(_gradient_bar_rows(BAR_W, BAR_H, fw, phase, BG3))
                 _bar_cv.itemconfigure(_pct_id, text=f"{int(cur)}%",
                     fill="white" if fw > BAR_W//2 else FG_DIM)
                 _pstate["phase"] += 0.18
