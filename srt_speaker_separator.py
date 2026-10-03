@@ -5375,9 +5375,14 @@ class SRTEditor(tk.Tk):
         return max(0, min(100, int(getattr(self, "_diarize_sensitivity_init", 50))))
 
     def _apply_diarize_sensitivity(self, diarize_model, sensitivity):
-        """화자 분리 민감도(0~100)를 pyannote 파이프라인의 클러스터링 임계값에 반영.
-        50이면 모델 기본 임계값 그대로, 높을수록 임계값을 낮춰 화자를 더 잘게
-        (예민하게) 구분한다. (clustering.threshold: 작을수록 다른 화자로 쉽게 나뉨)
+        """화자 분리 민감도(0~100)를 pyannote 파이프라인의 클러스터링 파라미터에 반영.
+        50이면 모델 기본값 그대로, 높을수록 화자를 더 잘게(예민하게) 구분한다.
+
+        community-1(VBx 클러스터링)은 threshold를 바꿔도 화자 수가 거의 변하지
+        않고, Fa(화자 간 차이에 대한 민감도)가 화자 수를 결정한다. 실측에서 기본
+        Fa=0.07은 비슷한 음색의 두 화자를 한 명으로 합쳤고 0.1 이상에서 분리됐다.
+        그래서 VBx면 Fa를 로그 스케일(민감도 0 → 기본값/8, 100 → 기본값×8)로,
+        구버전(3.1, 응집 클러스터링)이면 threshold를 ±0.2 범위로 조절한다.
         whisperx/pyannote 버전에 따라 내부 구조가 다를 수 있으므로, 실패해도
         조용히 무시하고 파이프라인 기본 설정으로 계속 진행한다."""
         try:
@@ -5389,12 +5394,16 @@ class SRTEditor(tk.Tk):
                 return
             params = pipeline.parameters(instantiated=True)
             clustering = params.get("clustering") if isinstance(params, dict) else None
-            if not isinstance(clustering, dict) or "threshold" not in clustering:
+            if not isinstance(clustering, dict):
                 return
-            # 민감도 0 → 기본값+0.2 (둔감) / 100 → 기본값-0.2 (예민)
-            base = float(clustering["threshold"])
-            thr = base + (50 - sensitivity) / 50.0 * 0.2
-            clustering["threshold"] = max(0.05, min(0.95, thr))
+            if "Fa" in clustering:
+                clustering["Fa"] = float(clustering["Fa"]) * 8 ** ((sensitivity - 50) / 50.0)
+            elif "threshold" in clustering:
+                base = float(clustering["threshold"])
+                thr = base + (50 - sensitivity) / 50.0 * 0.2
+                clustering["threshold"] = max(0.05, min(0.95, thr))
+            else:
+                return
             pipeline.instantiate(params)
         except Exception:
             pass
@@ -5982,13 +5991,7 @@ class SRTEditor(tk.Tk):
                 self.after(0, _err)
             finally:
                 # 작업이 성공/실패/취소 어떤 경우로 끝나든, 여기서 쓰던
-                # 무거운 객체(모델·오디오·인식결과)들을 일괄 해제한다.
-                try: del model
-                except Exception: pass
-                try: del model_a
-                except Exception: pass
-                try: del meta
-                except Exception: pass
+                # 무거운 객체(모델·오디오·분리결과)들을 일괄 해제한다.
                 try: del diarize_model
                 except Exception: pass
                 try: del audio
