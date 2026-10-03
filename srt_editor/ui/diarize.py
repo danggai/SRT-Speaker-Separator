@@ -13,393 +13,197 @@ from ..speech import (
     _diarize_exclusive,
     _friendly_transcribe_error,
 )
-from ..theme import ACCENT, BG, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
-from ..widgets import PurpleSlider, _gradient_bar_rows
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
+from ..widgets import (NumberStepper, PopupMenu, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
+                       _watch, flat_button, present_dialog)
 
 
 class DiarizeMixin:
     """화자 분석(화자 분리 후 기존 자막에 화자 매핑)과 관련 설정."""
 
-    def _build_diarize_tab(self, parent, footer_parent=None):
-        """설정창 내 화자 자동 분석 탭. footer_parent를 주면 실행 버튼 행을
-        그쪽에 배치한다(스크롤 영역 밖에 고정하기 위함)."""
+    def _hf_token_row(self, parent, var):
+        """HuggingFace 토큰 입력칸 + 표시/숨김 + 최근 사용 목록 (화자 분석·자막 생성 창 공용)."""
+        row = tk.Frame(parent, bg=parent.cget("bg"))
+        entry = tk.Entry(row, textvariable=var, show="*", bg=BG3, fg=FG, insertbackground=FG,
+                         font=(FONT_MONO, 9), relief="flat", highlightthickness=1,
+                         highlightbackground=BORDER, highlightcolor=ACCENT)
+        entry.pack(side="left", fill="x", expand=True, ipady=4)
+
+        def _toggle():
+            hidden = entry.cget("show") == "*"
+            entry.configure(show="" if hidden else "*")
+            eye.configure(text="숨김" if hidden else "표시")
+        eye = flat_button(row, "표시", _toggle, bg=BG3, hover="#33333C", padx=10, pady=4)
+        eye.pack(side="left", padx=(6, 0))
+
+        recent = getattr(self, "_recent_tokens", [])
+        if recent:
+            def _pick(t):
+                var.set(t)
+                entry.configure(show="*")
+                eye.configure(text="표시")
+
+            def _show_recent():
+                menu = PopupMenu(self)
+                for t in recent:
+                    menu.add_command(label=t[:8] + "…" + t[-4:] if len(t) > 14 else t,
+                                     command=lambda t=t: _pick(t))
+                menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height() + 2)
+            btn = flat_button(row, "최근 사용", _show_recent, bg=BG3, hover="#33333C", padx=10, pady=4)
+            btn.pack(side="left", padx=(6, 0))
+        return row
+
+    def _build_diarize_tab(self, parent, footer_parent=None, on_close=None):
+        """화자 분석 창 내용 (설정창과 같은 카드 스타일). 실행 버튼 행은 footer_parent에 둔다."""
         if footer_parent is None:
             footer_parent = parent
-        # WhisperX 섹션
-        tk.Label(parent, text="WhisperX 화자 분리", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
-        tk.Label(parent,
-                 text="WhisperX + pyannote를 사용해 오디오에서 화자를 자동 분리합니다.\n"
-                      "HuggingFace 토큰이 필요하며 처음 실행 시 모델을 다운로드합니다.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9), justify="left"
-                 ).pack(anchor="w", padx=20, pady=(0, 10))
+        self._settings_title(parent, "화자 자동 분석",
+                             "WhisperX + pyannote로 오디오에서 화자를 나눠요. 처음 실행할 때 모델을 내려받아요.")
 
-        # HuggingFace 토큰
-        hf_frame = tk.Frame(parent, bg=BG)
-        hf_frame.pack(fill="x", padx=20, pady=(0, 2))
-        tk.Label(hf_frame, text="HuggingFace 토큰", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
-        self._hf_token_var = tk.StringVar(
-            value=getattr(self, "_hf_token", ""))
-        _tok_entry = tk.Entry(hf_frame, textvariable=self._hf_token_var, show="*",
-                 bg=BG3, fg=FG, insertbackground=FG,
-                 font=(FONT_MONO, 9), relief="flat",
-                 highlightthickness=1, highlightbackground=BORDER,
-                 highlightcolor=ACCENT)
-        _tok_entry.pack(side="left", fill="x", expand=True, ipady=3)
+        card = self._settings_card(parent, "계정")
+        left, _ = self._settings_row(card, "K", "HuggingFace 토큰", "분석 모델을 내려받을 때 필요해요")
+        self._hf_token_var = tk.StringVar(value=getattr(self, "_hf_token", ""))
+        self._hf_token_row(left, self._hf_token_var).pack(fill="x", pady=(8, 0))
 
-        # 👁 암호화 토글 버튼
-        _show_var = tk.BooleanVar(value=False)
-        def _toggle_show():
-            _show_var.set(not _show_var.get())
-            _tok_entry.configure(show="" if _show_var.get() else "*")
-            _eye_btn.configure(text="🙈" if _show_var.get() else "👁")
-        _eye_btn = tk.Button(hf_frame, text="👁", bg=BG3, fg=FG_DIM,
-                             relief="flat", bd=0, cursor="hand2",
-                             font=(theme.FONT_FAMILY, 10), padx=6,
-                             activebackground=BG3, activeforeground=FG,
-                             command=_toggle_show)
-        _eye_btn.pack(side="left", padx=(4, 0))
-
-        # 최근 토큰 드롭다운
-        _recent = getattr(self, "_recent_tokens", [])
-        if _recent:
-            def _pick_recent(val):
-                self._hf_token_var.set(val)
-                _show_var.set(False)
-                _tok_entry.configure(show="*")
-                _eye_btn.configure(text="👁")
-            _recent_var = tk.StringVar(value="")
-            _recent_menu = tk.OptionMenu(hf_frame, _recent_var,
-                                         *[t[:8] + "…" + t[-4:] if len(t) > 14 else t
-                                           for t in _recent])
-            _recent_menu.configure(bg=BG3, fg=FG_DIM, relief="flat", bd=0,
-                                   font=(theme.FONT_FAMILY, 8), padx=4,
-                                   activebackground=BG3, activeforeground=FG,
-                                   highlightthickness=0, indicatoron=False,
-                                   text="🕘")
-            _recent_menu["menu"].configure(bg=BG3, fg=FG, activebackground=ACCENT,
-                                            font=(FONT_MONO, 8))
-            _recent_menu.pack(side="left", padx=(2, 0))
-            # OptionMenu 선택 시 실제 전체 토큰 삽입
-            def _on_recent_select(*_):
-                idx_label = _recent_var.get()
-                for t in _recent:
-                    label = t[:8] + "…" + t[-4:] if len(t) > 14 else t
-                    if label == idx_label:
-                        _pick_recent(t)
-                        break
-                _recent_var.set("")
-            _recent_var.trace_add("write", _on_recent_select)
-
-        # 화자 수
-        spk_frame = tk.Frame(parent, bg=BG)
-        spk_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(spk_frame, text="화자 수 (0=자동)", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
-        self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
-        tk.Spinbox(spk_frame, from_=0, to=20, width=5,
-                   textvariable=self._diarize_num_spk,
-                   bg=BG3, fg=FG, insertbackground=FG,
-                   buttonbackground=BG3, relief="flat",
-                   font=(theme.FONT_FAMILY, 10)).pack(side="left", padx=(0, 8))
+        card = self._settings_card(parent, "화자 수")
+        _, right = self._settings_row(card, "#", "화자 수", "0이면 자동으로 정해요")
+        if not hasattr(self, "_diarize_num_spk"):
+            self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
+        NumberStepper(right, self._diarize_num_spk, 0, 20).pack()
+        _, right = self._settings_row(card, "=", "정확히 이 인원",
+                                      "끄면 '최대 N명'으로 제한해요 (출연자 수를 대략만 알 때 권장)")
         if not hasattr(self, "_diarize_spk_exact_var"):
             self._diarize_spk_exact_var = tk.BooleanVar(
                 value=getattr(self, "_diarize_spk_exact_init", False))
-        tk.Checkbutton(spk_frame, variable=self._diarize_spk_exact_var,
-                       text="정확히 이 인원",
-                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                       activeforeground=FG, font=(theme.FONT_FAMILY, 9),
-                       cursor="hand2").pack(side="left")
-        tk.Label(parent,
-                 text="  해제 시 '최대 N명'으로 제한 (출연자 수를 대략만 알 때 권장)",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
-                 ).pack(fill="x", padx=20, pady=(0, 8))
+        ToggleSwitch(right, self._diarize_spk_exact_var).pack()
 
-        # 분석 모드
-        mode_frame = tk.Frame(parent, bg=BG)
-        mode_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(mode_frame, text="인식 모드", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
+        # 인식 모드는 자동 자막 생성에서만 쓰지만, 설정 저장에 필요해 변수는 만들어 둔다
         if not hasattr(self, "_diarize_mode_var"):
-            self._diarize_mode_var = tk.StringVar(value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
-        mode_inner = tk.Frame(mode_frame, bg=BG)
-        mode_inner.pack(side="left")
-        _MODES = [
-            ("⚡ 빠름",      "fast",     "속도 우선 — 정확도 소폭 감소"),
-            ("⚖ 균형",      "balanced", "속도·정확도 균형 (CPU 권장)"),
-            ("🎯 정확",      "accurate", "정확도 우선 (GPU 권장, 기본)"),
-            ("🔬 최고 정확", "best",     "짧은 추임새까지 인식, 가장 느림"),
-        ]
-        for label, val, tip in _MODES:
-            rb = tk.Radiobutton(mode_inner, text=label, value=val,
-                                variable=self._diarize_mode_var,
-                                bg=BG, fg=FG, selectcolor=BG3,
-                                activebackground=BG, activeforeground=FG,
-                                font=(theme.FONT_FAMILY, 9), cursor="hand2")
-            rb.pack(side="left", padx=(0, 6))
-            # 툴팁
-            def _bind_tip(w, t=tip):
-                def _show(e): pass  # 간단히 title로 대체
-            _bind_tip(rb)
+            self._diarize_mode_var = tk.StringVar(
+                value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
 
-        # 모드 설명 레이블
-        # 인식 모드는 자동 자막 생성에만 적용 (화자 분석은 음성 인식 안 함)
-        _mode_tips = {
-            "fast":     "⚡ large-v3-turbo, beam 1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
-            "balanced": "⚖ large-v3-turbo, beam 3 — CPU 환경 권장",
-            "accurate": "🎯 large-v3, beam 5 — GPU 환경 권장 (기본)",
-            "best":     "🔬 large-v3, beam 5 + 민감한 음성 감지 — 짧은 추임새·리액션까지",
-        }
-        _tip_lbl = tk.Label(parent, text=_mode_tips.get(self._diarize_mode_var.get(), ""),
-                            bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w")
-        _tip_lbl.pack(fill="x", padx=20, pady=(0, 0))
-        tk.Label(parent, text="  ※ 자동 자막 생성 시에만 적용 (화자 분석은 음성 인식을 거치지 않음)",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
-                 ).pack(fill="x", padx=20, pady=(0, 4))
-        def _on_mode_change(*_):
-            _tip_lbl.configure(text=_mode_tips.get(self._diarize_mode_var.get(), ""))
-        self._diarize_mode_var.trace_add("write", _on_mode_change)
-
-        # 화자 분리 민감도 (인원 고정 시 숨김)
-        _sens_container = tk.Frame(parent, bg=BG)
-
-        sens_frame = tk.Frame(_sens_container, bg=BG)
-        sens_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(sens_frame, text="분리 민감도", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
+        # 분리 민감도 (인원을 정확히 고정하면 숨김)
+        sens_holder = tk.Frame(parent, bg=BG)
+        sens_anchor = tk.Frame(parent, bg=BG)
+        sens_anchor.pack()
+        card = self._settings_card(sens_holder, "분리 민감도")
+        left, right = self._settings_row(
+            card, "~", "분리 민감도",
+            "50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요")
         if not hasattr(self, "_diarize_sensitivity_var"):
             self._diarize_sensitivity_var = tk.IntVar(
                 value=getattr(self, "_diarize_sensitivity_init", 50))
-        _sens_val_lbl = tk.Label(sens_frame, bg=BG, fg=FG, font=(theme.FONT_FAMILY, 9), width=4)
-        _sens_val_lbl.pack(side="right")
-        def _sens_upd(*_):
-            _sens_val_lbl.configure(text=str(int(self._diarize_sensitivity_var.get())))
+        sens_val = tk.Label(right, text=str(int(self._diarize_sensitivity_var.get())), bg=BG2, fg=FG,
+                            width=4, font=(theme.FONT_FAMILY, 10, "bold"))
+        sens_val.pack()
+
         def _sens_cmd(v):
             self._diarize_sensitivity_var.set(int(v))
-            _sens_upd()
-        _sens_upd()
-        _sens_slider = PurpleSlider(sens_frame, from_=0, to=100,
-                     value=self._diarize_sensitivity_var.get(),
-                     width=220, command=_sens_cmd, bg=BG)
-        _sens_slider.pack(side="left", padx=(0, 6))
-        tk.Label(_sens_container,
-                 text="  50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
-                 ).pack(fill="x", padx=20, pady=(0, 6))
+            sens_val.configure(text=str(int(v)))
+        PurpleSlider(left, from_=0, to=100, value=self._diarize_sensitivity_var.get(), width=340,
+                     command=_sens_cmd, bg=BG2).pack(anchor="w", pady=(8, 0))
 
-        # 민감도 컨테이너가 항상 같은 자리에 다시 나타나도록 위치 표시용 프레임
-        _sens_anchor = tk.Frame(parent, bg=BG)
-        _sens_anchor.pack(fill="x")
-
-        def _sens_visibility_upd(*_):
-            # 창이 닫힌 뒤 다른 창에서 같은 변수를 바꿔도 남은 콜백이 오류를 내지 않도록
-            if not _sens_container.winfo_exists():
-                return
+        def _sens_visibility():
             num, exact = self._get_diarize_spk_settings()
             if num > 0 and exact:
-                _sens_container.pack_forget()
+                sens_holder.pack_forget()
             else:
-                _sens_container.pack(fill="x", before=_sens_anchor)
-        # 이전에 열렸던 탭의 콜백이 남아있지 않도록 정리 후 등록
-        for _v in (self._diarize_num_spk, self._diarize_spk_exact_var):
-            for _t in _v.trace_info():
-                _v.trace_remove(_t[0], _t[1])
-            _v.trace_add("write", _sens_visibility_upd)
-        _sens_visibility_upd()
+                sens_holder.pack(fill="x", before=sens_anchor)
+        _watch(sens_holder, self._diarize_num_spk, _sens_visibility)
+        _watch(sens_holder, self._diarize_spk_exact_var, _sens_visibility)
+        _sens_visibility()
 
-        # 디바이스 선택
-        dev_frame = tk.Frame(parent, bg=BG)
-        dev_frame.pack(fill="x", padx=20, pady=(4, 8))
-        tk.Label(dev_frame, text="연산 디바이스", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
+        # 연산: 처리 장치 + GPU 사용량 (5단계)
+        card = self._settings_card(parent, "연산")
+        _, right = self._settings_row(card, "◉", "처리 장치",
+                                      "GPU 우선: CUDA 가능하면 GPU, 아니면 CPU로 자동 전환")
         if not hasattr(self, "_diarize_device_var"):
             self._diarize_device_var = tk.StringVar(
                 value=getattr(self, "_diarize_device_init", "auto"))
-        dev_inner = tk.Frame(dev_frame, bg=BG)
-        dev_inner.pack(side="left")
-        for label, val in [("🚀 GPU 우선 (기본)", "auto"), ("🖥 CPU 강제", "cpu")]:
-            tk.Radiobutton(dev_inner, text=label, value=val,
-                           variable=self._diarize_device_var,
-                           bg=BG, fg=FG, selectcolor=BG3,
-                           activebackground=BG, activeforeground=FG,
-                           font=(theme.FONT_FAMILY, 9), cursor="hand2"
-                           ).pack(side="left", padx=(0, 10))
-        tk.Label(parent,
-                 text="  GPU 우선: CUDA 가능 시 GPU 사용, 불가 시 CPU 자동 전환",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
-                 ).pack(fill="x", padx=20, pady=(0, 6))
+        Segmented(right, [("GPU 우선", "auto"), ("CPU", "cpu")], self._diarize_device_var).pack()
 
-        # GPU 사용량 — 캔버스 커스텀 5단계 슬라이더
-        _BATCH_MAP   = [2, 4, 8, 16, 32]
-        _BATCH_LABEL = ["최소", "낮음", "보통", "권장", "최대"]
-        _VRAM_HINT   = ["~2 GB", "~4 GB", "~6 GB", "~8 GB", "~12 GB+"]
-        _BATCH_DEFAULT = 3
-
+        _BATCH_MAP, _BATCH_LABEL = [2, 4, 8, 16, 32], ["최소", "낮음", "보통", "권장", "최대"]
+        _VRAM_HINT = ["~2 GB", "~4 GB", "~6 GB", "~8 GB", "~12 GB+"]
         if not hasattr(self, "_diarize_batch_var"):
-            self._diarize_batch_var = tk.IntVar(
-                value=getattr(self, "_diarize_batch_init", _BATCH_DEFAULT))
+            self._diarize_batch_var = tk.IntVar(value=getattr(self, "_diarize_batch_init", 3))
+        left, _ = self._settings_row(card, "▮", "GPU 사용량")
+        gpu_lbl = tk.Label(left, bg=BG2, fg=ACCENT, font=(theme.FONT_FAMILY, 9, "bold"), anchor="w")
+        gpu_lbl.pack(fill="x", pady=(2, 0))
+        _SL_W, _SL_H, _PAD, _N = 360, 52, 20, len(_BATCH_MAP)
+        sl = tk.Canvas(left, width=_SL_W, height=_SL_H, bg=BG2, highlightthickness=0)
+        sl.pack(anchor="w", pady=(4, 0))
+        _TY, _TRACK_W, _on = _SL_H // 2 - 4, _SL_W - 2 * _PAD, [True]
 
-        # 헤더 행
-        gpu_hdr = tk.Frame(parent, bg=BG)
-        gpu_hdr.pack(fill="x", padx=20, pady=(0, 4))
-        tk.Label(gpu_hdr, text="GPU 사용량", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w"
-                 ).pack(side="left")
-        _gpu_val_lbl = tk.Label(gpu_hdr, bg=BG, fg=ACCENT,
-                                font=(theme.FONT_FAMILY, 9, "bold"), anchor="w")
-        _gpu_val_lbl.pack(side="left")
-
-        # 캔버스 슬라이더
-        _SL_W, _SL_H = 360, 52   # 레이블 잘림 방지
-        _N = len(_BATCH_MAP)
-        _sl_cv = tk.Canvas(parent, width=_SL_W, height=_SL_H,
-                           bg=BG, highlightthickness=0)
-        _sl_cv.pack(padx=20, anchor="w", pady=(0, 2))
-
-        # 트랙 Y 중앙
-        _TY = _SL_H // 2
-        _PAD = 20   # 양쪽 여백
-        _TRACK_W = _SL_W - _PAD * 2
-        _enabled = [True]
-
-        def _step_x(i):
+        def _x(i):
             return _PAD + int(i / (_N - 1) * _TRACK_W)
 
-        def _draw_slider(idx):
-            _sl_cv.delete("all")
-            dim = not _enabled[0]
-            track_color  = "#333344" if dim else BG3
-            fill_color   = "#444455" if dim else ACCENT
-            dot_off      = "#2A2A3A" if dim else BG3
-            dot_on       = "#444455" if dim else ACCENT
-            dot_border   = "#333344" if dim else ACCENT
-            label_active = FG_DIM if dim else FG
-            label_dim    = "#444455" if dim else FG_DIM
-
-            # 트랙 배경
-            _sl_cv.create_rectangle(_PAD, _TY-2, _SL_W-_PAD, _TY+2,
-                                    fill=track_color, outline="")
-            # 채워진 부분
+        def _draw(idx):
+            sl.delete("all")
+            dim = not _on[0]
+            track, fill = ("#2A2A33", "#44444F") if dim else (BG3, ACCENT)
+            sl.create_rectangle(_PAD, _TY - 2, _SL_W - _PAD, _TY + 2, fill=track, outline="")
             if idx > 0:
-                _sl_cv.create_rectangle(_PAD, _TY-2, _step_x(idx), _TY+2,
-                                        fill=fill_color, outline="")
-
+                sl.create_rectangle(_PAD, _TY - 2, _x(idx), _TY + 2, fill=fill, outline="")
             for i in range(_N):
-                x = _step_x(i)
-                active = i <= idx
-                # 노브
                 r = 7 if i == idx else 5
-                color = dot_on if active else dot_off
-                border = dot_border if active else track_color
-                _sl_cv.create_oval(x-r, _TY-r, x+r, _TY+r,
-                                   fill=color, outline=border, width=1)
-                # 선택된 노브에 내부 흰 점
+                active = i <= idx
+                sl.create_oval(_x(i) - r, _TY - r, _x(i) + r, _TY + r,
+                               fill=fill if active else track, outline=fill if active else track)
                 if i == idx and not dim:
-                    _sl_cv.create_oval(x-2, _TY-2, x+2, _TY+2,
-                                       fill="white", outline="")
-                # 레이블
-                lbl_color = label_active if i == idx else label_dim
-                lbl_font  = (theme.FONT_FAMILY, 8, "bold") if i == idx else (theme.FONT_FAMILY, 7)
-                _sl_cv.create_text(x, _TY + 14, text=_BATCH_LABEL[i],
-                                   fill=lbl_color, font=lbl_font, anchor="n")
+                    sl.create_oval(_x(i) - 2, _TY - 2, _x(i) + 2, _TY + 2, fill="white", outline="")
+                sl.create_text(_x(i), _TY + 16, text=_BATCH_LABEL[i], anchor="n",
+                               fill=(FG_DIM if dim else FG) if i == idx else (FG_HINT if dim else FG_DIM),
+                               font=(theme.FONT_FAMILY, 8, "bold" if i == idx else "normal"))
 
         def _on_batch(*_):
-            idx = max(0, min(self._diarize_batch_var.get(), _N-1))
-            _draw_slider(idx)
-            bs  = _BATCH_MAP[idx]
-            vrm = _VRAM_HINT[idx]
-            _gpu_val_lbl.configure(text=f"batch {bs}  —  VRAM {vrm}")
+            idx = max(0, min(self._diarize_batch_var.get(), _N - 1))
+            _draw(idx)
+            gpu_lbl.configure(text=f"batch {_BATCH_MAP[idx]}  ·  VRAM {_VRAM_HINT[idx]}")
 
-        def _sl_click(e):
-            if not _enabled[0]: return
-            # 클릭 x → 가장 가까운 스텝
-            best_i, best_d = 0, 9999
-            for i in range(_N):
-                d = abs(e.x - _step_x(i))
-                if d < best_d:
-                    best_d, best_i = d, i
-            self._diarize_batch_var.set(best_i)
+        def _click(e):
+            if _on[0]:
+                self._diarize_batch_var.set(min(range(_N), key=lambda i: abs(e.x - _x(i))))
+                _on_batch()
+        sl.bind("<Button-1>", _click)
+        sl.bind("<B1-Motion>", _click)
+
+        def _on_device(*_):
+            _on[0] = self._diarize_device_var.get() != "cpu"
+            gpu_lbl.configure(fg=ACCENT if _on[0] else FG_DIM)
             _on_batch()
+        _watch(sl, self._diarize_device_var, _on_device)
+        _on_device()
 
-        _sl_cv.bind("<Button-1>", _sl_click)
-        _sl_cv.bind("<B1-Motion>", _sl_click)
-
-        def _on_device_change(*_):
-            is_gpu = self._diarize_device_var.get() != "cpu"
-            _enabled[0] = is_gpu
-            _gpu_val_lbl.configure(fg=ACCENT if is_gpu else FG_DIM)
-            _on_batch()
-        self._diarize_device_var.trace_add("write", _on_device_change)
-        _on_batch()
-        _on_device_change()
-
-        # 구분선
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=10)
-
-        # SpeechBrain 섹션 (UI만, 미구현)
-        tk.Label(parent, text="SpeechBrain 화자 분리 (준비 중)", bg=BG, fg="#444455",
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(0, 2))
-        tk.Label(parent,
-                 text="토큰 없이 로컬에서 실행 가능한 방식입니다. (추후 지원 예정)",
-                 bg=BG, fg="#444455", font=(theme.FONT_FAMILY, 9), justify="left"
-                 ).pack(anchor="w", padx=20, pady=(0, 10))
-
-        sb_frame = tk.Frame(parent, bg=BG)
-        sb_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(sb_frame, text="모델", bg=BG, fg="#444455",
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=18, anchor="w").pack(side="left")
-        tk.Entry(sb_frame, bg=BG3, fg="#444455",
-                 font=(FONT_MONO, 9), relief="flat",
-                 highlightthickness=1, highlightbackground="#333333",
-                 state="disabled").pack(side="left", fill="x", expand=True, ipady=3)
-
-        # 실행 버튼 (footer_parent — 스크롤 영역 밖, 창 하단 고정)
         btn_row = tk.Frame(footer_parent, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(8, 10))
-        tk.Button(btn_row, text="🎙  WhisperX로 화자 분석 시작",
-                  bg=ACCENT, fg="white", relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=6,
-                  activebackground="#7B5FB4",
-                  command=self._run_diarize_whisperx
-                  ).pack(side="left")
-        tk.Button(btn_row, text="SpeechBrain (준비 중)",
-                  bg="#2A2A2A", fg="#444455", relief="flat", bd=0,
-                  font=(theme.FONT_FAMILY, 10), padx=14, pady=6,
-                  state="disabled").pack(side="left", padx=(8, 0))
+        btn_row.pack(fill="x", padx=24, pady=(12, 14))
+        flat_button(btn_row, "화자 분석 시작", self._run_diarize_whisperx, bg=ACCENT, fg="white",
+                    hover="#AE96E2", font=(theme.FONT_FAMILY, 10, "bold"),
+                    padx=22, pady=8).pack(side="right")
+        if on_close:
+            flat_button(btn_row, "닫기", on_close, bg=BG3, hover="#33333C",
+                        font=(theme.FONT_FAMILY, 10), padx=18, pady=8).pack(side="right", padx=(0, 8))
 
     def _open_diarize_dialog(self):
-        """툴바 버튼 → 설정창 화자 분석 탭 직접 열기."""
+        """툴바 버튼 → 화자 자동 분석 창."""
         if not self.media_path:
             messagebox.showwarning("화자 분석", "미디어 파일을 먼저 불러오세요.", parent=self)
             return
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()
         win.title("화자 자동 분석")
         win.configure(bg=BG)
-        win.geometry("560x540")
-        win.minsize(460, 380)
-        win.resizable(True, True)
+        win.geometry("600x700")
+        win.minsize(520, 460)
         win.transient(self)
-        win.grab_set()
-        def _on_diarize_win_close():
+
+        def _close():
             self._save_diarize_settings()
             win.destroy()
-        win.protocol("WM_DELETE_WINDOW", _on_diarize_win_close)
-
-        # 실행 버튼 행은 스크롤 영역 밖에 두고 먼저 하단에 고정 배치
-        _diar_footer = tk.Frame(win, bg=BG)
-        _diar_footer.pack(side="bottom", fill="x")
-        tk.Frame(win, bg=BORDER, height=1).pack(side="bottom", fill="x")
-
-        _diar_outer, _diar_inner = self._make_scrollable(win)
-        _diar_outer.pack(fill="both", expand=True)
-        self._build_diarize_tab(_diar_inner, footer_parent=_diar_footer)
+        win.protocol("WM_DELETE_WINDOW", _close)
+        outer, inner, footer = self._make_scrollable(win, with_footer=True)
+        outer.pack(fill="both", expand=True)
+        self._build_diarize_tab(inner, footer_parent=footer, on_close=_close)
+        present_dialog(win, self)
 
     def _save_diarize_settings(self):
         """현재 화자 분석 설정을 파일에 저장."""

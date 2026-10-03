@@ -16,303 +16,179 @@ from ..speech import (
     _load_asr_model,
     _split_segments_by_speaker,
 )
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
-from ..widgets import PurpleSlider, _gradient_bar_rows
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
+from ..widgets import (DarkScrollbar, NumberStepper, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
+                       _watch, flat_button, present_dialog)
 
 
 class TranscribeMixin:
     """자막 자동 생성(음성 인식)과 고유명사 사전."""
 
     def _ask_auto_transcribe(self, media_path):
-        """자막 자동 생성 여부 및 방식 선택 팝업."""
+        """자막 자동 생성 여부 및 방식 선택 창 (설정창과 같은 카드 스타일)."""
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()
         win.title("자막 자동 생성")
         win.configure(bg=BG)
-        win.geometry("420x490")
-        win.resizable(False, False)
+        win.geometry("580x700")
+        win.minsize(500, 460)
         win.transient(self)
-        win.grab_set()
-
-        tk.Label(win, text="🎙  자막 자동 생성",
-                 bg=BG, fg=FG, font=(theme.FONT_FAMILY, 11, "bold")).pack(pady=(16, 4))
-        tk.Label(win,
-                 text=f"{os.path.basename(media_path)}\n\ub3d9\uc77c\ud55c SRT \ud30c\uc77c\uc774 \uc5c6\uc2b5\ub2c8\ub2e4. \uc790\ub3d9 \uc0dd\uc131\ud560\uae4c\uc694?",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9), justify="center").pack(pady=(0, 10))
+        outer, inner, footer = self._make_scrollable(win, with_footer=True)
+        outer.pack(fill="both", expand=True)
+        self._settings_title(inner, "자막 자동 생성",
+                             f"{os.path.basename(media_path)}\n같은 이름의 SRT 파일이 없어요. 자동으로 만들까요?")
 
         mode_var = tk.StringVar(value="text")
-        mode_row = tk.Frame(win, bg=BG)
-        mode_row.pack()
-        tk.Radiobutton(mode_row, text="텍스트만  (빠름)",
-                       variable=mode_var, value="text",
-                       bg=BG, fg=FG, selectcolor=BG3,
-                       activebackground=BG, font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=8)
-        tk.Radiobutton(mode_row, text="화자 분리까지  (느림)",
-                       variable=mode_var, value="diarize",
-                       bg=BG, fg=FG, selectcolor=BG3,
-                       activebackground=BG, font=(theme.FONT_FAMILY, 9)).pack(side="left", padx=8)
+        card = self._settings_card(inner, "생성 방식")
+        left, _ = self._settings_row(card, "▶", "어떻게 만들까요",
+                                     "화자 분리까지 하면 화자도 자동으로 나눠요 (HuggingFace 토큰 필요)")
+        Segmented(left, [("텍스트만 (빠름)", "text"), ("화자 분리까지 (느림)", "diarize")],
+                  mode_var).pack(anchor="w", pady=(10, 0))
 
-        # ── 화자 분리 설정 패널 (diarize 선택 시 표시) ──────────
-        _saved_tok = getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
-        hf_tok_var = tk.StringVar(value=_saved_tok)
-
-        diar_frame = tk.Frame(win, bg=BG)
-
-        # HF 토큰
-        _tok_row = tk.Frame(diar_frame, bg=BG)
-        _tok_row.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(_tok_row, text="HuggingFace 토큰", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
-        tok_entry = tk.Entry(_tok_row, textvariable=hf_tok_var, show="*",
-                             bg=BG3, fg=FG, insertbackground=FG,
-                             font=(FONT_MONO, 8), relief="flat",
-                             highlightthickness=1, highlightbackground=BORDER,
-                             highlightcolor=ACCENT)
-        tok_entry.pack(side="left", fill="x", expand=True, ipady=2)
-        # 👁 토큰 표시 토글
-        def _tog_tok():
-            tok_entry.configure(show="" if tok_entry.cget("show") == "*" else "*")
-        tk.Button(_tok_row, text="👁", bg=BG, fg=FG_DIM, relief="flat", bd=0,
-                  font=(theme.FONT_FAMILY, 9), padx=4, cursor="hand2",
-                  activebackground=BG3, command=_tog_tok).pack(side="left", padx=(4,0))
-
-        # 화자 수
-        _spk_row = tk.Frame(diar_frame, bg=BG)
-        _spk_row.pack(fill="x", padx=10, pady=(0, 4))
-        tk.Label(_spk_row, text="화자 수 (0=자동)", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        # 화자 분리 설정 (방식이 '화자 분리까지'일 때만 보임)
+        diar_holder = tk.Frame(inner, bg=BG)
+        diar_anchor = tk.Frame(inner, bg=BG)
+        diar_anchor.pack()
+        hf_tok_var = tk.StringVar(value=getattr(self, "_hf_token", "") or _load_config().get("hf_token", ""))
+        card = self._settings_card(diar_holder, "화자 분리")
+        left, _ = self._settings_row(card, "K", "HuggingFace 토큰", "화자 분리 모델을 내려받을 때 필요해요")
+        self._hf_token_row(left, hf_tok_var).pack(fill="x", pady=(8, 0))
+        _, right = self._settings_row(card, "#", "화자 수", "0이면 자동으로 정해요")
         if not hasattr(self, "_diarize_num_spk"):
-            self._diarize_num_spk = tk.IntVar(
-                value=getattr(self, "_diarize_num_spk_val", 0))
-        tk.Spinbox(_spk_row, from_=0, to=20, textvariable=self._diarize_num_spk,
-                   bg=BG3, fg=FG, insertbackground=FG, buttonbackground=BG3,
-                   relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                   font=(theme.FONT_FAMILY, 8), width=5).pack(side="left")
+            self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
+        NumberStepper(right, self._diarize_num_spk, 0, 20).pack()
+        _, right = self._settings_row(card, "=", "정확히 이 인원",
+                                      "끄면 '최대 N명'으로 제한해요 (출연자 수를 대략만 알 때 권장)")
         if not hasattr(self, "_diarize_spk_exact_var"):
             self._diarize_spk_exact_var = tk.BooleanVar(
                 value=getattr(self, "_diarize_spk_exact_init", False))
-        tk.Checkbutton(_spk_row, variable=self._diarize_spk_exact_var,
-                       text="정확히 이 인원 (해제 시 최대 인원)",
-                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
-                       font=(theme.FONT_FAMILY, 8), cursor="hand2").pack(side="left", padx=(8, 0))
+        ToggleSwitch(right, self._diarize_spk_exact_var).pack()
 
-        # 화자 분리 민감도 (인원 고정 시 숨김)
-        _sens_row = tk.Frame(diar_frame, bg=BG)
-        tk.Label(_sens_row, text="분리 민감도", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        sens_holder = tk.Frame(diar_holder, bg=BG)
+        sens_anchor = tk.Frame(diar_holder, bg=BG)
+        sens_anchor.pack()
+        card = self._settings_card(sens_holder, "분리 민감도")
+        left, right = self._settings_row(
+            card, "~", "분리 민감도",
+            "50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요")
         if not hasattr(self, "_diarize_sensitivity_var"):
             self._diarize_sensitivity_var = tk.IntVar(
                 value=getattr(self, "_diarize_sensitivity_init", 50))
-        _sens_val = tk.Label(_sens_row, bg=BG, fg=FG, font=(theme.FONT_FAMILY, 8), width=4)
-        _sens_val.pack(side="right")
-        def _sens_upd(*_):
-            v = int(self._diarize_sensitivity_var.get())
-            _sens_val.configure(text=str(v))
+        sens_val = tk.Label(right, text=str(int(self._diarize_sensitivity_var.get())), bg=BG2, fg=FG,
+                            width=4, font=(theme.FONT_FAMILY, 10, "bold"))
+        sens_val.pack()
+
         def _sens_cmd(v):
             self._diarize_sensitivity_var.set(int(v))
-            _sens_upd()
-        _sens_upd()
-        _sens_slider = PurpleSlider(_sens_row, from_=0, to=100,
-                     value=self._diarize_sensitivity_var.get(),
-                     width=160, height=16, command=_sens_cmd, bg=BG)
-        _sens_slider.pack(side="left", padx=(6, 0))
+            sens_val.configure(text=str(int(v)))
+        PurpleSlider(left, from_=0, to=100, value=self._diarize_sensitivity_var.get(), width=340,
+                     command=_sens_cmd, bg=BG2).pack(anchor="w", pady=(8, 0))
 
-        def _sens_visibility_upd(*_):
-            # 창이 닫힌 뒤 다른 창에서 같은 변수를 바꿔도 남은 콜백이 오류를 내지 않도록
-            if not _sens_row.winfo_exists():
-                return
+        def _sens_visibility():
             num, exact = self._get_diarize_spk_settings()
             if num > 0 and exact:
-                _sens_row.pack_forget()
+                sens_holder.pack_forget()
             else:
-                _sens_row.pack(fill="x", padx=10, pady=(0, 8))
-        # 이전에 열렸던 다이얼로그의 콜백이 남아있지 않도록 정리 후 등록
-        for _v in (self._diarize_num_spk, self._diarize_spk_exact_var):
-            for _t in _v.trace_info():
-                _v.trace_remove(_t[0], _t[1])
-            _v.trace_add("write", _sens_visibility_upd)
-        _sens_visibility_upd()
+                sens_holder.pack(fill="x", before=sens_anchor)
+        _watch(sens_holder, self._diarize_num_spk, _sens_visibility)
+        _watch(sens_holder, self._diarize_spk_exact_var, _sens_visibility)
+        _sens_visibility()
 
-        # ── 자막 설정 인라인 ──────────────────────────────────
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", padx=16, pady=(12, 8))
-        tk.Label(win, text="자막 설정", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold")).pack(anchor="w", padx=16)
+        def _on_mode_change():
+            if mode_var.get() == "diarize":
+                diar_holder.pack(fill="x", before=diar_anchor)
+            else:
+                diar_holder.pack_forget()
+        _watch(diar_holder, mode_var, _on_mode_change)
 
-        # 글자 수 슬라이더
-        _cs_row = tk.Frame(win, bg=BG)
-        _cs_row.pack(fill="x", padx=16, pady=(6, 0))
-        tk.Label(_cs_row, text="문장 당 글자 수", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        # ── 자막 설정 ────────────────────────────────────────
+        card = self._settings_card(inner, "자막 설정")
         if not hasattr(self, "_transcribe_max_chars_var"):
-            self._transcribe_max_chars_var = tk.IntVar(
-                value=getattr(self, "_transcribe_max_chars", 25))
+            self._transcribe_max_chars_var = tk.IntVar(value=getattr(self, "_transcribe_max_chars", 25))
         _CS_MIN, _CS_MAX = 10, 50
-        tk.Label(_cs_row, text="자", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8)).pack(side="right")
-        _cs_entry_var = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
-        _cs_entry = tk.Entry(_cs_row, textvariable=_cs_entry_var, width=4,
-                              bg=BG3, fg=FG, insertbackground=FG, justify="center",
-                              relief="flat", highlightthickness=1,
-                              highlightbackground=BORDER, highlightcolor=ACCENT,
-                              font=(theme.FONT_FAMILY, 8))
-        _cs_entry.pack(side="right", padx=(0, 2))
-        def _cs_upd(*_):
+        left, right = self._settings_row(card, "가", "문장 당 글자 수", "한 자막에 들어갈 최대 글자 수")
+        cs_text = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
+        tk.Label(right, text="자", bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(side="right", padx=(4, 0))
+        cs_entry = tk.Entry(right, textvariable=cs_text, width=4, bg=BG3, fg=FG, insertbackground=FG,
+                            justify="center", relief="flat", highlightthickness=1,
+                            highlightbackground=BORDER, highlightcolor=ACCENT,
+                            font=(theme.FONT_FAMILY, 10))
+        cs_entry.pack(side="right", ipady=3)
+
+        def _cs_save():
             try:
                 v = int(self._transcribe_max_chars_var.get())
                 self._transcribe_max_chars = v
-                _cs_entry_var.set(str(v))
+                cs_text.set(str(v))
                 cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
-            except Exception: pass
-        _cs_upd()
+            except Exception:
+                pass
+        _cs_save()
+
         def _cs_slider_cmd(v):
             self._transcribe_max_chars_var.set(int(v))
-            _cs_upd()
-        _cs_slider = PurpleSlider(win, from_=_CS_MIN, to=_CS_MAX,
-                     value=self._transcribe_max_chars_var.get(),
-                     width=360, command=_cs_slider_cmd, bg=BG)
-        _cs_slider.pack(padx=16, pady=(2, 6))
+            _cs_save()
+        cs_slider = PurpleSlider(left, from_=_CS_MIN, to=_CS_MAX, value=self._transcribe_max_chars_var.get(),
+                                 width=340, command=_cs_slider_cmd, bg=BG2)
+        cs_slider.pack(anchor="w", pady=(8, 0))
+
         def _cs_entry_commit(*_):
             try:
-                v = int(_cs_entry_var.get())
+                v = int(cs_text.get())
             except Exception:
                 v = self._transcribe_max_chars_var.get()
             v = max(_CS_MIN, min(_CS_MAX, v))
             self._transcribe_max_chars_var.set(v)
-            _cs_slider.set(v, fire=False)
-            _cs_upd()
-        _cs_entry.bind("<Return>",   _cs_entry_commit)
-        _cs_entry.bind("<FocusOut>", _cs_entry_commit)
+            cs_slider.set(v, fire=False)
+            _cs_save()
+        cs_entry.bind("<Return>", _cs_entry_commit)
+        cs_entry.bind("<FocusOut>", _cs_entry_commit)
 
-        # 연산 디바이스 (화자분리 설정 공유)
-        _dev_row = tk.Frame(win, bg=BG)
-        _dev_row.pack(fill="x", padx=16, pady=(0, 4))
-        tk.Label(_dev_row, text="연산 디바이스", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
         if not hasattr(self, "_diarize_device_var"):
-            self._diarize_device_var = tk.StringVar(
-                value=getattr(self, "_diarize_device_init", "auto"))
-        for _txt, _val in [("🚀 GPU 우선", "auto"), ("CPU", "cpu")]:
-            tk.Radiobutton(_dev_row, text=_txt, value=_val,
-                           variable=self._diarize_device_var,
-                           bg=BG, fg=FG_DIM, selectcolor=BG3,
-                           activebackground=BG, font=(theme.FONT_FAMILY, 8),
-                           cursor="hand2").pack(side="left", padx=(0, 8))
+            self._diarize_device_var = tk.StringVar(value=getattr(self, "_diarize_device_init", "auto"))
+        _, right = self._settings_row(card, "◉", "처리 장치", "GPU 우선: CUDA 가능하면 GPU, 아니면 CPU로 자동 전환")
+        Segmented(right, [("GPU 우선", "auto"), ("CPU", "cpu")], self._diarize_device_var).pack()
 
-        # 인식 모드 (텍스트만/화자 분리 모두 적용)
-        _mode_row = tk.Frame(win, bg=BG)
-        _mode_row.pack(fill="x", padx=16, pady=(0, 4))
-        tk.Label(_mode_row, text="인식 모드", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
         if not hasattr(self, "_diarize_mode_var"):
-            self._diarize_mode_var = tk.StringVar(
-                value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
-        for _ml, _mv in [("⚡ 빠름","fast"),("⚖ 균형","balanced"),("🎯 정확","accurate"),("🔬 최고정확","best")]:
-            tk.Radiobutton(_mode_row, text=_ml, value=_mv,
-                           variable=self._diarize_mode_var,
-                           bg=BG, fg=FG_DIM, selectcolor=BG3,
-                           activebackground=BG, font=(theme.FONT_FAMILY, 7),
-                           cursor="hand2").pack(side="left", padx=(0,4))
-        _mode_hint = tk.Label(win, bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 7), anchor="w")
-        _mode_hint.pack(fill="x", padx=16, pady=(0, 4))
-        def _mode_hint_upd(*_):
-            if self._diarize_device_var.get() == "cpu":
-                _mode_hint.configure(text="  CPU 사용 시 ⚖ 균형 권장 (🎯/🔬는 매우 느릴 수 있음)")
-            else:
-                _mode_hint.configure(text="  GPU 사용 시 🎯 정확 권장 · 🔬는 짧은 추임새까지 잡음")
+            self._diarize_mode_var = tk.StringVar(value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
+        left, _ = self._settings_row(card, "◆", "인식 모드", "텍스트만·화자 분리 모두에 적용돼요")
+        Segmented(left, [("빠름", "fast"), ("균형", "balanced"), ("정확", "accurate"), ("최고 정확", "best")],
+                  self._diarize_mode_var).pack(anchor="w", pady=(10, 0))
+        mode_hint = tk.Label(left, bg=BG2, fg=FG_HINT, font=(theme.FONT_FAMILY, 9), anchor="w")
+        mode_hint.pack(fill="x", pady=(6, 0))
+
+        def _mode_hint_upd():
+            mode_hint.configure(text="CPU에서는 '균형' 권장 ('정확'·'최고 정확'은 매우 느릴 수 있어요)"
+                                if self._diarize_device_var.get() == "cpu"
+                                else "GPU에서는 '정확' 권장 ('최고 정확'은 짧은 추임새까지 잡아요)")
+        _watch(mode_hint, self._diarize_device_var, _mode_hint_upd)
         _mode_hint_upd()
-        _dev_trace = self._diarize_device_var.trace_add("write", _mode_hint_upd)
-        win.bind("<Destroy>", lambda e: (e.widget is win) and
-                 self._diarize_device_var.trace_remove("write", _dev_trace), add="+")
 
-        # 인식 언어
-        _lang_row = tk.Frame(win, bg=BG)
-        _lang_row.pack(fill="x", padx=16, pady=(0, 4))
-        tk.Label(_lang_row, text="인식 언어", bg=BG, fg=FG_DIM,
-                 font=(theme.FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
-        _lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
+        lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
+
         def _save_lang():
-            self._transcribe_language = _lang_var.get()
-            cfg = _load_config(); cfg["transcribe_language"] = _lang_var.get(); _save_config(cfg)
-        for _txt, _val in [("한국어 고정 (권장)", "ko"), ("자동 감지", "auto")]:
-            tk.Radiobutton(_lang_row, text=_txt, value=_val, variable=_lang_var,
-                           command=_save_lang,
-                           bg=BG, fg=FG_DIM, selectcolor=BG3,
-                           activebackground=BG, font=(theme.FONT_FAMILY, 8),
-                           cursor="hand2").pack(side="left", padx=(0, 8))
+            self._transcribe_language = lang_var.get()
+            cfg = _load_config(); cfg["transcribe_language"] = lang_var.get(); _save_config(cfg)
+        _, right = self._settings_row(card, "A", "인식 언어")
+        Segmented(right, [("한국어 고정 (권장)", "ko"), ("자동 감지", "auto")], lang_var, _save_lang).pack()
 
-        # 마침표 + 맞춤법
-        _opt_row = tk.Frame(win, bg=BG)
-        _opt_row.pack(fill="x", padx=16, pady=(0, 4))
         if not hasattr(self, "_transcribe_period_var"):
-            self._transcribe_period_var = tk.BooleanVar(
-                value=getattr(self, "_transcribe_period", False))
-        def _save_period_inline():
-            v = self._transcribe_period_var.get()
-            self._transcribe_period = v
-            cfg = _load_config(); cfg["transcribe_period"] = v; _save_config(cfg)
-        tk.Checkbutton(_opt_row, variable=self._transcribe_period_var,
-                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
-                       font=(theme.FONT_FAMILY, 8), cursor="hand2",
-                       text="문장 끝 마침표",
-                       command=_save_period_inline).pack(side="left")
+            self._transcribe_period_var = tk.BooleanVar(value=getattr(self, "_transcribe_period", False))
+
+        def _save_period():
+            self._transcribe_period = self._transcribe_period_var.get()
+            cfg = _load_config(); cfg["transcribe_period"] = self._transcribe_period; _save_config(cfg)
+        _, right = self._settings_row(card, ".", "문장 끝 마침표")
+        ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
+
         if not hasattr(self, "_transcribe_spellcheck_var"):
-            self._transcribe_spellcheck_var = tk.BooleanVar(
-                value=getattr(self, "_transcribe_spellcheck", False))
-        def _save_spell_inline():
-            v = self._transcribe_spellcheck_var.get()
-            self._transcribe_spellcheck = v
-            cfg = _load_config(); cfg["transcribe_spellcheck"] = v; _save_config(cfg)
-        tk.Checkbutton(_opt_row, variable=self._transcribe_spellcheck_var,
-                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
-                       font=(theme.FONT_FAMILY, 8), cursor="hand2",
-                       text="맞춤법 검사",
-                       command=_save_spell_inline).pack(side="left", padx=(12, 0))
+            self._transcribe_spellcheck_var = tk.BooleanVar(value=getattr(self, "_transcribe_spellcheck", False))
 
-        # ── 화자 분리 설정 (diarize 선택 시 자막설정 아래에 표시) ──
-        _diar_sep = tk.Frame(win, bg=BORDER, height=1)
-        _diar_hdr = tk.Label(win, text="화자 분리 설정", bg=BG, fg=FG,
-                             font=(theme.FONT_FAMILY, 9, "bold"))
-
-        btn_row = tk.Frame(win, bg=BG)
-        btn_row.pack(pady=12)
-
-        _anim_job = [None]
-
-        def _animate_height(target_h, on_done=None):
-            """창 높이를 target_h까지 부드럽게 애니메이션."""
-            if _anim_job[0]:
-                win.after_cancel(_anim_job[0])
-            def _step():
-                try:
-                    cur_h = win.winfo_height()
-                    diff  = target_h - cur_h
-                    if abs(diff) <= 2:
-                        win.geometry(f"420x{target_h}")
-                        if on_done: on_done()
-                        return
-                    # ease-out: 차이의 30%씩 이동
-                    step = max(2, int(abs(diff) * 0.3)) * (1 if diff > 0 else -1)
-                    win.geometry(f"420x{cur_h + step}")
-                    _anim_job[0] = win.after(12, _step)
-                except Exception:
-                    pass
-            _step()
-
-        def _on_mode_change(*_):
-            if mode_var.get() == "diarize":
-                _diar_sep.pack(fill="x", padx=16, pady=(8, 8))
-                _diar_hdr.pack(anchor="w", padx=16)
-                diar_frame.pack(fill="x", padx=16, pady=(4, 0))
-                btn_row.pack_forget()
-                btn_row.pack(pady=12)
-                _animate_height(600)
-            else:
-                def _hide():
-                    _diar_sep.pack_forget()
-                    _diar_hdr.pack_forget()
-                    diar_frame.pack_forget()
-                _animate_height(490, on_done=_hide)
-        mode_var.trace_add("write", _on_mode_change)
+        def _save_spell():
+            self._transcribe_spellcheck = self._transcribe_spellcheck_var.get()
+            cfg = _load_config(); cfg["transcribe_spellcheck"] = self._transcribe_spellcheck; _save_config(cfg)
+        _, right = self._settings_row(card, "✔", "맞춤법 검사", "네이버 맞춤법 검사기 사용 (인터넷 필요)")
+        ToggleSwitch(right, self._transcribe_spellcheck_var, _save_spell).pack()
 
         def _start():
             hf_tok = hf_tok_var.get().strip()
@@ -338,16 +214,13 @@ class TranscribeMixin:
             self._auto_transcribe(media_path, with_diarize=(mode_var.get() == "diarize"),
                                    hf_token=hf_tok)
 
-        tk.Button(btn_row, text="생성 시작", bg=ACCENT, fg="white",
-                  relief="flat", bd=0, padx=16, pady=5, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9, "bold"),
-                  activebackground="#7B5FB4",
-                  command=_start).pack(side="left", padx=6)
-        tk.Button(btn_row, text="취소", bg=BG3, fg=FG,
-                  relief="flat", bd=0, padx=16, pady=5, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9),
-                  activebackground=BG2,
-                  command=win.destroy).pack(side="left", padx=6)
+        btn_row = tk.Frame(footer, bg=BG)
+        btn_row.pack(fill="x", padx=24, pady=(12, 14))
+        flat_button(btn_row, "생성 시작", _start, bg=ACCENT, fg="white", hover="#AE96E2",
+                    font=(theme.FONT_FAMILY, 10, "bold"), padx=22, pady=8).pack(side="right")
+        flat_button(btn_row, "취소", win.destroy, bg=BG3, hover="#33333C",
+                    font=(theme.FONT_FAMILY, 10), padx=18, pady=8).pack(side="right", padx=(0, 8))
+        present_dialog(win, self)
 
     def _offer_whisperx_autoinstall(self, retry_fn):
         """whisperx가 설치되어 있지 않을 때 자동 설치를 제안하고, 동의해서
@@ -906,34 +779,40 @@ class TranscribeMixin:
         return opts
 
     def _open_proper_noun_manager(self, on_close=None):
-        """고유명사 사전 관리 다이얼로그."""
+        """고유명사 사전 관리 창."""
         self._ensure_proper_nouns_init()
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()
         win.title("고유명사 사전")
         win.configure(bg=BG)
-        win.geometry("380x460")
-        win.resizable(False, False)
+        win.geometry("440x560")
+        win.minsize(380, 440)
         win.transient(self)
-        win.grab_set()
 
         tk.Label(win, text="고유명사 사전", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win, text="등록한 단어는 자동 자막에서 더 잘 알아들어요.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)
-                 ).pack(anchor="w", padx=16, pady=(0, 8))
+                 font=(theme.FONT_FAMILY, 15, "bold")).pack(anchor="w", padx=24, pady=(22, 2))
+        tk.Label(win, text="등록한 단어는 자동 자막에서 더 잘 알아들어요.", bg=BG, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 9)).pack(anchor="w", padx=24, pady=(0, 12))
 
-        list_frame = tk.Frame(win, bg=BG)
-        list_frame.pack(fill="both", expand=True, padx=16)
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side="right", fill="y")
-        lb = tk.Listbox(list_frame, bg=BG3, fg=FG, selectbackground=ACCENT,
-                         relief="flat", highlightthickness=1, highlightbackground=BORDER,
-                         font=(theme.FONT_FAMILY, 9), activestyle="none",
-                         selectmode="extended",   # Shift/Ctrl 클릭으로 범위/다중 선택
-                         yscrollcommand=scrollbar.set)
-        lb.pack(side="left", fill="both", expand=True)
+        foot = tk.Frame(win, bg=BG)
+        foot.pack(side="bottom", fill="x", padx=24, pady=(6, 18))
+        del_row = tk.Frame(win, bg=BG)
+        del_row.pack(side="bottom", fill="x", padx=24, pady=(0, 6))
+        add_row = tk.Frame(win, bg=BG)
+        add_row.pack(side="bottom", fill="x", padx=24, pady=(10, 8))
+
+        card = tk.Frame(win, bg=BG2, highlightthickness=1, highlightbackground=BORDER)
+        card.pack(fill="both", expand=True, padx=24)
+        scrollbar = DarkScrollbar(card)
+        scrollbar.pack(side="right", fill="y", padx=(0, 2), pady=2)
+        lb = tk.Listbox(card, bg=BG2, fg=FG, selectbackground=theme.ON_BG, selectforeground=theme.ON_FG,
+                        relief="flat", bd=0, highlightthickness=0, activestyle="none",
+                        font=(theme.FONT_FAMILY, 10), selectmode="extended",   # Shift/Ctrl 클릭으로 다중 선택
+                        yscrollcommand=scrollbar.set)
+        lb.pack(side="left", fill="both", expand=True, padx=(6, 0), pady=4)
         scrollbar.configure(command=lb.yview)
+        empty = tk.Label(card, text="아직 등록한 단어가 없어요.\n아래에 단어를 입력하고 Enter를 눌러 보세요.",
+                         bg=BG2, fg=theme.FG_HINT, justify="center", font=(theme.FONT_FAMILY, 9))
 
         def _sorted_items():
             return sorted(self._proper_nouns)
@@ -942,17 +821,17 @@ class TranscribeMixin:
             lb.delete(0, "end")
             for w in _sorted_items():
                 lb.insert("end", f"  {w}")
-
+            if self._proper_nouns:
+                empty.place_forget()
+            else:
+                empty.place(relx=0.5, rely=0.45, anchor="center")
         _refresh()
 
-        add_row = tk.Frame(win, bg=BG)
-        add_row.pack(fill="x", padx=16, pady=(8, 4))
         new_var = tk.StringVar()
-        entry = tk.Entry(add_row, textvariable=new_var, bg=BG3, fg=FG,
-                          insertbackground=FG, relief="flat",
-                          highlightthickness=1, highlightbackground=BORDER,
-                          highlightcolor=ACCENT, font=(theme.FONT_FAMILY, 9))
-        entry.pack(side="left", fill="x", expand=True, ipady=3)
+        entry = tk.Entry(add_row, textvariable=new_var, bg=BG3, fg=FG, insertbackground=FG, relief="flat",
+                         highlightthickness=1, highlightbackground=BORDER, highlightcolor=ACCENT,
+                         font=(theme.FONT_FAMILY, 10))
+        entry.pack(side="left", fill="x", expand=True, ipady=5)
 
         def _add(*_):
             w = new_var.get().strip()
@@ -962,41 +841,29 @@ class TranscribeMixin:
             new_var.set("")
             _refresh()
         entry.bind("<Return>", _add)
-        tk.Button(add_row, text="+ 추가", bg=ACCENT, fg="white", relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9, "bold"), padx=10,
-                  activebackground="#7B5FB4", command=_add).pack(side="left", padx=(6, 0))
-
-        del_row = tk.Frame(win, bg=BG)
-        del_row.pack(fill="x", padx=16, pady=(0, 10))
+        flat_button(add_row, "추가", _add, bg=ACCENT, fg="white", hover="#AE96E2",
+                    font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=6).pack(side="left", padx=(8, 0))
 
         def _delete(*_):
             sel = lb.curselection()
             if not sel:
                 return
             items = _sorted_items()
-            words = [items[i] for i in sel if i < len(items)]
-            for w in words:
+            for w in [items[i] for i in sel if i < len(items)]:
                 self._remove_proper_noun(w)
             _refresh()
-        tk.Button(del_row, text="선택 삭제", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9), padx=10, pady=4,
-                  activebackground="#333333", command=_delete
-                  ).pack(side="left")
+        flat_button(del_row, "선택 삭제", _delete, bg=BG3, hover="#33333C", padx=14, pady=5).pack(side="left")
 
         def _delete_all(*_):
             if not self._proper_nouns:
                 return
-            if not messagebox.askyesno("전부 삭제",
-                                        "등록된 고유명사를 모두 삭제할까요?",
-                                        parent=win):
+            if not messagebox.askyesno("전부 삭제", "등록된 고유명사를 모두 삭제할까요?", parent=win):
                 return
             self._proper_nouns.clear()
             self._save_proper_nouns()
             _refresh()
-        tk.Button(del_row, text="전부 삭제", bg="#2A2A2A", fg="#E08080", relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 9), padx=10, pady=4,
-                  activebackground="#3A2A2A", command=_delete_all
-                  ).pack(side="left", padx=(6, 0))
+        flat_button(del_row, "전부 삭제", _delete_all, bg="#5A2A2E", fg="#FFD8D8", hover="#6E3438",
+                    padx=14, pady=5).pack(side="left", padx=(8, 0))
 
         def _close():
             if on_close:
@@ -1006,10 +873,10 @@ class TranscribeMixin:
                     pass
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _close)
-        tk.Button(win, text="닫기", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 10), padx=16, pady=6,
-                  activebackground="#333333", command=_close
-                  ).pack(pady=(0, 14))
+        flat_button(foot, "닫기", _close, bg=BG3, hover="#33333C", font=(theme.FONT_FAMILY, 10),
+                    padx=22, pady=7).pack(side="right")
+        present_dialog(win, self)
+        entry.focus_set()
 
     def _build_proper_noun_section(self, parent):
         """'고유명사 사전' 요약 + 관리 버튼 (자동자막 설정 탭 / 자막 생성
@@ -1024,15 +891,13 @@ class TranscribeMixin:
 
         _pn_count_lbl = tk.Label(pn_frame, bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
         _pn_count_lbl.pack(side="left", padx=(6, 0))
+
         def _refresh_count():
             _pn_count_lbl.configure(text=f"({len(getattr(self, '_proper_nouns', None) or [])}개 등록됨)")
         _refresh_count()
 
-        tk.Button(pn_frame, text="사전 관리", bg="#2A2A2A", fg=FG, relief="flat", bd=0,
-                  cursor="hand2", font=(theme.FONT_FAMILY, 8), padx=8, pady=2,
-                  activebackground="#333333",
-                  command=lambda: self._open_proper_noun_manager(on_close=_refresh_count)
-                  ).pack(side="right")
+        flat_button(pn_frame, "사전 관리", lambda: self._open_proper_noun_manager(on_close=_refresh_count),
+                    bg=BG3, hover="#33333C", font=(theme.FONT_FAMILY, 8), padx=10, pady=3).pack(side="right")
         tk.Label(parent, text="  자주 나오는 이름·용어를 등록하면 더 잘 알아들어요.",
                  bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
                  ).pack(fill="x", padx=20, pady=(0, 6))
