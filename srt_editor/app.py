@@ -298,12 +298,12 @@ class SRTEditor(
             parts = (box, ic, tx)
 
             def _enter(e):
-                for w in parts:
+                for w in (box,) + tuple(box.winfo_children()):
                     w.configure(bg=hover)
                 tx.configure(fg=fg_hover)
 
             def _leave(e):
-                for w in parts:
+                for w in (box,) + tuple(box.winfo_children()):
                     w.configure(bg=bg)
                 tx.configure(fg=fg)
 
@@ -322,7 +322,12 @@ class SRTEditor(
 
         tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
-        _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
+        _save = _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
+        # 저장 안 된 변경이 있을 때 저장 버튼에 점 표시
+        self._save_dot = tk.Label(_save, text="●", bg=TB_BG, fg=ACCENT,
+                                  font=(theme.FONT_FAMILY, 8))
+        Tooltip(self._save_dot, "저장하지 않은 변경 사항이 있어요", delay=400)
+        self._save_dot.bind("<Button-1>", lambda e: (self.save_file(), self.focus_set()))
         _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
@@ -432,6 +437,24 @@ class SRTEditor(
         tut.pack(pady=(14, 0))
         tut.bind("<Button-1>", lambda e: self._tutorial_start())
 
+    @property
+    def _unsaved(self):
+        return self.__dict__.get("_unsaved_flag", False)
+
+    @_unsaved.setter
+    def _unsaved(self, value):
+        value = bool(value)
+        if value == self.__dict__.get("_unsaved_flag"):
+            return
+        self.__dict__["_unsaved_flag"] = value
+        self._update_title()
+        dot = getattr(self, "_save_dot", None)
+        if dot is not None:
+            if value:
+                dot.place(relx=1.0, x=-8, y=4, anchor="ne")
+            else:
+                dot.place_forget()
+
     def _set_doc_title(self, name):
         """창 제목에 표시할 파일 이름을 바꾼다 (None이면 앱 이름만)."""
         self._doc_name = name
@@ -440,7 +463,8 @@ class SRTEditor(
     def _update_title(self, suffix=""):
         base = f"SRT Speaker Editer v{APP_VERSION}"
         name = getattr(self, "_doc_name", None)
-        self.title((f"{name} - {base}" if name else base) + suffix)
+        mark = "● " if self._unsaved and name else ""   # 저장 안 된 변경 표시
+        self.title(mark + (f"{name} - {base}" if name else base) + suffix)
 
     def _hide_overlay(self):
         self.overlay.place_forget()
