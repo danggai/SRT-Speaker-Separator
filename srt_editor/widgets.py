@@ -906,37 +906,66 @@ def _circle_image(d, color):
     return _IMG_CACHE[key]
 
 
+def _mix(c1, c2, t):
+    """두 색의 중간색 (t=0 → c1, t=1 → c2)."""
+    a, b = _hex_rgba(c1), _hex_rgba(c2)
+    return "#%02X%02X%02X" % tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+
+
+_ANIM_STEPS = 7    # 전환 애니메이션 단계 수
+_ANIM_MS = 16      # 단계 간격 (ms)
+
+
+def _ease(t):
+    return 1 - (1 - t) ** 3   # 끝에서 부드럽게 멈춤
+
+
 class ToggleSwitch(tk.Canvas):
-    """켜기/끄기 스위치 (BooleanVar 연동)."""
+    """켜기/끄기 스위치 (BooleanVar 연동, 미끄러지는 애니메이션)."""
 
     W, H = 40, 22
+    _OFF = "#3A3A44"
 
     def __init__(self, parent, variable, command=None):
         super().__init__(parent, width=self.W, height=self.H, bg=parent.cget("bg"),
                          highlightthickness=0, cursor="hand2")
         self._var, self._cmd = variable, command
+        self._pos = 1.0 if variable.get() else 0.0   # 0=꺼짐, 1=켜짐
+        self._job = None
         self.create_image(0, 0, anchor="nw", tags="track")
         self.create_image(0, 0, anchor="center", tags="knob")
         self.bind("<Button-1>", self._toggle)
-        variable.trace_add("write", lambda *_: self._paint())
-        self._paint()
+        variable.trace_add("write", lambda *_: self._animate())
+        self._draw()
 
     def _toggle(self, e=None):
         self._var.set(not self._var.get())
         if self._cmd:
             self._cmd()
 
-    def _paint(self):
-        on = bool(self._var.get())
+    def _animate(self):
+        if self._job:
+            self.after_cancel(self._job)
+        start, target = self._pos, 1.0 if self._var.get() else 0.0
+
+        def step(i=1):
+            self._pos = start + (target - start) * _ease(i / _ANIM_STEPS)
+            self._draw()
+            self._job = self.after(_ANIM_MS, step, i + 1) if i < _ANIM_STEPS else None
+        step()
+
+    def _draw(self):
+        t = self._pos
         self.itemconfigure("track", image=rounded_rect_image(
-            self.W, self.H, self.H // 2, ACCENT if on else "#3A3A44"))
+            self.W, self.H, self.H // 2, _mix(self._OFF, ACCENT, t)))
         k = self.H - 6
-        self.coords("knob", self.W - 3 - k / 2 if on else 3 + k / 2, self.H / 2)
+        x0, x1 = 3 + k / 2, self.W - 3 - k / 2
+        self.coords("knob", x0 + (x1 - x0) * t, self.H / 2)
         self.itemconfigure("knob", image=_circle_image(k, "#FFFFFF"))
 
 
 class Segmented(tk.Frame):
-    """여러 값 중 하나를 고르는 버튼 묶음 (StringVar 연동)."""
+    """여러 값 중 하나를 고르는 버튼 묶음 (StringVar 연동, 색이 서서히 바뀜)."""
 
     def __init__(self, parent, options, variable, command=None):
         super().__init__(parent, bg=parent.cget("bg"))
@@ -951,20 +980,34 @@ class Segmented(tk.Frame):
             cv.create_image(0, 0, anchor="nw", tags="bg")
             cv.create_text(w / 2, h / 2, text=label, font=font, tags="label")
             cv.bind("<Button-1>", lambda e, v=value: self._select(v))
+            cv.sel = 1.0 if value == variable.get() else 0.0   # 선택 정도 (애니메이션용)
             self._btns.append((cv, value, w, h))
-        variable.trace_add("write", lambda *_: self._paint())
-        self._paint()
+        self._job = None
+        variable.trace_add("write", lambda *_: self._animate())
+        self._draw()
 
     def _select(self, value):
         self._var.set(value)
         if self._cmd:
             self._cmd()
 
-    def _paint(self):
+    def _animate(self):
+        if self._job:
+            self.after_cancel(self._job)
         cur = self._var.get()
+        starts = [(cv, cv.sel, 1.0 if v == cur else 0.0) for cv, v, _, _ in self._btns]
+
+        def step(i=1):
+            for cv, a, b in starts:
+                cv.sel = a + (b - a) * _ease(i / _ANIM_STEPS)
+            self._draw()
+            self._job = self.after(_ANIM_MS, step, i + 1) if i < _ANIM_STEPS else None
+        step()
+
+    def _draw(self):
         for cv, value, w, h in self._btns:
-            sel = value == cur
-            cv.itemconfigure("bg", image=rounded_rect_image(
-                w, h, theme.ON_RADIUS, theme.ON_BG if sel else BG3,
-                theme.ON_BORDER if sel else None))
-            cv.itemconfigure("label", fill=theme.ON_FG if sel else FG_DIM)
+            t = round(cv.sel, 2)
+            fill = _mix(BG3, theme.ON_BG, t)
+            outline = _mix(BG3, theme.ON_BORDER, t) if t > 0 else None
+            cv.itemconfigure("bg", image=rounded_rect_image(w, h, theme.ON_RADIUS, fill, outline))
+            cv.itemconfigure("label", fill=_mix(FG_DIM, theme.ON_FG, t))
