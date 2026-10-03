@@ -1408,36 +1408,12 @@ class TimelineMixin:
             import traceback
             try:
                 _ensure_pip("librosa", "numpy", "soundfile", "audioread")
-                import librosa, numpy as np
-
-                # 22050Hz 모노로 로드 (mp3/wav/flac/ogg/m4a 전부 지원)
-                y, sr = librosa.load(path, sr=22050, mono=True)
-                total  = len(y)
-                hop    = max(1, total // N_PTS)
-
-                # librosa.util.frame: 버전에 따라 shape (frame_length, n_frames)
-                frames = librosa.util.frame(y, frame_length=hop, hop_length=hop)
-                # 항상 axis=0이 frame_length, axis=1이 n_frames
-                if frames.ndim == 1:
-                    frames = frames.reshape(-1, 1)
-
-                peak    = np.max(np.abs(frames), axis=0)   # (n_frames,)
-                rms     = np.sqrt(np.mean(frames ** 2, axis=0))
-                amp_arr = np.clip(peak * 0.6 + rms * 2.5, 0.0, 1.0)
-                n_frames = int(amp_arr.shape[0])
-
-                # x: 0~1 시간축 비율
-                pts = [(i / max(1, n_frames - 1), float(amp_arr[i]))
-                       for i in range(n_frames)]
-
-                UPDATE_EVERY = 500
-                for i in range(UPDATE_EVERY, len(pts), UPDATE_EVERY):
-                    snapshot = pts[:i]
-                    def _partial(s=snapshot):
-                        if self.media_path == path:
-                            self._waveform_pts = s
-                            self._pb_redraw()
-                    self.after(0, _partial)
+                # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
+                from concurrent.futures import ProcessPoolExecutor
+                import multiprocessing as _mp
+                from ..waveform import extract_waveform_pts
+                with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
+                    pts = ex.submit(extract_waveform_pts, path, N_PTS).result()
 
                 def _apply():
                     if self.media_path == path:

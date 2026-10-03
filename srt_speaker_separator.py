@@ -108,11 +108,15 @@ def _bootstrap_packages():
         subprocess.Popen([sys.executable] + sys.argv)
     sys.exit(0)
 
-_bootstrap_packages()
 # ─────────────────────────────────────────────────────────────────────────
 
 
 if __name__ == "__main__":
+    # 파형 추출 등 하위 프로세스로 실행된 경우 여기서 처리하고 끝남
+    import multiprocessing
+    multiprocessing.freeze_support()
+    _bootstrap_packages()
+
     import traceback as _tb
     try:
         from srt_editor.app import main
