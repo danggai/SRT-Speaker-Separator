@@ -1370,6 +1370,13 @@ class TimelineMixin:
             cfg["volume"] = self._vol_var
             _save_config(cfg)
 
+    def _mute_shortcut(self, event=None):
+        """단축키 M: 음소거 켜기/끄기."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        self._toggle_mute()
+        return "break"
+
     def _toggle_mute(self, event=None):
         """볼륨 아이콘 클릭 → 음소거/복원 토글."""
         if self._vol_var > 0:
