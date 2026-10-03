@@ -1,8 +1,7 @@
-"""Windows 한글 IME 조합 중 글자를 입력칸에 표시 (Tk 8.6 미지원 보완), IME 기본 조합창은 화면 밖으로.
+"""Windows 한글 IME 조합 중 글자를 입력칸에 임시로 넣어 표시 (Tk 8.6 미지원 보완), IME 기본 조합창은 화면 밖으로.
 입력칸이 아닌 곳에서는 IME를 떼어 한글 상태에서도 단축키가 동작하게 한다."""
 import sys
 import tkinter as tk
-import tkinter.font as tkfont
 
 _WM_IME_STARTCOMPOSITION = 0x010D
 _WM_IME_COMPOSITION = 0x010F
@@ -10,6 +9,7 @@ _GWLP_WNDPROC = -4
 _CFS_POINT = 0x0002
 _OFFSCREEN = -32000
 _IACE_DEFAULT = 0x10
+_PREVIEW_TAG = "ImePreview"
 
 
 class ImeCompositionOverlay:
@@ -18,13 +18,14 @@ class ImeCompositionOverlay:
 
     def __init__(self, root):
         self.root = root
-        self._label = None
-        self._label_master = None
-        self._fonts = {}
+        self._preview = None   # (입력칸, 임시로 넣은 조합 글자)
         self._hooked = {}   # hwnd → (콜백 객체, 원래 창 프로시저)
         self._no_ime = set()   # 입력기를 떼어 둔 창 (입력칸이 아닌 곳)
         if sys.platform != "win32":
             return
+        # 글자 입력·포커스 이동 전에 임시 글자부터 지움
+        root.bind_class(_PREVIEW_TAG, "<KeyPress>", lambda e: self._clear_preview())
+        root.bind_class(_PREVIEW_TAG, "<FocusOut>", lambda e: self._clear_preview())
         try:
             import ctypes
             import ctypes.wintypes as wt
@@ -140,12 +141,13 @@ class ImeCompositionOverlay:
             text = self._composition() if isinstance(widget, tk.Entry) else ""
             if text:
                 self._push_ime_window_offscreen(hwnd)
-                self._replace_selection(widget)
-                self._show(widget, text)
+                if self._preview is None:
+                    self._replace_selection(widget)
+                self._set_preview(widget, text)
             else:
-                self._hide()
+                self._clear_preview()
         except Exception:
-            self._hide()
+            self._clear_preview()
         try:
             self.root.after(self.POLL_MS, self._poll)
         except tk.TclError:   # 앱 종료
@@ -159,49 +161,30 @@ class ImeCompositionOverlay:
             entry.delete("sel.first", "sel.last")
             entry.icursor(first)
 
-    def _font_for(self, entry):
-        """Entry 글꼴에 밑줄만 더한 글꼴 (조합 중 표시)."""
-        spec = entry.cget("font")
-        f = self._fonts.get(spec)
-        if f is None:
-            f = tkfont.Font(root=self.root, font=spec)
-            f.configure(underline=True)
-            self._fonts[spec] = f
-        return f
-
-    def _caret_box(self, entry, font):
-        """커서 위치 (x, y, 높이). Entry.bbox()가 0을 주는 환경이 있어 글자 폭으로 계산."""
-        text = entry.get()
-        first = entry.index("@0")          # 가로 스크롤 시 화면에 보이는 첫 글자
-        idx = entry.index("insert")
-        pad = int(entry.cget("bd")) + int(entry.cget("highlightthickness")) + 1
-        x = pad + font.measure(text[first:idx]) if idx >= first else pad
-        h = font.metrics("linespace")
-        return min(x, max(pad, entry.winfo_width() - pad)), max(0, (entry.winfo_height() - h) // 2), h
-
-    def _show(self, entry, text):
-        master = entry.master
-        if self._label is None or self._label_master is not master:
-            self._hide(destroy=True)
-            self._label = tk.Label(master, bd=0, padx=0, pady=0, takefocus=0)
-            self._label_master = master
-        font = self._font_for(entry)
-        x, y, h = self._caret_box(entry, font)
-        self._label.configure(text=text, font=font,
-                              bg=entry.cget("bg"), fg=entry.cget("fg"))
-        self._label.place(in_=entry, x=x, y=y, height=h)
-        self._label.lift(entry)
-
-    def _hide(self, destroy=False):
-        if self._label is None:
+    def _set_preview(self, entry, text):
+        """커서 자리에 조합 중인 글자를 넣는다 (커서는 그 뒤)."""
+        if self._preview == (entry, text):
             return
+        self._clear_preview()
+        tags = entry.bindtags()
+        if _PREVIEW_TAG not in tags:
+            entry.bindtags((_PREVIEW_TAG,) + tags)
+        entry.insert("insert", text)
         try:
-            if destroy:
-                self._label.destroy()
-                self._label = None
-                self._label_master = None
-            else:
-                self._label.place_forget()
-        except tk.TclError:   # 부모 창이 이미 닫힘
-            self._label = None
-            self._label_master = None
+            entry.tk.call("::tk::EntrySeeInsert", entry._w)
+        except tk.TclError:
+            pass
+        self._preview = (entry, text)
+
+    def _clear_preview(self):
+        """임시로 넣은 조합 글자를 지운다."""
+        if self._preview is None:
+            return
+        entry, text = self._preview
+        self._preview = None
+        try:
+            pos = entry.index("insert")
+            if pos >= len(text) and entry.get()[pos - len(text):pos] == text:
+                entry.delete(pos - len(text), pos)
+        except tk.TclError:   # 입력칸이 이미 사라짐
+            pass
