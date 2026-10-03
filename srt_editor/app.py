@@ -624,7 +624,6 @@ class SRTEditor(
         super().destroy()
 
 
-
 # ─────────────────────────────────────────────
 #  tkinterdnd2 지원 여부에 따라 루트 클래스 선택
 # ─────────────────────────────────────────────
@@ -632,81 +631,12 @@ def main():
     try:
         from tkinterdnd2 import TkinterDnD
 
-        class SRTEditorDnD(TkinterDnD.Tk, SRTEditor):
+        # SRTEditor를 앞에 두면 SRTEditor.__init__이 실행되고, 그 안의
+        # super().__init__()이 TkinterDnD.Tk.__init__(드래그앤드롭 초기화)을
+        # 호출한다. (예전에는 __init__ 본문을 통째로 복사해 두어, 설정 불러오기·
+        # 업데이트 확인·Shift+←/→ 단축키가 드래그앤드롭 버전에서 빠져 있었다)
+        class SRTEditorDnD(SRTEditor, TkinterDnD.Tk):
             """tkinterdnd2 기반 드래그앤드롭 지원 버전"""
-            def __init__(self):
-                TkinterDnD.Tk.__init__(self)
-                self.title("SRT Speaker Editer")
-                self.geometry("1200x820")
-                self.minsize(900, 620)
-                self.configure(bg=BG)
-                _apply_dark_titlebar(self)
-
-                theme.FONT_FAMILY = _pick_font(root=self)
-
-                self.subtitles      = []
-                self.speakers       = []
-                self.speaker_colors = {}   # 화자명 → 사용자 지정 색상
-                self.filepath   = None
-                self.save_path  = None
-                self.edited_row = None
-                self.player     = MediaPlayer()
-                self.media_path = None
-                self._seek_job  = None
-                self._last_focused_idx = None
-                self._selection_anchor = None   # Shift+방향키 다중선택 앵커
-                self._unsaved   = False
-                self._playing_rows: set = set()
-                self._ts_cache: list = []
-                self._last_polled_pos: float = -1.0
-                self._wf_zoom:   float = 1.0
-                self._wf_offset: float = 0.0
-                self._selected_rows: set = set()
-                self._undo_stack = []
-                self._redo_stack = []
-                self._clipboard  = None
-
-                self._build_styles()
-                self._build_ui()
-                self._setup_dnd()
-
-                self.bind("<Control-s>", lambda e: self.save_file())
-                self.bind("<Control-S>", lambda e: self.save_file_as())
-                self.bind("<Control-o>", lambda e: self.open_file())
-                self.bind("<space>",     self._on_space_key)
-                self.bind("<Left>",      self._on_left_key)
-                self.bind("<Right>",     self._on_right_key)
-                self.bind("<Control-z>", lambda e: self._undo())
-                self.bind("<Control-Z>", lambda e: self._redo())
-                self.bind("<Control-x>", self._on_cut)
-                self.bind("<Control-c>", self._on_copy)
-                self.bind("<Control-v>", self._on_paste)
-                self.bind("<Delete>",    self._on_delete)
-                self.bind("<Control-d>", self._on_delete)
-                self.bind("<Up>",        self._on_arrow_up)
-                self.bind("<Down>",      self._on_arrow_down)
-                self.bind("<Shift-Up>",  self._on_shift_arrow_up)
-                self.bind("<Shift-Down>", self._on_shift_arrow_down)
-                self.bind("<KeyPress-Shift_L>",
-                         lambda e: self._on_shift_key_change(e, pressed=True))
-                self.bind("<KeyPress-Shift_R>",
-                         lambda e: self._on_shift_key_change(e, pressed=True))
-                self.bind("<KeyRelease-Shift_L>",
-                         lambda e: self._on_shift_key_change(e, pressed=False))
-                self.bind("<KeyRelease-Shift_R>",
-                         lambda e: self._on_shift_key_change(e, pressed=False))
-                self.bind("<Prior>",     self._on_page_up)     # Page Up
-                self.bind("<Next>",      self._on_page_down)   # Page Down
-                self.bind("<grave>",     self._on_speaker_key)
-                for _k in "123456789":
-                    self.bind(_k, self._on_speaker_key)
-                self.bind("s", self._split_subtitle_shortcut)
-                self.bind("S", self._split_subtitle_shortcut)
-                try:
-                    self.bind("ㄴ", self._split_subtitle_shortcut)
-                except tk.TclError:
-                    pass
-                self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         app = SRTEditorDnD()
         app.mainloop()
