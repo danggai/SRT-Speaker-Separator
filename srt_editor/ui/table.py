@@ -642,6 +642,7 @@ class SubtitleTableMixin:
             if wi["_paint"].get("hidden", True):
                 self.canvas.itemconfigure(wi["tag"], state="normal")
                 wi["_paint"]["hidden"] = False
+                wi["_paint"]["pills"] = None   # 칸을 넘는 화자 버튼을 다시 숨기도록
             self._paint_slot(slot_idx, di, pos, cw)
 
     def _hide_slot(self, slot_idx):
@@ -653,6 +654,7 @@ class SubtitleTableMixin:
             self.canvas.itemconfigure(wi[key], state="hidden")
         wi["_ts_editing"] = wi["_txt_editing"] = False
         wi["_paint"]["hidden"] = True
+        wi["_paint"]["edit"] = ("hidden", "hidden")
 
     def _slot_colors(self, di):
         """자막 상태별 카드 색: (카드 배경, 테두리 색, 테두리 두께)."""
@@ -733,7 +735,6 @@ class SubtitleTableMixin:
         if wi["_paint"].get("bg") != bg:   # 바뀔 때만 위젯 설정
             wi["content"].configure(bg=bg, highlightbackground=bg)
             wi["_paint"]["bg"] = bg
-        wi["_paint"]["text"] = None   # 자막 글자는 배치 때 칸 폭에 맞춰 다시 자름
         self._update_slot_pills(slot_idx, sub, bg)
         self._apply_col_to_slot(slot_idx, pos, cw)
 
@@ -851,41 +852,57 @@ class SubtitleTableMixin:
         wi  = self._slot_widgets[slot_idx]
         c   = self.canvas
         t   = wi["tag"]
+        paint = wi["_paint"]
         top = slot_idx * self.ROW_H
         y0, y1 = top + self._CARD_Y, top + self.ROW_H - self._CARD_Y
         ch  = y1 - y0
         cy  = top + self.ROW_H / 2
-        x0  = pos["num"][0]
-        x1  = pos["speaker"][0] + pos["speaker"][1]
-        r   = self._CARD_R
-        c.coords(t + "card", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
-                 x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
-        for k, cid in enumerate(("time", "content", "speaker")):
-            x = pos[cid][0]
-            c.coords(f"{t}div{k}", x, y0 + 1, x, y1 - 1)
-        nx, nw = pos["num"]
-        c.coords(t + "num", nx + nw / 2, cy)
         tx, tw = pos["time"]
-        c.coords(t + "tlbl", tx + 11, cy)
-        bb = c.bbox(t + "tlbl")
-        c.coords(t + "dur", (bb[2] if bb else tx + 11) + 5, cy + 1)
-        self._layout_pills(slot_idx, pos)
         cx, cw_ = pos["content"]
         ew_txt = max(20, cw_ - 12)
-        c.coords(t + "txt", cx + 8, cy)
-        fit = (wi["txt_var"].get(), ew_txt - 6)
-        if wi["_paint"].get("text") != fit:   # 글자나 칸 폭이 바뀔 때만 다시 자름
-            c.itemconfigure(t + "txt", text=self._fit_text(*fit))
-            wi["_paint"]["text"] = fit
-        c.coords(wi["content_win"], cx + 6, y0 + 5)
-        c.itemconfigure(wi["content_win"], width=ew_txt, height=ch - 10,
-                        state="normal" if wi.get("_txt_editing") else "hidden")
         ew = self._TS_EDIT_W
-        c.coords(wi["ts_s_win"], tx + 4, y0 + 5)
-        c.coords(wi["ts_e_win"], tx + 8 + ew, y0 + 5)
-        st = "normal" if wi.get("_ts_editing") else "hidden"
-        for key in ("ts_s_win", "ts_e_win"):
-            c.itemconfigure(wi[key], width=ew, height=ch - 10, state=st)
+        geom = tuple(pos.values())
+        if paint.get("geom") != geom:   # 칸 위치가 바뀔 때만 카드·구분선·입력칸을 옮긴다
+            x0 = pos["num"][0]
+            x1 = pos["speaker"][0] + pos["speaker"][1]
+            r  = self._CARD_R
+            c.coords(t + "card", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
+                     x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
+            for k, cid in enumerate(("time", "content", "speaker")):
+                x = pos[cid][0]
+                c.coords(f"{t}div{k}", x, y0 + 1, x, y1 - 1)
+            nx, nw = pos["num"]
+            c.coords(t + "num", nx + nw / 2, cy)
+            c.coords(t + "tlbl", tx + 11, cy)
+            c.coords(t + "txt", cx + 8, cy)
+            c.coords(wi["content_win"], cx + 6, y0 + 5)
+            c.itemconfigure(wi["content_win"], width=ew_txt, height=ch - 10)
+            c.coords(wi["ts_s_win"], tx + 4, y0 + 5)
+            c.coords(wi["ts_e_win"], tx + 8 + ew, y0 + 5)
+            for key in ("ts_s_win", "ts_e_win"):
+                c.itemconfigure(wi[key], width=ew, height=ch - 10)
+            paint["geom"] = geom
+            paint["pills"] = paint["tlbl_w"] = None
+        tlbl = c.itemcget(t + "tlbl", "text")
+        if paint.get("tlbl_w") != len(tlbl):   # 시간 글자 길이가 바뀔 때만 길이 표시를 옮긴다
+            bb = c.bbox(t + "tlbl")
+            c.coords(t + "dur", (bb[2] if bb else tx + 11) + 5, cy + 1)
+            paint["tlbl_w"] = len(tlbl)
+        pills = (wi.get("_pill_n", 0), tuple(wi["pill_w"]))
+        if paint.get("pills") != pills:
+            self._layout_pills(slot_idx, pos)
+            paint["pills"] = pills
+        fit = (wi["txt_var"].get(), ew_txt - 6)
+        if paint.get("text") != fit:   # 글자나 칸 폭이 바뀔 때만 다시 자름
+            c.itemconfigure(t + "txt", text=self._fit_text(*fit))
+            paint["text"] = fit
+        txt_st = "normal" if wi.get("_txt_editing") else "hidden"
+        ts_st = "normal" if wi.get("_ts_editing") else "hidden"
+        if paint.get("edit") != (txt_st, ts_st):
+            c.itemconfigure(wi["content_win"], state=txt_st)
+            for key in ("ts_s_win", "ts_e_win"):
+                c.itemconfigure(wi[key], state=ts_st)
+            paint["edit"] = (txt_st, ts_st)
 
     # ── Canvas 크기 변경 ──────────────────────
 
