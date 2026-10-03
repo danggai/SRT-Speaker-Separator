@@ -1,5 +1,4 @@
 """SRTEditor 메인 창과 실행 진입점. 기능별 메서드는 ui/ 믹스인에 나뉘어 있다."""
-import os
 import re
 import tkinter as tk
 from tkinter import messagebox
@@ -485,31 +484,7 @@ class SRTEditor(
         """드롭된 파일 경로 처리"""
         raw = event.data.strip()
         paths = re.findall(r'\{([^}]+)\}|(\S+)', raw)
-        paths = [p[0] or p[1] for p in paths]
-
-        MEDIA_EXTS = {".mp3",".mp4",".wav",".m4a",".aac",
-                      ".ogg",".flac",".mkv",".avi",".mov",".webm"}
-        srt_paths   = [p for p in paths if p.lower().endswith(".srt")]
-        media_paths = [p for p in paths
-                       if os.path.splitext(p.lower())[1] in MEDIA_EXTS]
-
-        if srt_paths:
-            self._load_srt(srt_paths[0])
-            if media_paths:
-                self._load_media(media_paths[0])
-        elif media_paths:
-            # 미디어만 드롭 → 자막 자동 생성 여부 확인
-            mp = media_paths[0]
-            srt_candidate = os.path.splitext(mp)[0] + ".srt"
-            if os.path.isfile(srt_candidate):
-                # 동명 SRT 있으면 바로 로드
-                self._load_srt(srt_candidate)
-                self._load_media(mp)
-            else:
-                self._load_media(mp)
-                self._ask_auto_transcribe(mp)
-        elif not srt_paths and not media_paths and paths:
-            self._load_media(paths[0])
+        self._open_paths([p[0] or p[1] for p in paths])
 
 
     def _check_update_async(self):

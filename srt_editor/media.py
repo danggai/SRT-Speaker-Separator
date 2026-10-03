@@ -2,6 +2,11 @@
 import threading
 import time
 
+# 불러올 수 있는 음성/영상 확장자 (열기·드래그 앤 드롭·안내 문구 공용)
+MEDIA_EXTS = (".mp3", ".mp4", ".wav", ".m4a", ".aac",
+              ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm")
+MEDIA_PATTERN = " ".join("*" + e for e in MEDIA_EXTS)   # 파일 선택 창 필터용
+
 
 # ─────────────────────────────────────────────
 #  미디어 플레이어 (pygame.mixer 기반 — ffmpeg 불필요)

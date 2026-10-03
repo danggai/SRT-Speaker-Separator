@@ -6,6 +6,7 @@ from tkinter import filedialog
 from tkinter import messagebox
 
 from .. import srt_io
+from ..media import MEDIA_EXTS, MEDIA_PATTERN
 from ..srt_io import (
     DEFAULT_DISPLAY_PATTERN,
     display_to_regex,
@@ -70,28 +71,44 @@ class FileMixin:
         self._show_overlay()
 
     def open_file(self):
-        """자막(.srt) 또는 음성/영상 파일을 선택해 연다.
-        확장자를 보고 자동으로 자막 불러오기/미디어 불러오기로 분기한다."""
-        _media_exts = (".mp3", ".mp4", ".wav", ".m4a", ".aac",
-                       ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm")
+        """자막(.srt) 또는 음성/영상 파일을 선택해 연다 (드래그 앤 드롭과 같은 처리)."""
         path = filedialog.askopenfilename(
             title="자막(.srt) 또는 음성/영상 파일 선택",
             filetypes=[
-                ("자막 및 미디어 파일",
-                 "*.srt *.mp3 *.mp4 *.wav *.m4a *.aac *.ogg *.flac *.mkv *.avi *.mov *.webm"),
+                ("자막 및 미디어 파일", "*.srt " + MEDIA_PATTERN),
                 ("SRT 자막 파일", "*.srt"),
-                ("음성/영상 파일",
-                 "*.mp3 *.mp4 *.wav *.m4a *.aac *.ogg *.flac *.mkv *.avi *.mov *.webm"),
+                ("음성/영상 파일", MEDIA_PATTERN),
                 ("모든 파일", "*.*"),
             ],
             parent=self)
-        if not path:
-            return
-        ext = os.path.splitext(path)[1].lower()
-        if ext in _media_exts:
-            self._load_media(path)
-        else:
-            self._load_srt(path)
+        if path:
+            self._open_paths([path])
+
+    def _open_paths(self, paths):
+        """열기 버튼·드래그 앤 드롭 공용 처리.
+        - SRT: 자막을 연다 (같이 넘어온 미디어, 없으면 같은 이름의 미디어도 함께)
+        - 미디어만: 같은 이름의 SRT가 있으면 함께 열고, 없으면 자막 자동 생성을 묻는다
+        - 그 외 확장자: SRT로 열기를 시도한다"""
+        srt_paths   = [p for p in paths if p.lower().endswith(".srt")]
+        media_paths = [p for p in paths
+                       if os.path.splitext(p.lower())[1] in MEDIA_EXTS]
+
+        if srt_paths:
+            self._load_srt(srt_paths[0])
+            if media_paths:
+                self._load_media(media_paths[0])
+        elif media_paths:
+            mp = media_paths[0]
+            srt_candidate = os.path.splitext(mp)[0] + ".srt"
+            if os.path.isfile(srt_candidate):
+                # 동명 SRT 있으면 바로 로드
+                self._load_srt(srt_candidate)
+                self._load_media(mp)
+            else:
+                self._load_media(mp)
+                self._ask_auto_transcribe(mp)
+        elif paths:
+            self._load_srt(paths[0])
 
     def _load_srt(self, path):
         try:
@@ -135,9 +152,7 @@ class FileMixin:
     def _try_load_sibling_media(self, srt_path):
         """SRT와 같은 폴더, 같은 이름의 미디어 파일이 있으면 자동 로드"""
         base = os.path.splitext(srt_path)[0]
-        media_exts = [".mp3", ".mp4", ".wav", ".m4a", ".aac",
-                      ".ogg", ".flac", ".mkv", ".avi", ".mov", ".webm"]
-        for ext in media_exts:
+        for ext in MEDIA_EXTS:
             candidate = base + ext
             if os.path.isfile(candidate):
                 self._load_media(candidate)
@@ -148,7 +163,7 @@ class FileMixin:
         path = filedialog.askopenfilename(
             title="음성/영상 파일 선택",
             filetypes=[
-                ("미디어 파일", "*.mp3 *.mp4 *.wav *.m4a *.aac *.ogg *.flac *.mkv *.avi *.mov *.webm"),
+                ("미디어 파일", MEDIA_PATTERN),
                 ("모든 파일", "*.*")
             ],
             parent=self)
