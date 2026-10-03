@@ -5,6 +5,8 @@ import tkinter as tk
 
 _WM_IME_STARTCOMPOSITION = 0x010D
 _WM_IME_COMPOSITION = 0x010F
+_WM_IME_SETCONTEXT = 0x0281
+_ISC_SHOWUICOMPOSITIONWINDOW = 0x80000000
 _GWLP_WNDPROC = -4
 _CFS_POINT = 0x0002
 _OFFSCREEN = -32000
@@ -80,6 +82,8 @@ class ImeCompositionOverlay:
         holder = {}
 
         def proc(h, msg, wp, lp):
+            if msg == _WM_IME_SETCONTEXT and lp:
+                lp &= ~_ISC_SHOWUICOMPOSITIONWINDOW   # 입력기 기본 조합창 그리지 않음
             res = self._user32.CallWindowProcW(holder["orig"], h, msg, wp, lp)
             if msg in (_WM_IME_STARTCOMPOSITION, _WM_IME_COMPOSITION):
                 try:
@@ -167,6 +171,12 @@ class ImeCompositionOverlay:
         if not text:
             self._clear_preview()
             return
+        try:
+            hwnd = self._user32.GetFocus()
+            if hwnd:
+                self._push_ime_window_offscreen(hwnd)
+        except Exception:
+            pass
         if self._preview == (widget, text):
             return
         if self._preview is None:
