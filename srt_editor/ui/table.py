@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, ROW_HL
-from ..widgets import PopupMenu
+from ..widgets import PopupMenu, Tooltip
 
 
 class SubtitleTableMixin:
@@ -57,7 +57,7 @@ class SubtitleTableMixin:
         hdr_c.pack(fill="x")
         self._hdr_canvas = hdr_c
 
-        _titles = {"num": "#", "time": "시간 (선택 후 클릭: 편집)",
+        _titles = {"num": "#", "time": "시간",
                    "content": "자막 내용", "speaker": "화자"}
         self._hdr_wins = {}
         for cid in list(self._COL_IDS) + ["content"]:
@@ -67,6 +67,7 @@ class SubtitleTableMixin:
             win_id = hdr_c.create_window(0, 14, window=lbl, anchor="w",
                                          height=20, width=10)
             self._hdr_wins[cid] = (lbl, win_id)
+        Tooltip(self._hdr_wins["time"][0], "줄을 선택한 뒤 시간을 클릭하면 편집", delay=400)
 
         hdr_c.bind("<Configure>",      lambda e: self._layout_header())
         hdr_c.bind("<Motion>",         self._hdr_motion)
