@@ -6,10 +6,10 @@ from tkinter import ttk
 
 from .. import srt_io, theme
 from ..config import _load_config, _save_config
-from ..srt_io import DEFAULT_DISPLAY_PATTERN, display_to_regex
+from ..srt_io import display_to_regex
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FONT_MONO, _apply_dark_titlebar
 from ..version import APP_VERSION, GITHUB_LATEST_API
-from ..widgets import PurpleSlider
+from ..widgets import PurpleSlider, Segmented, ToggleSwitch, flat_button, rounded_rect_image
 
 
 class SettingsMixin:
@@ -88,84 +88,110 @@ class SettingsMixin:
             return outer, inner, footer
         return outer, inner
 
+    # ── 설정 창 공용 레이아웃 ─────────────────
+    def _settings_title(self, parent, title, desc=None):
+        """섹션 제목 (큼직한 글씨 + 한 줄 설명)."""
+        tk.Label(parent, text=title, bg=BG, fg=FG,
+                 font=(theme.FONT_FAMILY, 15, "bold")).pack(anchor="w", padx=32, pady=(26, 2))
+        if desc:
+            tk.Label(parent, text=desc, bg=BG, fg=FG_DIM,
+                     font=(theme.FONT_FAMILY, 9)).pack(anchor="w", padx=32)
+        tk.Frame(parent, bg=BG, height=10).pack()
+
+    def _settings_row(self, parent, title, desc=None):
+        """설정 한 줄: 왼쪽 제목·설명, 오른쪽 컨트롤 자리. (left, right) 반환."""
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", padx=32, pady=11)
+        right = tk.Frame(row, bg=BG)
+        right.pack(side="right", anchor="n", pady=(2, 0))
+        left = tk.Frame(row, bg=BG)
+        left.pack(side="left", fill="x", expand=True)
+        tk.Label(left, text=title, bg=BG, fg=FG,
+                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w")
+        if desc:
+            tk.Label(left, text=desc, bg=BG, fg=FG_DIM, justify="left",
+                     font=(theme.FONT_FAMILY, 9)).pack(anchor="w", pady=(3, 0))
+        return left, right
+
     def _open_settings(self, tab_idx=0):
-        """설정 창 (탭: 자동 자막 / 모델 관리 / 화자 구분 패턴)"""
+        """설정 창 (왼쪽 메뉴: 자동 자막 / 모델 관리 / 화자 표시 형식)."""
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()
         win.title("설정")
         win.configure(bg=BG)
-        win.geometry("580x540")
-        win.minsize(500, 380)
-        win.resizable(True, True)
+        win.geometry("780x580")
+        win.minsize(660, 460)
         win.transient(self)
-        win.grab_set()
 
         def _on_settings_close():
             self._save_diarize_settings()
             win.destroy()
         win.protocol("WM_DELETE_WINDOW", _on_settings_close)
 
-        # ── 커스텀 탭바 (플랫 디자인: 점 표시 + 강조색, ttk.Notebook 대체) ──
-        tab_bar = tk.Frame(win, bg=BG)
-        tab_bar.pack(fill="x", side="top")
-        tk.Frame(win, bg=BORDER, height=1).pack(fill="x", side="top")
+        # ── 왼쪽 메뉴 ─────────────────────────
+        nav = tk.Frame(win, bg=BG2, width=196)
+        nav.pack(side="left", fill="y")
+        nav.pack_propagate(False)
+        tk.Frame(win, bg=BORDER, width=1).pack(side="left", fill="y")
+        tk.Label(nav, text="설정", bg=BG2, fg=FG,
+                 font=(theme.FONT_FAMILY, 15, "bold")).pack(anchor="w", padx=20, pady=(22, 16))
 
-        _tabs = []
+        content_host = tk.Frame(win, bg=BG)
+        content_host.pack(side="left", fill="both", expand=True)
+
+        _items = []
         _active = {"idx": -1}
 
-        def _select_tab(idx):
+        def _paint_item(i, hover=False):
+            it = _items[i]
+            sel = i == _active["idx"]
+            fill = BG3 if sel else ("#202026" if hover else BG2)
+            it["cv"].itemconfigure("bg", image=rounded_rect_image(it["w"], it["h"], 8, fill))
+            it["cv"].itemconfigure("label", fill=FG if sel else FG_DIM,
+                                   font=(theme.FONT_FAMILY, 10, "bold" if sel else "normal"))
+
+        def _select(idx):
             if idx == _active["idx"]:
                 return
-            for i, t in enumerate(_tabs):
-                active = (i == idx)
-                if active:
-                    t["outer"].pack(in_=content_host, fill="both", expand=True)
-                else:
-                    t["outer"].pack_forget()
-                t["label"].configure(
-                    fg=FG if active else FG_DIM,
-                    font=(theme.FONT_FAMILY, 10, "bold" if active else "normal"))
-                t["underline"].configure(bg=ACCENT if active else BG)
             _active["idx"] = idx
+            for i, it in enumerate(_items):
+                if i == idx:
+                    it["outer"].pack(in_=content_host, fill="both", expand=True)
+                else:
+                    it["outer"].pack_forget()
+                _paint_item(i)
 
-        def _add_tab(title, outer):
-            idx = len(_tabs)
-            cell = tk.Frame(tab_bar, bg=BG, cursor="hand2")
-            cell.pack(side="left", padx=(18 if idx == 0 else 16, 0))
-            lbl = tk.Label(cell, text=title, bg=BG, fg=FG_DIM,
-                          font=(theme.FONT_FAMILY, 10), cursor="hand2")
-            lbl.pack(side="top", pady=(11, 8))
-            underline = tk.Frame(cell, bg=BG, height=3)
-            underline.pack(side="top", fill="x")
-            for w in (cell, lbl, underline):
-                w.bind("<Button-1>", lambda e, i=idx: _select_tab(i))
-            _tabs.append({"outer": outer, "label": lbl, "underline": underline})
-            return idx
+        def _add_section(title, outer):
+            idx = len(_items)
+            w, h = 172, 38
+            cv = tk.Canvas(nav, width=w, height=h, bg=BG2, highlightthickness=0, cursor="hand2")
+            cv.pack(padx=12, pady=1)
+            cv.create_image(0, 0, anchor="nw", tags="bg")
+            cv.create_text(16, h / 2, text=title, anchor="w", tags="label")
+            cv.bind("<Button-1>", lambda e, i=idx: _select(i))
+            cv.bind("<Enter>", lambda e, i=idx: _paint_item(i, True))
+            cv.bind("<Leave>", lambda e, i=idx: _paint_item(i))
+            _items.append({"outer": outer, "cv": cv, "w": w, "h": h})
+            _paint_item(idx)
 
-        # ── 하단 버전 정보 (content_host보다 먼저 pack해야 가려지지 않음)
-        _ver_frame = tk.Frame(win, bg=BG2)
-        _ver_frame.pack(fill="x", side="bottom")
-        tk.Frame(_ver_frame, bg=BORDER, height=1).pack(fill="x")
-        _ver_row = tk.Frame(_ver_frame, bg=BG2)
-        _ver_row.pack(fill="x", padx=16, pady=6)
-        tk.Label(_ver_row, text=f"현재 버전: v{APP_VERSION}",
-                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8)).pack(side="left")
-        self._settings_latest_lbl = tk.Label(_ver_row, text="최신 버전: 확인 중...",
-                 bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
-        self._settings_latest_lbl.pack(side="left", padx=(16, 0))
-
+        # ── 메뉴 아래 버전 정보 ───────────────
+        ver = tk.Frame(nav, bg=BG2)
+        ver.pack(side="bottom", fill="x", padx=20, pady=16)
+        tk.Label(ver, text=f"현재 버전  v{APP_VERSION}", bg=BG2, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 8)).pack(anchor="w")
+        self._settings_latest_lbl = tk.Label(ver, text="최신 버전  확인 중…", bg=BG2,
+                                             fg="#5A5A66", font=(theme.FONT_FAMILY, 8))
+        self._settings_latest_lbl.pack(anchor="w", pady=(2, 6))
         import webbrowser as _wb
-        _gh_lbl = tk.Label(_ver_row, text="🔗 GitHub",
-                           bg=BG2, fg="#4A90E2",
-                           font=(theme.FONT_FAMILY, 8, "underline"),
-                           cursor="hand2")
-        _gh_lbl.pack(side="right")
+        _gh_lbl = tk.Label(ver, text="GitHub", bg=BG2, fg="#6A8FC8", cursor="hand2",
+                           font=(theme.FONT_FAMILY, 8, "underline"))
+        _gh_lbl.pack(anchor="w")
         _gh_lbl.bind("<Button-1>",
                      lambda e: _wb.open("https://github.com/danggai/SRT-Speaker-Separator"))
 
         def _update_latest_lbl(v):
             try:
-                self._settings_latest_lbl.configure(text=f"최신 버전: v{v}")
+                self._settings_latest_lbl.configure(text=f"최신 버전  v{v}")
             except Exception:
                 pass
 
@@ -198,220 +224,194 @@ class SettingsMixin:
                 self.after(0, lambda: _update_latest_lbl("확인 실패"))
             threading.Thread(target=_fetch_for_settings, daemon=True).start()
 
-        content_host = tk.Frame(win, bg=BG)
-        content_host.pack(fill="both", expand=True)
+        # ── 섹션 ──────────────────────────────
+        outer, inner = self._make_scrollable(content_host)
+        _add_section("자동 자막", outer)
+        self._build_transcribe_settings_tab(inner)
 
-        # ── 탭 1: 자동 자막 ────────────────────
-        tab2_outer, tab2 = self._make_scrollable(content_host)
-        _add_tab("자동 자막", tab2_outer)
-        self._build_transcribe_settings_tab(tab2)
+        outer, inner = self._make_scrollable(content_host)
+        _add_section("모델 관리", outer)
+        self._build_model_mgmt_tab(inner)
 
-        # ── 탭 2: 모델 관리 ────────────────────
-        tab3_outer, tab3 = self._make_scrollable(content_host)
-        _add_tab("모델 관리", tab3_outer)
-        self._build_model_mgmt_tab(tab3)
+        outer, inner = self._make_scrollable(content_host)
+        _add_section("화자 표시 형식", outer)
+        self._build_pattern_tab(inner)
 
-        # ── 탭 3: 화자 구분 패턴 ──────────────────
-        tab1_outer, tab1, tab1_footer = self._make_scrollable(content_host, with_footer=True)
-        _add_tab("화자 구분 패턴", tab1_outer)
+        _select(tab_idx if 0 <= tab_idx < len(_items) else 0)
 
-        tk.Label(tab1, text="화자 구분 패턴", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
-        tk.Label(tab1,
-                 text="% = 현재 화자명,  & = 자막 내용\n"
-                      "예시:  [%] &  →  [Alice] 안녕하세요\n"
-                      "예시:  (%): &  →  (Bob): 반갑습니다",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9),
-                 justify="left").pack(anchor="w", padx=20, pady=(0, 6))
-
-        pat_var = tk.StringVar(value=srt_io.g_display_pattern)
-        pat_entry = tk.Entry(tab1, textvariable=pat_var, width=52,
-                             bg=BG3, fg=ACCENT, insertbackground=FG,
-                             font=(FONT_MONO, 10), relief="flat",
-                             highlightthickness=1, highlightbackground=BORDER,
-                             highlightcolor=ACCENT)
-        pat_entry.pack(fill="x", padx=20, ipady=4)
-
-        preview_lbl = tk.Label(tab1, text="", bg=BG, fg=FG_DIM,
-                               font=(FONT_MONO, 8), wraplength=500, justify="left")
-        preview_lbl.pack(anchor="w", padx=20, pady=(3, 0))
-        info_lbl = tk.Label(tab1, text="", bg=BG, fg="#FF6B8A",
-                            font=(theme.FONT_FAMILY, 9))
-        info_lbl.pack(anchor="w", padx=20, pady=(2, 0))
-
-        def update_preview(*_):
-            dp = pat_var.get().strip()
-            try:
-                rx = display_to_regex(dp)
-                re.compile(rx)
-                preview_lbl.configure(text=f"정규식: {rx}", fg=FG_DIM)
-                info_lbl.configure(text="")
-            except Exception as err:
-                preview_lbl.configure(text="")
-                info_lbl.configure(text=f"❌ {err}", fg="#FF6B8A")
-
-        pat_var.trace_add("write", update_preview)
-        update_preview()
-
-        def on_apply():
-            dp = pat_var.get().strip()
-            try:
-                rx = display_to_regex(dp)
-                re.compile(rx)
-            except Exception as err:
-                info_lbl.configure(text=f"❌ {err}", fg="#FF6B8A")
-                return
-            srt_io.g_speaker_pattern = rx
-            srt_io.g_display_pattern = dp
-            info_lbl.configure(text="✔ 적용되었습니다.", fg=ACCENT)
-            win.after(1200, win.destroy)
-
-        btn_row = tk.Frame(tab1_footer, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(10, 10))
-        tk.Button(btn_row, text="기본값",
-                  bg="#2A2A2A", fg=FG_DIM, relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 10), padx=10, pady=5,
-                  activebackground="#333333",
-                  command=lambda: pat_var.set(DEFAULT_DISPLAY_PATTERN)
-                  ).pack(side="left")
-        tk.Button(btn_row, text="적용",
-                  bg=ACCENT, fg="white", relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=5,
-                  activebackground="#7B5FB4", command=on_apply).pack(side="right")
-        tk.Button(btn_row, text="취소",
-                  bg="#2A2A2A", fg=FG, relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 10), padx=12, pady=5,
-                  activebackground="#333333",
-                  command=win.destroy).pack(side="right", padx=(0, 8))
-
-        _select_tab(tab_idx if 0 <= tab_idx < len(_tabs) else 0)
-
+        # 위치를 잡은 뒤 표시 (흰 창 번쩍임 방지)
+        win.update_idletasks()
+        x = self.winfo_rootx() + (self.winfo_width() - win.winfo_reqwidth()) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - win.winfo_reqheight()) // 3
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        try:
+            win.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+        win.deiconify()
+        _apply_dark_titlebar(win)
+        win.after(40, lambda: win.winfo_exists() and win.attributes("-alpha", 1.0))
+        win.grab_set()
 
     def _build_transcribe_settings_tab(self, parent):
-        """자동 자막 생성 설정 탭."""
-        tk.Label(parent, text="자동 자막 설정", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
-        tk.Label(parent,
-                 text="미디어 파일 드래그 시 자동 자막 생성에 사용되는 설정입니다.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(anchor="w", padx=20, pady=(0, 14))
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(0, 14))
+        """자동 자막 설정."""
+        self._settings_title(parent, "자동 자막", "음성·영상에서 자막을 만들 때 쓰는 설정이에요.")
 
-        # 문장 당 글자 수 제한 (슬라이더 + 직접 입력, 10~50, 기본 25)
-        row1 = tk.Frame(parent, bg=BG)
-        row1.pack(fill="x", padx=20, pady=(0, 4))
-        tk.Label(row1, text="문장 당 글자 수 제한", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        # 한 줄 최대 글자 수 (슬라이더 + 직접 입력, 10~50)
+        left, right = self._settings_row(parent, "한 줄 최대 글자 수",
+                                         "자막 한 줄에 넣을 글자 수예요.")
         if not hasattr(self, "_transcribe_max_chars_var"):
             self._transcribe_max_chars_var = tk.IntVar(
                 value=getattr(self, "_transcribe_max_chars", 25))
         _CHARS_MIN, _CHARS_MAX = 10, 50
-        tk.Label(row1, text="자", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9)).pack(side="right")
+        tk.Label(right, text="자", bg=BG, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 10)).pack(side="right", padx=(4, 0))
         _chars_entry_var = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
-        _chars_entry = tk.Entry(row1, textvariable=_chars_entry_var, width=4,
-                                 bg=BG3, fg=FG, insertbackground=FG, justify="center",
-                                 relief="flat", highlightthickness=1,
-                                 highlightbackground=BORDER, highlightcolor=ACCENT,
-                                 font=(theme.FONT_FAMILY, 9))
-        _chars_entry.pack(side="right", padx=(0, 2))
+        _chars_entry = tk.Entry(right, textvariable=_chars_entry_var, width=4,
+                                bg=BG3, fg=FG, insertbackground=FG, justify="center",
+                                relief="flat", highlightthickness=1,
+                                highlightbackground=BORDER, highlightcolor=ACCENT,
+                                font=(theme.FONT_FAMILY, 11))
+        _chars_entry.pack(side="right", ipady=3)
+
         def _on_chars_change(*_):
             try:
                 v = int(self._transcribe_max_chars_var.get())
                 self._transcribe_max_chars = v
                 _chars_entry_var.set(str(v))
                 cfg = _load_config(); cfg["transcribe_max_chars"] = v; _save_config(cfg)
-            except Exception: pass
+            except Exception:
+                pass
+
         def _chars_slider_cmd(v):
             self._transcribe_max_chars_var.set(int(v))
-            _on_chars_change()
-        _chars_slider = PurpleSlider(parent, from_=_CHARS_MIN, to=_CHARS_MAX,
-                     value=self._transcribe_max_chars_var.get(),
-                     width=340, command=_chars_slider_cmd, bg=BG)
-        _chars_slider.pack(padx=20, anchor="w", pady=(2, 14))
+
+        _chars_slider = PurpleSlider(left, from_=_CHARS_MIN, to=_CHARS_MAX,
+                                     value=self._transcribe_max_chars_var.get(),
+                                     width=300, command=_chars_slider_cmd, bg=BG)
+        _chars_slider.pack(anchor="w", pady=(10, 0))
         self._transcribe_max_chars_var.trace_add("write", _on_chars_change)
+
         def _chars_entry_commit(*_):
             try:
                 v = int(_chars_entry_var.get())
             except Exception:
                 v = self._transcribe_max_chars_var.get()
             v = max(_CHARS_MIN, min(_CHARS_MAX, v))
-            self._transcribe_max_chars_var.set(v)   # trace가 _on_chars_change 호출
+            self._transcribe_max_chars_var.set(v)
             _chars_slider.set(v, fire=False)
-        _chars_entry.bind("<Return>",   _chars_entry_commit)
+        _chars_entry.bind("<Return>", _chars_entry_commit)
         _chars_entry.bind("<FocusOut>", _chars_entry_commit)
 
         # 문장 끝 마침표
-        row2 = tk.Frame(parent, bg=BG)
-        row2.pack(fill="x", padx=20, pady=(0, 12))
-        tk.Label(row2, text="\ubb38\uc7a5 \ub05d \ub9c8\uce68\ud45c \ucd94\uac00", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        _, right = self._settings_row(parent, "문장 끝 마침표", "자막 끝에 마침표를 붙여요.")
         if not hasattr(self, "_transcribe_period_var"):
             self._transcribe_period_var = tk.BooleanVar(
                 value=getattr(self, "_transcribe_period", False))
+
         def _save_period():
             v = self._transcribe_period_var.get()
             self._transcribe_period = v
             cfg = _load_config(); cfg["transcribe_period"] = v; _save_config(cfg)
-        tk.Checkbutton(row2, variable=self._transcribe_period_var,
-                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                       font=(theme.FONT_FAMILY, 9), cursor="hand2",
-                       text="\ud65c\uc131\ud654",
-                       command=_save_period).pack(side="left")
+        ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
 
         # 인식 언어
-        row_lang = tk.Frame(parent, bg=BG)
-        row_lang.pack(fill="x", padx=20, pady=(0, 12))
-        tk.Label(row_lang, text="인식 언어", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        _, right = self._settings_row(parent, "인식 언어",
+                                      "한국어 영상이면 '한국어'가 더 정확해요.")
         _lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
+
         def _save_lang():
             self._transcribe_language = _lang_var.get()
             cfg = _load_config(); cfg["transcribe_language"] = _lang_var.get(); _save_config(cfg)
-        for _txt, _val in [("한국어 고정 (권장)", "ko"), ("자동 감지", "auto")]:
-            tk.Radiobutton(row_lang, text=_txt, value=_val, variable=_lang_var,
-                           command=_save_lang,
-                           bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                           font=(theme.FONT_FAMILY, 9), cursor="hand2").pack(side="left", padx=(0, 10))
+        Segmented(right, [("한국어", "ko"), ("자동 감지", "auto")], _lang_var, _save_lang).pack()
 
-        # 자동 맞춤법 검사 (UI만)
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(4, 14))
-        row3 = tk.Frame(parent, bg=BG)
-        row3.pack(fill="x", padx=20, pady=(0, 4))
-        tk.Label(row3, text="\uc790\ub3d9 \ub9de\ucda4\ubc95 \uac80\uc0ac", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        # 맞춤법 자동 교정
+        _, right = self._settings_row(parent, "맞춤법 자동 교정",
+                                      "네이버 맞춤법 검사기로 고쳐요. 인터넷이 필요해요.")
         if not hasattr(self, "_transcribe_spellcheck_var"):
-            self._transcribe_spellcheck_var = tk.BooleanVar(value=False)
+            self._transcribe_spellcheck_var = tk.BooleanVar(
+                value=getattr(self, "_transcribe_spellcheck", False))
+
         def _save_spellcheck():
             v = self._transcribe_spellcheck_var.get()
             self._transcribe_spellcheck = v
             cfg = _load_config(); cfg["transcribe_spellcheck"] = v; _save_config(cfg)
-        tk.Checkbutton(row3, variable=self._transcribe_spellcheck_var,
-                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
-                       font=(theme.FONT_FAMILY, 9), cursor="hand2",
-                       text="\ud65c\uc131\ud654  (\ub124\uc774\ubc84 \ub9de\ucda4\ubc95 \uac80\uc0ac\uae30 \uc0ac\uc6a9)",
-                       command=_save_spellcheck).pack(side="left")
-        tk.Label(row3, text="\u26a0\ufe0f  \uc778\ud130\ub137 \uc5f0\uacb0 \ud544\uc694 / \uc790\ub9c9 \uc0dd\uc131 \uc2dc\uc5d0\ub9cc \uc801\uc6a9",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8)).pack(side="left", padx=(8, 0))
+        ToggleSwitch(right, self._transcribe_spellcheck_var, _save_spellcheck).pack()
 
-        # 고유명사 사전 (인식 가중치)
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(10, 10))
-        self._build_proper_noun_section(parent)
+        # 고유명사 사전
+        self._ensure_proper_nouns_init()
+        _, right = self._settings_row(parent, "고유명사 사전",
+                                      "자주 나오는 이름·용어를 등록하면 더 잘 알아들어요.")
+        btn = flat_button(right, "", lambda: self._open_proper_noun_manager(on_close=_refresh_pn),
+                          bg=BG3, hover="#33333C", font=(theme.FONT_FAMILY, 9), padx=14, pady=6)
+        btn.pack()
+
+        def _refresh_pn():
+            btn.configure(text=f"{len(self._proper_nouns or [])}개  ·  관리")
+        _refresh_pn()
+
+    def _build_pattern_tab(self, parent):
+        """화자 표시 형식 (SRT에 화자 이름을 적는 방식)."""
+        self._settings_title(parent, "화자 표시 형식", "SRT 파일에 화자 이름을 어떻게 적을지 정해요.")
+
+        presets = [("[화자] 대사", "[%] &"), ("(화자) 대사", "(%) &"), ("화자: 대사", "%: &")]
+        cur = srt_io.g_display_pattern
+        mode = tk.StringVar(value=cur if cur in [v for _, v in presets] else "custom")
+        custom_var = tk.StringVar(value=cur)
+
+        _, right = self._settings_row(parent, "형식", None)
+        Segmented(right, presets + [("직접 입력", "custom")], mode, lambda: _apply()).pack()
+
+        custom = tk.Frame(parent, bg=BG)
+        tk.Label(custom, text="화자 이름 자리에 %, 대사 자리에 & 를 넣어 주세요.",
+                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(anchor="w")
+        entry = tk.Entry(custom, textvariable=custom_var, bg=BG3, fg=FG, insertbackground=FG,
+                         font=(FONT_MONO, 11), relief="flat", highlightthickness=1,
+                         highlightbackground=BORDER, highlightcolor=ACCENT)
+        entry.pack(fill="x", ipady=5, pady=(6, 0))
+
+        preview = tk.Frame(parent, bg=BG2, highlightthickness=1, highlightbackground=BORDER)
+        preview.pack(fill="x", padx=32, pady=(14, 0))
+        tk.Label(preview, text="미리보기", bg=BG2, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 8)).pack(anchor="w", padx=14, pady=(10, 2))
+        preview_lbl = tk.Label(preview, text="", bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 12))
+        preview_lbl.pack(anchor="w", padx=14, pady=(0, 12))
+
+        def _apply(*_):
+            if mode.get() == "custom":
+                custom.pack(fill="x", padx=32, pady=(0, 4), before=preview)
+                dp = custom_var.get().strip()
+            else:
+                custom.pack_forget()
+                dp = mode.get()
+            if "%" not in dp or "&" not in dp:
+                preview_lbl.configure(text="% 와 & 가 모두 있어야 해요", fg="#FF6B8A")
+                return
+            try:
+                rx = display_to_regex(dp)
+                re.compile(rx)
+            except Exception:
+                preview_lbl.configure(text="이 형식은 쓸 수 없어요", fg="#FF6B8A")
+                return
+            srt_io.g_speaker_pattern = rx
+            srt_io.g_display_pattern = dp
+            preview_lbl.configure(text=dp.replace("%", "민지").replace("&", "안녕하세요"), fg=FG)
+
+        custom_var.trace_add("write", _apply)
+        _apply()
 
     def _build_model_mgmt_tab(self, parent):
         """다운로드된 모델 캐시 관리 탭."""
         import pathlib, os, shutil
 
-        tk.Label(parent, text="다운로드된 모델", bg=BG, fg=FG,
-                 font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=20, pady=(18, 2))
-        tk.Label(parent,
-                 text="WhisperX / pyannote 모델 캐시를 확인하고 삭제할 수 있습니다.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9), justify="left"
-                 ).pack(anchor="w", padx=20, pady=(0, 10))
+        self._settings_title(parent, "모델 관리",
+                             "내려받은 음성 인식·화자 분석 모델이에요. 안 쓰는 모델은 지워서 공간을 확보하세요.")
 
         # 목록 영역
-        list_frame = tk.Frame(parent, bg=BG2,
+        list_frame = tk.Frame(parent, bg=BG2, height=300,
                               highlightthickness=1, highlightbackground=BORDER)
-        list_frame.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+        list_frame.pack(fill="x", padx=32, pady=(0, 10))
+        list_frame.pack_propagate(False)
 
         # 스크롤 가능한 내부 캔버스
         _canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0)
@@ -481,35 +481,35 @@ class SettingsMixin:
             # 헤더
             hdr = tk.Frame(_inner, bg=BG3)
             hdr.pack(fill="x")
-            tk.Label(hdr, text="  모델명", bg=BG3, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 8), anchor="w").pack(side="left", fill="x", expand=True)
-            tk.Label(hdr, text="용량  ", bg=BG3, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 8), anchor="e", width=10).pack(side="right")
+            tk.Label(hdr, text="  모델", bg=BG3, fg=FG_DIM, pady=6,
+                     font=(theme.FONT_FAMILY, 9), anchor="w").pack(side="left", fill="x", expand=True)
+            tk.Label(hdr, text="용량  ", bg=BG3, fg=FG_DIM, pady=6,
+                     font=(theme.FONT_FAMILY, 9), anchor="e", width=10).pack(side="right")
 
             total_sz = 0
             for kind, path, label, sz in models:
                 total_sz += sz
                 row = tk.Frame(_inner, bg=BG2)
-                row.pack(fill="x", pady=1)
+                row.pack(fill="x", pady=3)
                 var = tk.BooleanVar(value=False)
                 _chk_vars[str(path)] = (var, kind, path)
                 tk.Checkbutton(row, variable=var, bg=BG2, fg=FG,
                                selectcolor=BG3, activebackground=BG2,
                                cursor="hand2").pack(side="left", padx=(6, 0))
                 tk.Label(row, text=label, bg=BG2, fg=FG,
-                         font=(FONT_MONO, 8), anchor="w"
+                         font=(FONT_MONO, 9), anchor="w"
                          ).pack(side="left", fill="x", expand=True, padx=4)
                 tk.Label(row, text=_fmt_size(sz), bg=BG2, fg=FG_DIM,
-                         font=(theme.FONT_FAMILY, 8), width=10, anchor="e"
+                         font=(theme.FONT_FAMILY, 9), width=10, anchor="e"
                          ).pack(side="right", padx=(0, 8))
 
             # 합계
             foot = tk.Frame(_inner, bg=BG3)
             foot.pack(fill="x", pady=(2, 0))
-            tk.Label(foot, text="  전체", bg=BG3, fg=FG_DIM,
-                     font=(theme.FONT_FAMILY, 8), anchor="w").pack(side="left", fill="x", expand=True)
-            tk.Label(foot, text=f"{_fmt_size(total_sz)}  ", bg=BG3, fg=FG,
-                     font=(theme.FONT_FAMILY, 8, "bold"), width=10, anchor="e").pack(side="right")
+            tk.Label(foot, text="  전체", bg=BG3, fg=FG_DIM, pady=6,
+                     font=(theme.FONT_FAMILY, 9), anchor="w").pack(side="left", fill="x", expand=True)
+            tk.Label(foot, text=f"{_fmt_size(total_sz)}  ", bg=BG3, fg=FG, pady=6,
+                     font=(theme.FONT_FAMILY, 9, "bold"), width=10, anchor="e").pack(side="right")
 
             _del_btn.configure(state="normal")
 
@@ -541,17 +541,11 @@ class SettingsMixin:
 
         # 하단 버튼
         btn_row = tk.Frame(parent, bg=BG)
-        btn_row.pack(fill="x", padx=20, pady=(0, 16))
-        tk.Button(btn_row, text="↻  새로고침",
-                  bg=BG3, fg=FG, relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9), padx=10, pady=5,
-                  activebackground="#333333",
-                  command=_refresh).pack(side="left")
-        _del_btn = tk.Button(btn_row, text="🗑  선택 삭제",
-                  bg="#6B2F2F", fg="white", relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9), padx=10, pady=5,
-                  activebackground="#8B3F3F",
-                  command=_delete_selected)
+        btn_row.pack(fill="x", padx=32, pady=(0, 20))
+        flat_button(btn_row, "↻  새로고침", _refresh, bg=BG3, hover="#33333C",
+                    padx=14, pady=6).pack(side="left")
+        _del_btn = flat_button(btn_row, "선택 삭제", _delete_selected, bg="#5A2A2E",
+                               fg="#FFD8D8", hover="#6E3438", padx=14, pady=6)
         _del_btn.pack(side="left", padx=(8, 0))
 
         _refresh()

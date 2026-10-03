@@ -893,3 +893,78 @@ def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10,
     """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
     return FlatButton(parent, text, command, bg, fg=fg, hover=hover, font=font,
                       padx=padx, pady=pady)
+
+
+def _circle_image(d, color):
+    """안티앨리어싱된 원 이미지 (캐시)."""
+    from PIL import Image, ImageDraw, ImageTk
+    key = ("circle", d, color)
+    if key not in _IMG_CACHE:
+        im = Image.new("RGBA", (d * _SS, d * _SS), (0, 0, 0, 0))
+        ImageDraw.Draw(im).ellipse([0, 0, d * _SS - 1, d * _SS - 1], fill=_hex_rgba(color))
+        _IMG_CACHE[key] = ImageTk.PhotoImage(im.resize((d, d), Image.LANCZOS))
+    return _IMG_CACHE[key]
+
+
+class ToggleSwitch(tk.Canvas):
+    """켜기/끄기 스위치 (BooleanVar 연동)."""
+
+    W, H = 40, 22
+
+    def __init__(self, parent, variable, command=None):
+        super().__init__(parent, width=self.W, height=self.H, bg=parent.cget("bg"),
+                         highlightthickness=0, cursor="hand2")
+        self._var, self._cmd = variable, command
+        self.create_image(0, 0, anchor="nw", tags="track")
+        self.create_image(0, 0, anchor="center", tags="knob")
+        self.bind("<Button-1>", self._toggle)
+        variable.trace_add("write", lambda *_: self._paint())
+        self._paint()
+
+    def _toggle(self, e=None):
+        self._var.set(not self._var.get())
+        if self._cmd:
+            self._cmd()
+
+    def _paint(self):
+        on = bool(self._var.get())
+        self.itemconfigure("track", image=rounded_rect_image(
+            self.W, self.H, self.H // 2, ACCENT if on else "#3A3A44"))
+        k = self.H - 6
+        self.coords("knob", self.W - 3 - k / 2 if on else 3 + k / 2, self.H / 2)
+        self.itemconfigure("knob", image=_circle_image(k, "#FFFFFF"))
+
+
+class Segmented(tk.Frame):
+    """여러 값 중 하나를 고르는 버튼 묶음 (StringVar 연동)."""
+
+    def __init__(self, parent, options, variable, command=None):
+        super().__init__(parent, bg=parent.cget("bg"))
+        self._var, self._cmd, self._btns = variable, command, []
+        import tkinter.font as tkfont
+        font = tkfont.Font(self, family=theme.FONT_FAMILY, size=9)
+        for label, value in options:
+            w, h = font.measure(label) + 24, font.metrics("linespace") + 12
+            cv = tk.Canvas(self, width=w, height=h, bg=self.cget("bg"),
+                           highlightthickness=0, cursor="hand2")
+            cv.pack(side="left", padx=(0, 4))
+            cv.create_image(0, 0, anchor="nw", tags="bg")
+            cv.create_text(w / 2, h / 2, text=label, font=font, tags="label")
+            cv.bind("<Button-1>", lambda e, v=value: self._select(v))
+            self._btns.append((cv, value, w, h))
+        variable.trace_add("write", lambda *_: self._paint())
+        self._paint()
+
+    def _select(self, value):
+        self._var.set(value)
+        if self._cmd:
+            self._cmd()
+
+    def _paint(self):
+        cur = self._var.get()
+        for cv, value, w, h in self._btns:
+            sel = value == cur
+            cv.itemconfigure("bg", image=rounded_rect_image(
+                w, h, theme.ON_RADIUS, theme.ON_BG if sel else BG3,
+                theme.ON_BORDER if sel else None))
+            cv.itemconfigure("label", fill=theme.ON_FG if sel else FG_DIM)

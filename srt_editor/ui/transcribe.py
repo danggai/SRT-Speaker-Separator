@@ -919,11 +919,8 @@ class TranscribeMixin:
 
         tk.Label(win, text="고유명사 사전", bg=BG, fg=FG,
                  font=(theme.FONT_FAMILY, 11, "bold")).pack(anchor="w", padx=16, pady=(14, 2))
-        tk.Label(win,
-                 text="자주 등장하는 이름·지명·전문용어를 직접 등록하면 다음\n"
-                      "자막 생성부터 인식 가중치가 높아집니다. 자동으로 추가되는\n"
-                      "단어는 없으며, 여기서 등록/삭제한 목록만 반영됩니다.",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), justify="left"
+        tk.Label(win, text="등록한 단어는 자동 자막에서 더 잘 알아들어요.",
+                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)
                  ).pack(anchor="w", padx=16, pady=(0, 8))
 
         list_frame = tk.Frame(win, bg=BG)
@@ -1036,10 +1033,7 @@ class TranscribeMixin:
                   activebackground="#333333",
                   command=lambda: self._open_proper_noun_manager(on_close=_refresh_count)
                   ).pack(side="right")
-        tk.Label(parent,
-                 text="  자주 나오는 이름·지명·전문용어를 직접 등록하면 자동 자막\n"
-                      "  생성 시 인식 가중치가 항상 반영됩니다. (자동으로 추가되지\n"
-                      "  않으며, 등록/삭제는 아래 '사전 관리'에서 직접 합니다)",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), justify="left", anchor="w"
+        tk.Label(parent, text="  자주 나오는 이름·용어를 등록하면 더 잘 알아들어요.",
+                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8), anchor="w"
                  ).pack(fill="x", padx=20, pady=(0, 6))
         return pn_frame
