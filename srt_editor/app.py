@@ -317,7 +317,7 @@ class SRTEditor(
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
         _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
         _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
-        _tool("⌂", "닫기", self._close_to_home, "파일 닫고 처음 화면으로")
+        _tool("📤", "내보내기", self.export, "화자별 자막 내보내기")
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
         _tool("↪", "다시 실행", self._redo, "다시 실행  [Ctrl+Y]")
@@ -325,7 +325,7 @@ class SRTEditor(
         _tool("🎙", "화자 분석", self._open_diarize_dialog, "화자 자동 분석")
         _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
         _sep()
-        _tool("📤", "내보내기", self.export, "화자별 자막 내보내기")
+        _tool("⌂", "홈으로", self._close_to_home, "파일 닫고 처음 화면으로")
 
         tk.Frame(top, bg=TB_BG, width=6).pack(side="right")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
