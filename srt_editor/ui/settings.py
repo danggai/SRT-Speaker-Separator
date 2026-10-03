@@ -71,6 +71,9 @@ class SettingsMixin:
             # 내용이 캔버스 뷰포트보다 짧으면(스크롤할 필요가 없으면) 휠을
             # 굴려도 아무 것도 하지 않는다 — 빈 공간이 스크롤되어 보이는
             # 문제 방지.
+            if not canvas.winfo_exists():   # 창이 닫힌 뒤면 메인 스크롤로 넘김
+                _unbind_wheel()
+                return self._on_mousewheel(event)
             bbox = canvas.bbox("all")
             content_h = (bbox[3] - bbox[1]) if bbox else 0
             if content_h <= canvas.winfo_height():
@@ -80,11 +83,12 @@ class SettingsMixin:
             canvas.bind_all("<MouseWheel>", _wheel)
         def _unbind_wheel(_e=None):
             # 다이얼로그를 벗어나면 메인 테이블의 원래 휠 스크롤 핸들러로 복원
-            canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+            self.bind_all("<MouseWheel>", self._on_mousewheel)
         canvas.bind("<Enter>", _bind_wheel)
         canvas.bind("<Leave>", _unbind_wheel)
         inner.bind("<Enter>", _bind_wheel)
         inner.bind("<Leave>", _unbind_wheel)
+        canvas.bind("<Destroy>", _unbind_wheel, add="+")
 
         if with_footer:
             return outer, inner, footer
