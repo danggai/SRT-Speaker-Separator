@@ -393,7 +393,7 @@ class SRTEditor(
         tk.Frame(top, bg=TB_BG, width=6).pack(side="right")
         # 내보내기는 진한 보라 바탕으로 강조
         self._export_btn = _tool("📤", "내보내기", self.export, "화자별 자막 내보내기",
-                                 side="right", bg="#5B3FA0", hover="#6B4DB4",
+                                 side="right", bg="#7457B8", hover="#8266C4",
                                  fg="white", fg_hover="white")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
         _tool("⌨", "단축키", self._toggle_key_hints, "버튼에 단축키 표시 켜기/끄기", side="right")
