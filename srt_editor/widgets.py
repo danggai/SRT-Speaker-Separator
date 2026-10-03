@@ -163,26 +163,17 @@ class _ColorPickerDialog:
     SZ   = 200   # 팔레트 크기
     BH   = 20    # 밝기 슬라이더 높이
 
-    # 프리셋 색상 — 채도를 낮춘 무지개(빨주노초파남보) + 추가 색상, 총 16개.
-    # 파스텔보다는 진하고 원색보다는 연한 톤. 어두운 UI 배경 위에서도
-    # 서로 잘 구분되도록 색상마다 채도/명도를 개별 보정했다.
+    # 프리셋 색상: 열 = 톤(기본·밝게·차분), 행 = 색상(빨주노초청파보핑). 세로로 배치.
     PRESET_COLORS = [
-        "#D24B4B",  # 빨강
-        "#DA944E",  # 주황
-        "#D8BF5A",  # 노랑
-        "#99CD51",  # 연두
-        "#40BF60",  # 초록
-        "#37BEA7",  # 청록
-        "#51A3CD",  # 하늘
-        "#597CCF",  # 파랑
-        "#6D5EC9",  # 남색
-        "#905EC9",  # 보라
-        "#BC59C5",  # 자주
-        "#D36995",  # 핑크
-        "#DA7E6C",  # 코랄
-        "#945E38",  # 갈색
-        "#88813A",  # 올리브
-        "#6282A7",  # 슬레이트
+        # 기본
+        "#D63838", "#D67C38", "#D1AD36", "#38D65F",
+        "#38D6C6", "#387AD6", "#8238D6", "#D63887",
+        # 밝게
+        "#F28D8D", "#F2B98D", "#F2DB8D", "#8DF2A6",
+        "#8DF2E8", "#8DB7F2", "#BC8DF2", "#F28DBF",
+        # 차분
+        "#9E4C4C", "#9E704C", "#9E8B4C", "#4C9E60",
+        "#4C9E96", "#4C6E9E", "#724C9E", "#9E4C75",
     ]
 
     def __init__(self, parent, initial_color="#9B7FD4", title="색상 선택"):
@@ -281,9 +272,10 @@ class _ColorPickerDialog:
         preset_grid = tk.Frame(preset_col, bg=BG2)
         preset_grid.pack()
         _SW = 22       # 스와치 한 변 크기(px)
-        _COLS = 2      # 그리드 열 수
+        _COLS = 3      # 그리드 열 수
+        _ROWS = -(-len(self.PRESET_COLORS) // _COLS)
         for i, _hexcol in enumerate(self.PRESET_COLORS):
-            r, c = divmod(i, _COLS)
+            c, r = divmod(i, _ROWS)   # 위에서 아래로 채운 뒤 다음 열
             sw = tk.Canvas(preset_grid, width=_SW, height=_SW,
                           highlightthickness=1, highlightbackground=BORDER,
                           cursor="hand2", bg=_hexcol)
