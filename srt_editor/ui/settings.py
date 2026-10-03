@@ -313,18 +313,18 @@ class SettingsMixin:
 
     # ── 섹션: 일반 ────────────────────────────
     def _build_general_section(self, parent):
-        self._settings_title(parent, "일반", "앱을 켤 때와 화면 표시에 관한 설정이에요.")
+        self._settings_title(parent, "일반", None)
         card = self._settings_card(parent, "시작")
-        _, right = self._settings_row(card, "⌂", "시작 화면", "앱을 켜면 처음 보여 줄 화면이에요.")
+        _, right = self._settings_row(card, "⌂", "시작 화면", None)
         start_var = tk.StringVar(value="last" if self._opt("startup_open_last") else "home")
         Segmented(right, [("홈 화면", "home"), ("마지막 파일", "last")], start_var,
                   lambda: self._set_opt("startup_open_last", start_var.get() == "last")).pack()
 
         card = self._settings_card(parent, "앱")
-        _, right = self._settings_row(card, "↑", "새 버전 알림", "새 버전이 나오면 알려 줘요.")
+        _, right = self._settings_row(card, "↑", "새 버전 알림", None)
         self._opt_toggle(right, "update_check")
         _, right = self._settings_row(card, "K", "단축키 표시",
-                                      "버튼 위에 단축키를 작게 보여 줘요. 툴바의 단축키 버튼과 같아요.")
+                                      "버튼 위에 단축키 표시")
         var = tk.BooleanVar(value=bool(getattr(self, "_key_hints_on", False)))
 
         def _hints():
@@ -334,37 +334,37 @@ class SettingsMixin:
 
     # ── 섹션: 편집 ────────────────────────────
     def _build_edit_section(self, parent):
-        self._settings_title(parent, "편집", "자막을 고르고 고칠 때의 동작이에요.")
+        self._settings_title(parent, "편집", None)
         card = self._settings_card(parent, "화자 지정")
         _, right = self._settings_row(card, "↓", "지정 후 다음 줄로",
-                                      "숫자 키로 화자를 지정하면 아래 줄이 자동으로 선택돼요.")
+                                      "숫자 키로 지정하면 아래 줄 선택")
         self._opt_toggle(right, "advance_after_assign")
 
         card = self._settings_card(parent, "재생 · 이동")
-        _, right = self._settings_row(card, "↔", "←/→ 이동 간격", "방향키로 재생 위치를 옮기는 간격이에요.")
+        _, right = self._settings_row(card, "↔", "←/→ 이동 간격", None)
         self._opt_number(right, "seek_step", "초", 1, 60)
         self._opt_number(right, "seek_step_shift", "초", 1, 300, label="Shift")
         _, right = self._settings_row(card, "▸", "자막 클릭 시 재생 위치 이동",
-                                      "줄을 고르면 그 자막 시작 위치로 재생 위치가 옮겨져요.")
+                                      None)
         self._opt_toggle(right, "click_seek")
 
         card = self._settings_card(parent, "자막 추가 · 타임라인")
         _, right = self._settings_row(card, "+", "새 자막 기본 길이",
-                                      "A 키나 + 자막으로 추가할 때의 길이예요. 다음 자막이 가까우면 거기까지만 늘어나요.")
+                                      "A 키·+ 자막으로 추가할 때")
         self._opt_number(right, "new_sub_len", "초", 0.5, 30, is_float=True)
         _, right = self._settings_row(card, "≡", "타임라인 시간 잠금",
-                                      "파형에서 자막 블록을 끌어 시간을 바꾸지 못하게 막아요. 클릭으로 고르기는 돼요.")
+                                      "파형에서 자막을 끌어 옮기지 못하게")
         self._opt_toggle(right, "lock_timeline")
 
     # ── 섹션: 자동 자막 ───────────────────────
     def _build_transcribe_settings_tab(self, parent):
         """자동 자막 설정."""
-        self._settings_title(parent, "자동 자막", "음성·영상에서 자막을 만들 때 쓰는 설정이에요.")
+        self._settings_title(parent, "자동 자막", None)
         card = self._settings_card(parent, "인식")
 
         # 한 줄 최대 글자 수 (슬라이더 + 직접 입력, 10~50)
         left, right = self._settings_row(card, "가", "한 줄 최대 글자 수",
-                                         "자막 한 줄에 넣을 글자 수예요.")
+                                         None)
         if not hasattr(self, "_transcribe_max_chars_var"):
             self._transcribe_max_chars_var = tk.IntVar(
                 value=getattr(self, "_transcribe_max_chars", 25))
@@ -409,7 +409,7 @@ class SettingsMixin:
         _chars_entry.bind("<FocusOut>", _chars_entry_commit)
 
         # 인식 언어
-        _, right = self._settings_row(card, "A", "인식 언어", "한국어 영상이면 '한국어'가 더 정확해요.")
+        _, right = self._settings_row(card, "A", "인식 언어", None)
         _lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
 
         def _save_lang():
@@ -419,7 +419,7 @@ class SettingsMixin:
 
         card = self._settings_card(parent, "다듬기")
         # 문장 끝 마침표
-        _, right = self._settings_row(card, ".", "문장 끝 마침표", "자막 끝에 마침표를 붙여요.")
+        _, right = self._settings_row(card, ".", "문장 끝 마침표", None)
         if not hasattr(self, "_transcribe_period_var"):
             self._transcribe_period_var = tk.BooleanVar(
                 value=getattr(self, "_transcribe_period", False))
@@ -432,7 +432,7 @@ class SettingsMixin:
 
         # 맞춤법 자동 교정
         _, right = self._settings_row(card, "✓", "맞춤법 자동 교정",
-                                      "네이버 맞춤법 검사기로 고쳐요. 인터넷이 필요해요.")
+                                      "네이버 맞춤법 검사기 (인터넷 필요)")
         if not hasattr(self, "_transcribe_spellcheck_var"):
             self._transcribe_spellcheck_var = tk.BooleanVar(
                 value=getattr(self, "_transcribe_spellcheck", False))
@@ -446,7 +446,7 @@ class SettingsMixin:
         # 고유명사 사전
         self._ensure_proper_nouns_init()
         _, right = self._settings_row(card, "#", "고유명사 사전",
-                                      "자주 나오는 이름·용어를 등록하면 더 잘 알아들어요.")
+                                      "등록한 이름·용어를 더 잘 인식")
         btn = flat_button(right, "", lambda: self._open_proper_noun_manager(on_close=_refresh_pn),
                           bg=BG3, hover="#33333C", font=(theme.FONT_FAMILY, 9), padx=14, pady=6)
         btn.pack()
@@ -457,12 +457,12 @@ class SettingsMixin:
 
     # ── 섹션: 화자 ────────────────────────────
     def _build_speaker_section(self, parent):
-        self._settings_title(parent, "화자", "화자 이름 표시와 화자 분석 설정이에요.")
+        self._settings_title(parent, "화자", None)
         self._build_pattern_tab(parent)
 
         card = self._settings_card(parent, "화자 분석")
         _, right = self._settings_row(card, "◎", "처리 장치",
-                                      "GPU가 있으면 훨씬 빨라요. 오류가 나면 CPU로 바꿔 보세요.")
+                                      "오류가 나면 CPU로")
         dev_var = tk.StringVar(value=getattr(self, "_diarize_device_init", "auto"))
 
         def _save_dev():
@@ -484,13 +484,13 @@ class SettingsMixin:
 
         card = self._settings_card(parent, "표시 형식")
         left, right = self._settings_row(card, "[ ]", "SRT에 적는 형식",
-                                         "SRT 파일에 화자 이름을 어떻게 적을지 정해요.")
+                                         None)
         seg = Segmented(left, presets + [("직접 입력", "custom")], mode, lambda: _apply())
         seg.configure(bg=BG2)
         seg.pack(anchor="w", pady=(10, 0))
 
         custom = tk.Frame(left, bg=BG2)
-        tk.Label(custom, text="화자 이름 자리에 %, 대사 자리에 & 를 넣어 주세요.",
+        tk.Label(custom, text="% = 화자, & = 대사",
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(anchor="w")
         entry = tk.Entry(custom, textvariable=custom_var, bg=BG3, fg=FG, insertbackground=FG,
                          font=(FONT_MONO, 11), relief="flat", highlightthickness=1,
@@ -529,10 +529,10 @@ class SettingsMixin:
 
     # ── 섹션: 저장 공간 ───────────────────────
     def _build_storage_section(self, parent):
-        self._settings_title(parent, "저장 공간", "작업을 지키는 백업과 내려받은 모델을 관리해요.")
+        self._settings_title(parent, "저장 공간", None)
         card = self._settings_card(parent, "자동 백업")
         _, right = self._settings_row(card, "↺", "자동 백업",
-                                      "저장하지 않은 작업을 주기적으로 백업해, 앱이 갑자기 꺼져도 다시 열 때 복구할 수 있어요.")
+                                      "갑자기 꺼져도 다음 실행 때 복구")
         self._opt_toggle(right, "backup_enabled")
         _, right = self._settings_row(card, "⏱", "백업 간격", None)
         iv = tk.StringVar(value=str(self._opt("backup_minutes")))
@@ -548,7 +548,7 @@ class SettingsMixin:
 
         def _delete():
             if self._backup_files() and messagebox.askyesno(
-                    "백업 삭제", "백업 파일을 모두 지울까요?\n지금 열린 작업에는 영향이 없어요.",
+                    "백업 삭제", "백업 파일을 모두 지울까요?",
                     parent=parent.winfo_toplevel()):
                 self._delete_all_backups()
             _refresh_size()
@@ -562,9 +562,9 @@ class SettingsMixin:
 
     # ── 섹션: 내보내기 ────────────────────────
     def _build_export_section(self, parent):
-        self._settings_title(parent, "내보내기", "화자별 SRT를 만들 때의 설정이에요.")
+        self._settings_title(parent, "내보내기", None)
         card = self._settings_card(parent)
-        left, right = self._settings_row(card, "→", "저장할 폴더", "내보낸 파일을 어디에 저장할지 정해요.")
+        left, right = self._settings_row(card, "→", "저장할 폴더", None)
         mode = tk.StringVar(value=self._opt("export_dir_mode"))
         Segmented(left, [("매번 묻기", "ask"), ("SRT와 같은 폴더", "same"), ("지정한 폴더", "fixed")],
                   mode, lambda: _changed()).pack(anchor="w", pady=(10, 0))
