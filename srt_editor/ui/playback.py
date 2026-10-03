@@ -111,6 +111,54 @@ class PlaybackMixin:
             self._scroll_to_row(new_idx)
         return "break"
 
+    def _nav_guard(self):
+        """입력칸 편집 중이거나 자막이 없으면 True."""
+        return isinstance(self.focus_get(), tk.Entry) or not self.subtitles
+
+    def _on_home_key(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if self.subtitles:
+            self._select_row(0, defer_seek=True)
+            self._scroll_to_row(0)
+        return "break"
+
+    def _on_end_key(self, event):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if self.subtitles:
+            last = len(self.subtitles) - 1
+            self._select_row(last, defer_seek=True)
+            self._scroll_to_row(last)
+        return "break"
+
+    def _on_select_all(self, event):
+        """Ctrl+A: 자막 전체 선택."""
+        if self._nav_guard():
+            return
+        old = set(getattr(self, "_selected_rows", set()))
+        self._selected_rows = set(range(len(self.subtitles)))
+        if getattr(self, "_selected_row_idx", None) is None:
+            self._selected_row_idx = 0
+        for idx in self._selected_rows - old:
+            self._redraw_slot_for(idx)
+        return "break"
+
+    def _on_escape_key(self, event):
+        """Esc: 여러 줄 선택을 현재 줄 하나로."""
+        if self._nav_guard():
+            return
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is not None and len(getattr(self, "_selected_rows", ())) > 1:
+            self._select_row(idx, seek=False)
+        return "break"
+
+    def _on_zoom_key(self, event, zoom_in):
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        (self._wf_zoom_in if zoom_in else self._wf_zoom_out)()
+        return "break"
+
     def _page_size(self):
         """현재 창(테이블 뷰포트) 높이에 맞춘 '한 페이지'당 행 수.
         창 크기가 바뀌면 winfo_height()가 그때그때 반영되므로 자동으로

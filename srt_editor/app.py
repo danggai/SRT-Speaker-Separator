@@ -186,6 +186,18 @@ class SRTEditor(
                  lambda e: self._on_shift_key_change(e, pressed=False))
         self.bind("<KeyRelease-Shift_R>",
                  lambda e: self._on_shift_key_change(e, pressed=False))
+        self.bind("<Home>",      self._on_home_key)
+        self.bind("<End>",       self._on_end_key)
+        self.bind("<Control-a>", self._on_select_all)
+        self.bind("<Control-A>", self._on_select_all)
+        self.bind("<Escape>",    self._on_escape_key)
+        self.bind("<F2>",        self._edit_selected_text)
+        self.bind("<Control-e>", lambda e: self.export())
+        self.bind("<Control-comma>", lambda e: self._open_settings())
+        self.bind("<Control-w>", lambda e: self._close_to_home())
+        self.bind("<Control-plus>",  lambda e: self._on_zoom_key(e, True))
+        self.bind("<Control-equal>", lambda e: self._on_zoom_key(e, True))
+        self.bind("<Control-minus>", lambda e: self._on_zoom_key(e, False))
         self.bind("<Prior>",     self._on_page_up)     # Page Up
         self.bind("<Next>",      self._on_page_down)   # Page Down
         self.bind("<grave>",     self._on_speaker_key)
@@ -531,7 +543,8 @@ class SRTEditor(
     # 버튼 우상단에 표시할 단축키
     _TB_KEY_HINTS = {"열기": "Ctrl+O", "저장": "Ctrl+S", "다른 이름으로": "Ctrl+Shift+S",
                      "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y",
-                     "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V", "영상": "V"}
+                     "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V", "영상": "V",
+                     "내보내기": "Ctrl+E", "설정": "Ctrl+,", "홈으로": "Ctrl+W"}
 
     def _toggle_key_hints(self):
         on = not getattr(self, "_key_hints_on", False)
