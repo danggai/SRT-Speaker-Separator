@@ -231,6 +231,40 @@ def _friendly_transcribe_error(err_text: str) -> str:
     return err_text
 
 
+# ── 음성 인식 / 화자 분리 공통 설정 ─────────────────────────────────
+# 모드별 Whisper 프로필: (모델, beam_size, VAD onset, VAD offset)
+# GPU 환경은 '정확'(large-v3)을 기본/권장으로 한다. CPU에서는 large-v3가
+# 매우 느리므로 turbo 계열('균형')을 권장한다.
+_ASR_MODES = {
+    "fast":     ("large-v3-turbo", 1, 0.500, 0.363),
+    "balanced": ("large-v3-turbo", 3, 0.500, 0.363),
+    "accurate": ("large-v3",       5, 0.500, 0.363),
+    # 방송 클립처럼 짧은 추임새·리액션이 많은 경우를 위해 VAD 감도를 높여
+    # 짧은 발화도 놓치지 않도록 한다 (대신 잡음 구간 오인식이 약간 늘 수 있음).
+    "best":     ("large-v3",       5, 0.350, 0.250),
+}
+_DEFAULT_ASR_MODE = "accurate"
+_CPU_RECOMMENDED_ASR_MODE = "balanced"
+_DIARIZE_BATCH_MAP = [2, 4, 8, 16, 32]
+
+
+def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
+    """모드 프로필대로 whisperx 모델을 로드한다. (model, 모델명) 반환.
+    language를 지정하면 앞 30초 기반 언어 자동 감지를 건너뛴다 (인트로에
+    음악·영어가 섞여 언어를 잘못 감지해 전체 인식이 망가지는 것을 방지)."""
+    wmodel, beam, onset, offset = _ASR_MODES.get(mode, _ASR_MODES[_DEFAULT_ASR_MODE])
+    # CPU는 int8이 float32 대비 2~3배 빠르고 정확도 차이는 미미하다
+    compute = "float16" if device == "cuda" else "int8"
+    model = whisperx.load_model(
+        wmodel, device,
+        compute_type=compute,
+        language=language or None,
+        asr_options={"beam_size": beam, **(asr_hint or {})},
+        vad_options={"vad_onset": onset, "vad_offset": offset},
+    )
+    return model, wmodel
+
+
 def _add_recent_token(cfg: dict, token: str):
     """최근 토큰 목록에 추가 (최대 _MAX_RECENT_TOKENS개, 중복 제거)."""
     if not token:
@@ -1340,7 +1374,8 @@ class SRTEditor(tk.Tk):
         self._transcribe_max_chars  = _cfg.get("transcribe_max_chars", 25)
         self._transcribe_period     = _cfg.get("transcribe_period", False)
         self._transcribe_spellcheck = _cfg.get("transcribe_spellcheck", False)
-        self._diarize_mode_init    = _cfg.get("diarize_mode", "balanced")
+        self._transcribe_language   = _cfg.get("transcribe_language", "ko")   # "ko" | "auto"
+        self._diarize_mode_init    = _cfg.get("diarize_mode", _DEFAULT_ASR_MODE)
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")
         self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 65)
         _pn_raw = _cfg.get("proper_nouns", [])
@@ -1757,7 +1792,7 @@ class SRTEditor(tk.Tk):
         _apply_dark_titlebar(win)
         win.title("자막 자동 생성")
         win.configure(bg=BG)
-        win.geometry("420x430")
+        win.geometry("420x490")
         win.resizable(False, False)
         win.transient(self)
         win.grab_set()
@@ -1816,21 +1851,6 @@ class SRTEditor(tk.Tk):
                    bg=BG3, fg=FG, insertbackground=FG, buttonbackground=BG3,
                    relief="flat", highlightthickness=1, highlightbackground=BORDER,
                    font=(FONT_FAMILY, 8), width=5).pack(side="left")
-
-        # 분석 모드
-        _mode_row = tk.Frame(diar_frame, bg=BG)
-        _mode_row.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(_mode_row, text="분석 모드", bg=BG, fg=FG_DIM,
-                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
-        if not hasattr(self, "_diarize_mode_var"):
-            self._diarize_mode_var = tk.StringVar(
-                value=getattr(self, "_diarize_mode_init", "balanced"))
-        for _ml, _mv in [("⚡ 빠름","fast"),("⚖ 균형","balanced"),("🎯 정확","accurate"),("🔬 최고정확","best")]:
-            tk.Radiobutton(_mode_row, text=_ml, value=_mv,
-                           variable=self._diarize_mode_var,
-                           bg=BG, fg=FG_DIM, selectcolor=BG3,
-                           activebackground=BG, font=(FONT_FAMILY, 7),
-                           cursor="hand2").pack(side="left", padx=(0,4))
 
         # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
         # 화자 수를 직접 지정했을 때는 그 값이 우선이므로 민감도는 자동으로
@@ -1939,6 +1959,48 @@ class SRTEditor(tk.Tk):
                            activebackground=BG, font=(FONT_FAMILY, 8),
                            cursor="hand2").pack(side="left", padx=(0, 8))
 
+        # 인식 모드 (텍스트만/화자 분리 모두 적용)
+        _mode_row = tk.Frame(win, bg=BG)
+        _mode_row.pack(fill="x", padx=16, pady=(0, 4))
+        tk.Label(_mode_row, text="인식 모드", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        if not hasattr(self, "_diarize_mode_var"):
+            self._diarize_mode_var = tk.StringVar(
+                value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
+        for _ml, _mv in [("⚡ 빠름","fast"),("⚖ 균형","balanced"),("🎯 정확","accurate"),("🔬 최고정확","best")]:
+            tk.Radiobutton(_mode_row, text=_ml, value=_mv,
+                           variable=self._diarize_mode_var,
+                           bg=BG, fg=FG_DIM, selectcolor=BG3,
+                           activebackground=BG, font=(FONT_FAMILY, 7),
+                           cursor="hand2").pack(side="left", padx=(0,4))
+        _mode_hint = tk.Label(win, bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 7), anchor="w")
+        _mode_hint.pack(fill="x", padx=16, pady=(0, 4))
+        def _mode_hint_upd(*_):
+            if self._diarize_device_var.get() == "cpu":
+                _mode_hint.configure(text="  CPU 사용 시 ⚖ 균형 권장 (🎯/🔬는 매우 느릴 수 있음)")
+            else:
+                _mode_hint.configure(text="  GPU 사용 시 🎯 정확 권장 · 🔬는 짧은 추임새까지 잡음")
+        _mode_hint_upd()
+        _dev_trace = self._diarize_device_var.trace_add("write", _mode_hint_upd)
+        win.bind("<Destroy>", lambda e: (e.widget is win) and
+                 self._diarize_device_var.trace_remove("write", _dev_trace), add="+")
+
+        # 인식 언어
+        _lang_row = tk.Frame(win, bg=BG)
+        _lang_row.pack(fill="x", padx=16, pady=(0, 4))
+        tk.Label(_lang_row, text="인식 언어", bg=BG, fg=FG_DIM,
+                 font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
+        _lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
+        def _save_lang():
+            self._transcribe_language = _lang_var.get()
+            cfg = _load_config(); cfg["transcribe_language"] = _lang_var.get(); _save_config(cfg)
+        for _txt, _val in [("한국어 고정 (권장)", "ko"), ("자동 감지", "auto")]:
+            tk.Radiobutton(_lang_row, text=_txt, value=_val, variable=_lang_var,
+                           command=_save_lang,
+                           bg=BG, fg=FG_DIM, selectcolor=BG3,
+                           activebackground=BG, font=(FONT_FAMILY, 8),
+                           cursor="hand2").pack(side="left", padx=(0, 8))
+
         # 마침표 + 맞춤법
         _opt_row = tk.Frame(win, bg=BG)
         _opt_row.pack(fill="x", padx=16, pady=(0, 4))
@@ -2004,13 +2066,13 @@ class SRTEditor(tk.Tk):
                 diar_frame.pack(fill="x", padx=16, pady=(4, 0))
                 btn_row.pack_forget()
                 btn_row.pack(pady=12)
-                _animate_height(560)
+                _animate_height(600)
             else:
                 def _hide():
                     _diar_sep.pack_forget()
                     _diar_hdr.pack_forget()
                     diar_frame.pack_forget()
-                _animate_height(430, on_done=_hide)
+                _animate_height(490, on_done=_hide)
         mode_var.trace_add("write", _on_mode_change)
 
         def _start():
@@ -2209,7 +2271,10 @@ class SRTEditor(tk.Tk):
                 _dev_var = getattr(self, "_diarize_device_var", None)
                 _dev_pref = _dev_var.get() if _dev_var else "auto"
                 device = "cuda" if (torch.cuda.is_available() and _dev_pref != "cpu") else "cpu"
-                compute = "float16" if device == "cuda" else "float32"
+                _mode_var = getattr(self, "_diarize_mode_var", None)
+                _mode = _mode_var.get() if _mode_var else getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE)
+                _lang = getattr(self, "_transcribe_language", "ko")
+                _lang = None if _lang == "auto" else _lang
 
                 _model_t0 = _time.time()
                 _model_loading = {"on": True}
@@ -2226,9 +2291,8 @@ class SRTEditor(tk.Tk):
 
                 _set(f"Whisper 모델 로드 중... ({device})", 5)
                 _pn_hint = self._build_proper_noun_hint()
-                model = whisperx.load_model("large-v3-turbo", device,
-                                            compute_type=compute,
-                                            asr_options={"beam_size": 3, **_pn_hint})
+                model, _wmodel = _load_asr_model(whisperx, _mode, device,
+                                                 language=_lang, asr_hint=_pn_hint)
                 _model_loading["on"] = False
                 if _pstate.get("cancelled"):
                     return
@@ -2238,9 +2302,14 @@ class SRTEditor(tk.Tk):
                 if _pstate.get("cancelled"):
                     return
 
-                _set("음성 인식 중...", 20)
-                batch_size = 8 if device == "cuda" else 1
-                result = model.transcribe(audio, batch_size=batch_size)
+                _set(f"음성 인식 중... ({device} / {_wmodel})", 20)
+                if device == "cuda":
+                    _bidx = getattr(self, "_diarize_batch_var", None)
+                    _bidx = _bidx.get() if _bidx else getattr(self, "_diarize_batch_init", 3)
+                    batch_size = _DIARIZE_BATCH_MAP[max(0, min(int(_bidx), len(_DIARIZE_BATCH_MAP) - 1))]
+                else:
+                    batch_size = 1
+                result = model.transcribe(audio, batch_size=batch_size, language=_lang)
                 del model
                 if device == "cuda": torch.cuda.empty_cache()
                 if _pstate.get("cancelled"):
@@ -2414,9 +2483,11 @@ class SRTEditor(tk.Tk):
                                     wi += 1
                                     matched.append(wobj)
                                     break
-                            if matched:
-                                seg_ws = matched[0].get("start", t_s)
-                                seg_we = matched[-1].get("end", t_e)
+                            # 정렬 실패 단어(숫자 등)는 타임스탬프가 없으므로 건너뛴다
+                            timed = [m for m in matched if "start" in m and "end" in m]
+                            if timed:
+                                seg_ws = timed[0]["start"]
+                                seg_we = timed[-1]["end"]
                             result.append({"start": seg_ws, "end": seg_we,
                                             "text": line, "speaker": spk})
                     else:
@@ -4329,6 +4400,21 @@ class SRTEditor(tk.Tk):
                        text="\ud65c\uc131\ud654",
                        command=_save_period).pack(side="left")
 
+        # 인식 언어
+        row_lang = tk.Frame(parent, bg=BG)
+        row_lang.pack(fill="x", padx=20, pady=(0, 12))
+        tk.Label(row_lang, text="인식 언어", bg=BG, fg=FG,
+                 font=(FONT_FAMILY, 9, "bold"), width=22, anchor="w").pack(side="left")
+        _lang_var = tk.StringVar(value=getattr(self, "_transcribe_language", "ko"))
+        def _save_lang():
+            self._transcribe_language = _lang_var.get()
+            cfg = _load_config(); cfg["transcribe_language"] = _lang_var.get(); _save_config(cfg)
+        for _txt, _val in [("한국어 고정 (권장)", "ko"), ("자동 감지", "auto")]:
+            tk.Radiobutton(row_lang, text=_txt, value=_val, variable=_lang_var,
+                           command=_save_lang,
+                           bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                           font=(FONT_FAMILY, 9), cursor="hand2").pack(side="left", padx=(0, 10))
+
         # 자동 맞춤법 검사 (UI만)
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=20, pady=(4, 14))
         row3 = tk.Frame(parent, bg=BG)
@@ -4603,18 +4689,18 @@ class SRTEditor(tk.Tk):
         # 분석 모드
         mode_frame = tk.Frame(parent, bg=BG)
         mode_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(mode_frame, text="분석 모드", bg=BG, fg=FG,
+        tk.Label(mode_frame, text="인식 모드", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
                  ).pack(side="left")
         if not hasattr(self, "_diarize_mode_var"):
-            self._diarize_mode_var = tk.StringVar(value=getattr(self, "_diarize_mode_init", "balanced"))
+            self._diarize_mode_var = tk.StringVar(value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
         mode_inner = tk.Frame(mode_frame, bg=BG)
         mode_inner.pack(side="left")
         _MODES = [
             ("⚡ 빠름",      "fast",     "속도 우선 — 정확도 소폭 감소"),
-            ("⚖ 균형",      "balanced", "속도·정확도 균형 (기본)"),
-            ("🎯 정확",      "accurate", "정확도 우선 — 시간 더 소요"),
-            ("🔬 최고 정확", "best",     "회의·다수 화자 최적, 가장 느림"),
+            ("⚖ 균형",      "balanced", "속도·정확도 균형 (CPU 권장)"),
+            ("🎯 정확",      "accurate", "정확도 우선 (GPU 권장, 기본)"),
+            ("🔬 최고 정확", "best",     "짧은 추임새까지 인식, 가장 느림"),
         ]
         for label, val, tip in _MODES:
             rb = tk.Radiobutton(mode_inner, text=label, value=val,
@@ -4630,12 +4716,12 @@ class SRTEditor(tk.Tk):
 
         # 모드 설명 레이블
         _mode_tips = {
-            "fast":     "⚡ large-v3-turbo, beam_size=1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
-            "balanced": "⚖ large-v3-turbo, beam_size=3 — 일반 대화·인터뷰에 적합",
-            "accurate": "🎯 large-v3, beam_size=5 — 정확한 화자 경계 탐지",
-            "best":     "🔬 large-v3, beam_size=5 — 회의·다수 화자 최적",
+            "fast":     "⚡ large-v3-turbo, beam 1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
+            "balanced": "⚖ large-v3-turbo, beam 3 — CPU 환경 권장",
+            "accurate": "🎯 large-v3, beam 5 — GPU 환경 권장 (기본)",
+            "best":     "🔬 large-v3, beam 5 + 민감한 음성 감지 — 짧은 추임새·리액션까지",
         }
-        _tip_lbl = tk.Label(parent, text=_mode_tips["balanced"],
+        _tip_lbl = tk.Label(parent, text=_mode_tips.get(self._diarize_mode_var.get(), ""),
                             bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w")
         _tip_lbl.pack(fill="x", padx=20, pady=(0, 4))
         def _on_mode_change(*_):
@@ -4892,7 +4978,7 @@ class SRTEditor(tk.Tk):
 
         hf_tok      = _safe_get(getattr(self, "_hf_token_var",     None), getattr(self, "_hf_token", "")).strip()
         num_spk     = _safe_get(getattr(self, "_diarize_num_spk",  None), getattr(self, "_diarize_num_spk_val", 0))
-        mode        = _safe_get(getattr(self, "_diarize_mode_var", None), getattr(self, "_diarize_mode_init", "balanced"))
+        mode        = _safe_get(getattr(self, "_diarize_mode_var", None), getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
         device_pref = _safe_get(getattr(self, "_diarize_device_var", None), getattr(self, "_diarize_device_init", "auto"))
         batch_idx   = _safe_get(getattr(self, "_diarize_batch_var", None), 3)
         sensitivity = _safe_get(getattr(self, "_diarize_sensitivity_var", None), getattr(self, "_diarize_sensitivity_init", 65))
@@ -4956,8 +5042,11 @@ class SRTEditor(tk.Tk):
         words = list(getattr(self, "_proper_nouns", None) or [])
         if not words:
             return {}
+        # initial_prompt는 모든 30초 청크 앞에 붙으므로, 문장형 안내문을 넣으면
+        # 그 문장이 자막에 그대로 새어 나오는 환각이 생길 수 있다. 단어만 나열한다.
+        joined = ", ".join(words)
         opts = {"hotwords": " ".join(words),
-                "initial_prompt": f"다음은 자주 등장하는 고유명사입니다: {', '.join(words)}"}
+                "initial_prompt": joined}
         return opts
 
     def _open_proper_noun_manager(self, on_close=None):
