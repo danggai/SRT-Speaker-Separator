@@ -18,6 +18,7 @@ from .ui.tutorial import TutorialMixin
 from .ui.shortcuts import ShortcutsMixin
 from .ui.options import OptionsMixin
 from .ui.video_win import VideoMixin
+from .ui.search import SearchMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
@@ -66,6 +67,7 @@ class SRTEditor(
     ShortcutsMixin,
     OptionsMixin,
     VideoMixin,
+    SearchMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -186,6 +188,8 @@ class SRTEditor(
                  lambda e: self._on_shift_key_change(e, pressed=False))
         self.bind("<KeyRelease-Shift_R>",
                  lambda e: self._on_shift_key_change(e, pressed=False))
+        self.bind("<Control-f>", self._open_search)
+        self.bind("<Control-F>", self._open_search)
         self.bind("<Control-m>", self.merge_selected)
         self.bind("<Control-M>", self.merge_selected)
         self.bind("<Home>",      self._on_home_key)

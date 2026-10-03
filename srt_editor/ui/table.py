@@ -58,6 +58,7 @@ class SubtitleTableMixin:
         hdr_c = tk.Canvas(right, bg=BG2, height=28, highlightthickness=0)
         hdr_c.pack(fill="x")
         self._hdr_canvas = hdr_c
+        self._build_search_bar(right, hdr_c)
 
         _titles = {"num": "", "time": "시간",
                    "content": "자막 내용", "speaker": "화자"}
@@ -1193,8 +1194,9 @@ class SubtitleTableMixin:
         커밋이 끝나기 전에 진행되어 편집 중이던 행이 화면에 '고정'되어
         보이는 문제가 생기지 않는다."""
         cur = self.focus_get()
-        if not isinstance(cur, tk.Entry):
-            return
+        if (not isinstance(cur, tk.Entry) or cur.winfo_toplevel() is not self
+                or cur is getattr(self, "_search_entry", None)):
+            return   # 다른 창의 입력칸과 검색칸은 그대로 둠
         # selection 즉시 제거
         try:
             cur.selection_clear()
