@@ -195,6 +195,8 @@ class SubtitleTableMixin:
             c.create_line(0, 0, 0, 0, fill=BORDER, tags=(t, f"{t}div{k}"), state="hidden")
         c.create_text(0, 0, text="", fill=FG_DIM, font=(theme.FONT_FAMILY, 9),
                       tags=(t, t + "num"), state="hidden")
+        c.create_line(0, 0, 0, 0, width=3, capstyle="round", fill="",
+                      tags=(t, t + "bar"), state="hidden")   # 화자 색 띠
         c.create_text(0, 0, text="", anchor="w", fill="#B9A6EC",
                       font=(FONT_MONO, 10, "bold"), tags=(t, t + "tlbl"), state="hidden")
         c.create_text(0, 0, text="", anchor="w", fill=FG_DIM,
@@ -733,6 +735,8 @@ class SubtitleTableMixin:
         bg, outline, width = self._slot_colors(di)
         c.itemconfigure(t + "card", fill=bg, outline=outline, width=width)
         c.itemconfigure(t + "num", text=str(di + 1))
+        spk = sub.get("speaker", "")
+        c.itemconfigure(t + "bar", fill=self._speaker_color(spk) if spk else "")
 
         ts_full  = sub.get("timestamp", "")
         parts    = ts_full.split("-->")
@@ -897,6 +901,7 @@ class SubtitleTableMixin:
             r  = self._CARD_R
             c.coords(t + "card", x0 + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r, x1, y1,
                      x1 - r, y1, x0 + r, y1, x0, y1, x0, y1 - r, x0, y0 + r, x0, y0)
+            c.coords(t + "bar", x0 + 5, y0 + 7, x0 + 5, y1 - 7)
             for k, cid in enumerate(("time", "content", "speaker")):
                 x = pos[cid][0]
                 c.coords(f"{t}div{k}", x, y0 + 1, x, y1 - 1)
