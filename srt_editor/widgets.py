@@ -922,6 +922,19 @@ _ANIM_STEPS = 7    # 전환 애니메이션 단계 수
 _ANIM_MS = 16      # 단계 간격 (ms)
 
 
+def _watch(widget, var, callback):
+    """var가 바뀔 때 callback을 부른다. 위젯이 사라지면 자동으로 해제 (여러 창이 같은 변수를 써도 안 쌓임)."""
+    tid = var.trace_add("write", lambda *_: widget.winfo_exists() and callback())
+
+    def _off(e):
+        if e.widget is widget:
+            try:
+                var.trace_remove("write", tid)
+            except (tk.TclError, ValueError):
+                pass
+    widget.bind("<Destroy>", _off, add="+")
+
+
 def _ease(t):
     return 1 - (1 - t) ** 3   # 끝에서 부드럽게 멈춤
 
@@ -941,7 +954,7 @@ class ToggleSwitch(tk.Canvas):
         self.create_image(0, 0, anchor="nw", tags="track")
         self.create_image(0, 0, anchor="center", tags="knob")
         self.bind("<Button-1>", self._toggle)
-        variable.trace_add("write", lambda *_: self._animate())
+        _watch(self, variable, self._animate)
         self._draw()
 
     def _toggle(self, e=None):
@@ -989,7 +1002,7 @@ class Segmented(tk.Frame):
             cv.sel = 1.0 if value == variable.get() else 0.0   # 선택 정도 (애니메이션용)
             self._btns.append((cv, value, w, h))
         self._job = None
-        variable.trace_add("write", lambda *_: self._animate())
+        _watch(self, variable, self._animate)
         self._draw()
 
     def _select(self, value):
@@ -1017,3 +1030,185 @@ class Segmented(tk.Frame):
             outline = _mix(BG3, theme.ON_BORDER, t) if t > 0 else None
             cv.itemconfigure("bg", image=rounded_rect_image(w, h, theme.ON_RADIUS, fill, outline))
             cv.itemconfigure("label", fill=_mix(FG_DIM, theme.ON_FG, t))
+
+
+class DarkScrollbar(tk.Canvas):
+    """어두운 테마용 얇은 세로 스크롤바 (tk.Scrollbar와 같은 command/set 규약)."""
+
+    _PAD, _MIN_LEN, _THUMB_W = 2, 28, 6
+    _COLORS = ("#3A3A44", "#5A5A6E", "#6E5AA8")   # 평소 / 마우스 올림 / 끄는 중
+
+    def __init__(self, parent, command=None, width=12):
+        super().__init__(parent, width=width, bg=parent.cget("bg"), highlightthickness=0, bd=0)
+        self._cmd = command
+        self._first, self._last = 0.0, 1.0
+        self._hover = self._drag = False
+        self._grab = 0.0
+        self.create_line(0, 0, 0, 0, width=self._THUMB_W, capstyle="round", tags="thumb")
+        self.bind("<Configure>", lambda e: self._layout())
+        self.bind("<Enter>", lambda e: self._set_state(hover=True))
+        self.bind("<Leave>", lambda e: self._set_state(hover=False))
+        self.bind("<ButtonPress-1>", self._press)
+        self.bind("<B1-Motion>", self._motion)
+        self.bind("<ButtonRelease-1>", lambda e: self._set_state(drag=False))
+
+    def configure(self, cnf=None, **kw):
+        if "command" in kw:
+            self._cmd = kw.pop("command")
+        if cnf or kw:
+            return tk.Canvas.configure(self, cnf, **kw)
+
+    config = configure
+
+    def set(self, first, last):
+        self._first, self._last = float(first), float(last)
+        self._layout()
+
+    def get(self):
+        return self._first, self._last
+
+    def _span(self):
+        track = max(1, self.winfo_height() - 2 * self._PAD)
+        length = max(self._MIN_LEN, (self._last - self._first) * track)
+        top = self._PAD + self._first * track
+        top = min(top, self._PAD + track - length)
+        return track, top, length
+
+    def _layout(self):
+        x, r = self.winfo_width() / 2, self._THUMB_W / 2
+        if self._last - self._first >= 0.999:   # 스크롤할 게 없으면 막대를 숨김
+            self.itemconfigure("thumb", state="hidden")
+            return
+        _, top, length = self._span()
+        self.coords("thumb", x, top + r, x, top + length - r)
+        self.itemconfigure("thumb", state="normal", fill=self._COLORS[2 if self._drag else 1 if self._hover else 0])
+
+    def _set_state(self, hover=None, drag=None):
+        if hover is not None:
+            self._hover = hover
+        if drag is not None:
+            self._drag = drag
+        self._layout()
+
+    def _press(self, e):
+        _, top, length = self._span()
+        if top <= e.y <= top + length:
+            self._grab = e.y - top
+            self._set_state(drag=True)
+        elif self._cmd:
+            self._cmd("scroll", -1 if e.y < top else 1, "pages")
+
+    def _motion(self, e):
+        if not (self._drag and self._cmd):
+            return
+        track, _, _ = self._span()
+        frac = (e.y - self._grab - self._PAD) / track
+        self._cmd("moveto", max(0.0, min(1.0 - (self._last - self._first), frac)))
+
+
+class CheckBox(tk.Frame):
+    """어두운 테마용 체크박스 (BooleanVar 연동). text를 주면 오른쪽에 글자를 함께 표시."""
+
+    S = 16
+
+    def __init__(self, parent, variable, text="", command=None, fg=FG, font=None):
+        bg = parent.cget("bg")
+        super().__init__(parent, bg=bg, cursor="hand2")
+        self._var, self._cmd, self._hover = variable, command, False
+        self._cv = tk.Canvas(self, width=self.S, height=self.S, bg=bg, highlightthickness=0, cursor="hand2")
+        self._cv.pack(side="left")
+        self._cv.create_image(0, 0, anchor="nw", tags="box")
+        self._cv.create_line(4, 8.5, 7, 11.5, 12, 5, width=2, fill="white", capstyle="round",
+                             joinstyle="round", tags="tick")
+        widgets = [self, self._cv]
+        if text:
+            lbl = tk.Label(self, text=text, bg=bg, fg=fg, cursor="hand2",
+                           font=font or (theme.FONT_FAMILY, 9))
+            lbl.pack(side="left", padx=(8, 0))
+            widgets.append(lbl)
+        for w in widgets:
+            w.bind("<Button-1>", self._toggle)
+            w.bind("<Enter>", lambda e: self._set_hover(True))
+            w.bind("<Leave>", lambda e: self._set_hover(False))
+        _watch(self, variable, self._draw)
+        self._draw()
+
+    def _toggle(self, e=None):
+        self._var.set(not self._var.get())
+        if self._cmd:
+            self._cmd()
+
+    def _set_hover(self, on):
+        self._hover = on
+        self._draw()
+
+    def _draw(self):
+        on = bool(self._var.get())
+        fill = ACCENT if on else BG3
+        outline = ACCENT if on else ("#8A8AA0" if self._hover else "#5A5A6E")
+        self._cv.itemconfigure("box", image=rounded_rect_image(self.S, self.S, 4, fill, outline))
+        self._cv.itemconfigure("tick", state="normal" if on else "hidden")
+
+
+class NumberStepper(tk.Frame):
+    """숫자 입력 (− 입력칸 +). IntVar와 연동하고, 범위를 벗어나면 맞춰 준다."""
+
+    def __init__(self, parent, variable, lo, hi, width=4, command=None):
+        bg = parent.cget("bg")
+        super().__init__(parent, bg=bg)
+        self._var, self._lo, self._hi, self._cmd = variable, lo, hi, command
+        self._text = tk.StringVar(value=str(variable.get()))
+        flat_button(self, "−", lambda: self._step(-1), bg=BG3, hover="#33333C",
+                    padx=9, pady=3).pack(side="left")
+        ent = tk.Entry(self, textvariable=self._text, width=width, justify="center", bg=BG3, fg=FG,
+                       insertbackground=FG, relief="flat", highlightthickness=1,
+                       highlightbackground=BORDER, highlightcolor=ACCENT,
+                       font=(theme.FONT_FAMILY, 10))
+        ent.pack(side="left", ipady=3, padx=4)
+        flat_button(self, "+", lambda: self._step(1), bg=BG3, hover="#33333C",
+                    padx=9, pady=3).pack(side="left")
+        ent.bind("<Return>", lambda e: self._commit())
+        ent.bind("<FocusOut>", lambda e: self._commit())
+        ent.bind("<Up>", lambda e: (self._step(1), "break")[1])
+        ent.bind("<Down>", lambda e: (self._step(-1), "break")[1])
+        _watch(self, variable, lambda: self._text.set(str(self._var.get())))
+
+    def _current(self):
+        try:
+            return int(self._text.get())
+        except ValueError:
+            return int(self._var.get())
+
+    def _set(self, v):
+        v = max(self._lo, min(self._hi, v))
+        self._text.set(str(v))
+        if int(self._var.get()) != v:
+            self._var.set(v)
+            if self._cmd:
+                self._cmd()
+
+    def _commit(self):
+        self._set(self._current())
+
+    def _step(self, d):
+        self._set(self._current() + d)
+
+
+def present_dialog(win, parent, grab=True):
+    """withdraw 해 둔 대화상자를 부모 가운데에 놓은 뒤 보여 준다 (처음 위치에 떴다가 이동하는 것 방지)."""
+    import re
+    win.update_idletasks()
+    m = re.match(r"(\d+)x(\d+)", win.geometry())
+    w, h = (int(m.group(1)), int(m.group(2))) if m else (win.winfo_reqwidth(), win.winfo_reqheight())
+    x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - h) // 3
+    win.geometry(f"{w}x{h}+{max(0, x)}+{max(0, y)}")
+    try:
+        win.attributes("-alpha", 0.0)
+    except tk.TclError:
+        pass
+    win.deiconify()
+    _apply_dark_titlebar(win)
+    win.after(40, lambda: win.winfo_exists() and win.attributes("-alpha", 1.0))
+    if grab:
+        win.grab_set()

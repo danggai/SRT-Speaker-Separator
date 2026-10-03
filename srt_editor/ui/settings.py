@@ -3,7 +3,6 @@ import json
 import re
 import tkinter as tk
 from tkinter import messagebox
-from tkinter import ttk
 
 from .. import srt_io, theme
 from ..config import _load_config, _save_config
@@ -11,7 +10,8 @@ from ..srt_io import display_to_regex
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
 from ..version import APP_VERSION, GITHUB_LATEST_API
 from .options import OPTION_DEFAULTS
-from ..widgets import PurpleSlider, Segmented, ToggleSwitch, flat_button, rounded_rect_image
+from ..widgets import (CheckBox, DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, flat_button,
+                       rounded_rect_image)
 
 
 class SettingsMixin:
@@ -37,7 +37,7 @@ class SettingsMixin:
             tk.Frame(outer, bg=BORDER, height=1).pack(side="bottom", fill="x")
 
         canvas = tk.Canvas(outer, bg=BG, highlightthickness=0)
-        vsb = tk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        vsb = DarkScrollbar(outer, command=canvas.yview)
         canvas.configure(yscrollcommand=vsb.set)
         canvas.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
@@ -113,7 +113,7 @@ class SettingsMixin:
             flat_button(head, "기본값", _reset, bg=BG3, hover="#33333C",
                         font=(theme.FONT_FAMILY, 9), padx=12, pady=4).pack(side="right")
         if desc:
-            tk.Label(parent, text=desc, bg=BG, fg=FG_DIM,
+            tk.Label(parent, text=desc, bg=BG, fg=FG_DIM, justify="left",
                      font=(theme.FONT_FAMILY, 9)).pack(anchor="w", padx=32)
 
     def _settings_card(self, parent, label=None):
@@ -780,7 +780,7 @@ class SettingsMixin:
 
         # 스크롤 가능한 내부 캔버스
         _canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0)
-        _sb = ttk.Scrollbar(list_frame, orient="vertical", command=_canvas.yview)
+        _sb = DarkScrollbar(list_frame, command=_canvas.yview)
         _inner = tk.Frame(_canvas, bg=BG2)
         _canvas.configure(yscrollcommand=_sb.set)
         _sb.pack(side="right", fill="y")
@@ -858,9 +858,7 @@ class SettingsMixin:
                 row.pack(fill="x", pady=3)
                 var = tk.BooleanVar(value=False)
                 _chk_vars[str(path)] = (var, kind, path)
-                tk.Checkbutton(row, variable=var, bg=BG2, fg=FG,
-                               selectcolor=BG3, activebackground=BG2,
-                               cursor="hand2").pack(side="left", padx=(6, 0))
+                CheckBox(row, var).pack(side="left", padx=(8, 0))
                 tk.Label(row, text=label, bg=BG2, fg=FG,
                          font=(FONT_MONO, 9), anchor="w"
                          ).pack(side="left", fill="x", expand=True, padx=4)

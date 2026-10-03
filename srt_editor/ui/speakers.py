@@ -6,13 +6,14 @@ from tkinter import ttk
 
 from .. import theme
 from ..config import _load_config, _save_config
-from ..theme import BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS
+from ..theme import BG2, BG3, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS
 
 _ROW_BG    = BG2         # 화자 줄 배경
 _ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
 _KEY_BG    = "#2C2C36"   # 단축키 키캡 배경
 _KEY_FG    = "#C9C9D4"   # 단축키 숫자
-from ..widgets import PopupMenu, Tooltip, _ColorPickerDialog, _circle_image, rounded_rect_image
+from ..widgets import (DarkScrollbar, PopupMenu, Tooltip, _ColorPickerDialog, _circle_image,
+                       rounded_rect_image)
 
 
 class SpeakerMixin:
@@ -38,8 +39,7 @@ class SpeakerMixin:
         list_frame.pack(fill="both", expand=True, padx=6)
 
         canvas = tk.Canvas(list_frame, bg=BG2, highlightthickness=0, bd=0)
-        scrollbar = ttk.Scrollbar(list_frame, orient="vertical",
-                                  command=canvas.yview)
+        scrollbar = DarkScrollbar(list_frame, command=canvas.yview)
         self.speaker_inner = tk.Frame(canvas, bg=BG2)
         self.speaker_inner.bind("<Configure>",
             lambda e: canvas.configure(scrollregion=canvas.bbox("all")))

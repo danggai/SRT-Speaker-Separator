@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FONT_MONO, ROW_HL
-from ..widgets import PopupMenu, Tooltip
+from ..widgets import DarkScrollbar, PopupMenu, Tooltip
 
 _BR = " ↵ "   # 입력칸·목록에서 줄바꿈 표시
 
@@ -83,8 +83,7 @@ class SubtitleTableMixin:
         container.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(container, bg=BG, highlightthickness=0, bd=0)
-        self.vsb    = ttk.Scrollbar(container, orient="vertical",
-                                    command=self._vscroll_cmd)
+        self.vsb    = DarkScrollbar(container, command=self._vscroll_cmd)
 
         # 스크롤바는 _update_vsb로만 갱신 (캔버스는 늘 맨 위라 연결하면 스크롤바가 맨 위로 튐)
         self.canvas.pack(side="left", fill="both", expand=True)
