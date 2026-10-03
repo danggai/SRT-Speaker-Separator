@@ -35,7 +35,7 @@ from .theme import (
     _pick_font,
 )
 from .version import APP_VERSION, GITHUB_TAGS_URL
-from .widgets import Tooltip
+from .widgets import Tooltip, flat_button
 
 
 class SRTEditor(
@@ -419,13 +419,9 @@ class SRTEditor(
         tk.Label(card, text="또는",
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 11)).pack(pady=8)
 
-        btn_open = tk.Button(card, text="📂  파일 열기",
-                             bg=ACCENT, fg="white",
-                             font=(theme.FONT_FAMILY, 12, "bold"),
-                             relief="flat", padx=20, pady=10,
-                             cursor="hand2",
-                             command=self.open_file,
-                             activebackground="#c73550", activeforeground="white")
+        btn_open = flat_button(card, "📂  파일 열기", self.open_file,
+                               bg=ACCENT, fg="white", hover="#AE96E2",
+                               font=(theme.FONT_FAMILY, 12, "bold"), padx=20, pady=10)
         btn_open.pack(pady=(0, 4))
 
         tk.Label(card,

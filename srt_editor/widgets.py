@@ -685,3 +685,15 @@ def show_toast(root, text, duration_ms=1600):
 
     fade(0.0, 0.16, lambda: win.after(duration_ms, lambda: fade(0.95, -0.1, close)))
     return win
+
+
+def flat_button(parent, text, command, bg, fg=FG, hover=BG3, font=None, padx=10, pady=3):
+    """테두리 없는 평평한 버튼 (마우스를 올리면 배경만 바뀜)."""
+    btn = tk.Label(parent, text=text, bg=bg, fg=fg, cursor="hand2", padx=padx, pady=pady,
+                   font=font or (theme.FONT_FAMILY, 9))
+    btn.bind("<Enter>", lambda e: btn.configure(bg=hover))
+    btn.bind("<Leave>", lambda e: btn.configure(bg=bg))
+    # 버튼 위에서 뗐을 때만 실행
+    btn.bind("<ButtonRelease-1>", lambda e: command()
+             if 0 <= e.x < btn.winfo_width() and 0 <= e.y < btn.winfo_height() else None)
+    return btn
