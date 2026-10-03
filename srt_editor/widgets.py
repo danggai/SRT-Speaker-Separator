@@ -432,6 +432,7 @@ class PopupMenu:
 
     SEP = "__sep__"
     CASCADE = "__cascade__"
+    _active = None   # 지금 떠 있는 메뉴 (항상 하나만)
 
     def __init__(self, root):
         self._root    = root
@@ -458,6 +459,10 @@ class PopupMenu:
 
     def _show(self, x, y):
         self._destroy()
+        prev = PopupMenu._active
+        if prev is not None and prev is not self:
+            prev._destroy()   # 이전 메뉴가 늦게 닫히며 겹쳐 보이지 않게 바로 닫음
+        PopupMenu._active = self
         win = tk.Toplevel(self._root)
         win.attributes("-alpha", 0.0)   # 제자리로 옮기기 전까지 투명
         win.overrideredirect(True)
