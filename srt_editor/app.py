@@ -610,6 +610,9 @@ class SRTEditor(
     def destroy(self):
         self._stop_progress_poll()
         self.player.stop()
+        ime = getattr(self, "_ime_overlay", None)
+        if ime is not None:
+            ime.unhook_all()
         super().destroy()
 
 
