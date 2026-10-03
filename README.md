@@ -1,96 +1,51 @@
-# SRT 화자 분리기 (srt_speaker_separator)
+# SRT Speaker Editor
 
-SRT 자막을 `[화자] 내용` 형식으로 구분하여
-화자별 `.srt` 파일로 분리하는 간단한 도구입니다.
+영상·음성의 자막을 만들고, 대사마다 화자를 지정해 화자별 SRT로 나누는 Windows용 자막 편집기입니다.
+여러 사람이 대화하는 방송 클립 편집을 염두에 두고 만들었습니다.
 
----
+## 주요 기능
 
-## 📌 주요 기능
+- **자막 편집**: 자막 표와 파형 타임라인에서 텍스트·시간·화자를 편집. 실행 취소, 자막 분할, 레이어 지원
+- **자막 자동 생성**: 음성/영상 파일에서 Whisper(whisperx)로 자막 생성. 한국어 고정, 고유명사 사전 지원
+- **화자 분석**: pyannote로 화자를 분리해 자막에 화자를 자동 지정
+- **화자별 내보내기**: 화자마다 `.srt` 파일로 저장. 화자가 없는 자막은 `*_untagged.srt`
+- 화자 정보는 SRT 안에 `[화자] 내용` 형식으로 저장되어 다시 열면 그대로 복원됩니다.
 
-* `[화자] 내용` 형식 기반 자동 분리
-* 화자별 `.srt` 파일 생성 (예: `a.srt`, `b.srt`)
-* 태그 없는 자막은 별도 파일로 저장 (`*_untagged.srt`)
-* 간단한 자막 편집 기능
+## 사용 방법
 
----
+1. SRT 또는 음성/영상 파일을 창에 끌어다 놓거나 `파일 열기`로 엽니다.
+   - SRT: 같은 이름의 음성/영상이 있으면 함께 열립니다.
+   - 음성/영상만: 같은 이름의 SRT가 있으면 열고, 없으면 자막 자동 생성을 묻습니다.
+2. 자막 표나 타임라인에서 화자를 지정·수정합니다. 숫자 키 `1`~`9`로 화자를 바로 지정할 수 있습니다.
+3. `저장`(`Ctrl+S`)으로 화자 태그가 붙은 SRT를 저장하고, `내보내기`로 화자별 SRT를 만듭니다.
 
-## ▶ 사용 방법
+## 자동 자막 · 화자 분석 준비
 
-* exe 실행 후 SRT 파일 드래그 & 드롭
-  또는:
+- 처음 사용할 때 필요한 패키지(whisperx 등)를 자동으로 설치합니다.
+- 화자 분석에는 HuggingFace 토큰이 필요합니다. [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) 페이지에서 이용 약관에 동의한 뒤 토큰을 설정 창에 입력하세요.
+- NVIDIA GPU 사용을 권장합니다. CPU에서도 동작하지만 느리며, 이때는 인식 모드 `균형`을 권장합니다.
 
-```bash
-srt_speaker_separator.exe input.srt
-```
-
----
-
-## 🧩 예시
-
-입력:
-
-```srt
-1
-00:00:01,000 --> 00:00:03,000
-[a] 안녕하세요
-
-2
-00:00:04,000 --> 00:00:06,000
-[b] 반갑습니다
-```
-
----
-
-## 📤 출력
-
-* `a.srt`
-* `b.srt`
-* `input_untagged.srt` (태그 없는 자막이 있을 경우만 생성)
-
----
-
-## 🛠 빌드 방법
+## 개발
 
 ```bash
-python -m pip install pyinstaller
-python -m PyInstaller --onefile --noconsole --name srt_speaker_separator srt_speaker_separator.py
+pip install -r requirements.txt
+python srt_speaker_separator.py
 ```
 
-결과:
+빌드(PyInstaller):
+
+```bash
+python -m PyInstaller --onefile --windowed --name SRTSpeakerEditor srt_speaker_separator.py
+```
+
+코드 구조:
 
 ```
-dist/srt_speaker_separator.exe
-```
-
----
-
-## 📁 코드 구조
-
-```
-srt_speaker_separator.py   실행 진입점 (필수 패키지 확인 후 앱 실행, 빌드 대상)
+srt_speaker_separator.py   진입점 (필수 패키지 확인 후 실행, 빌드 대상)
 srt_editor/
-  app.py        메인 창(SRTEditor)과 main()
-  config.py     설정 파일 로드/저장
-  theme.py      색상·폰트
-  srt_io.py     SRT 파싱/저장, 화자 태그 패턴
-  speech.py     음성 인식·화자 분리 로직 (GUI 없음)
-  media.py      미디어 재생
-  widgets.py    공용 위젯
-  version.py    버전 정보
-  ui/           SRTEditor 기능별 믹스인
-    transcribe.py  자막 자동 생성, 고유명사 사전
-    diarize.py     화자 분석
-    settings.py    설정 창
-    timeline.py    재생바·파형
-    table.py       자막 표
-    speakers.py    화자 사이드바·색상
-    editing.py     편집·실행 취소
-    playback.py    재생·키보드 이동
-    files.py       열기/저장/내보내기
-tools/
-  eval_accuracy.py  자막/화자 분리 정확도 평가
+  app.py                   메인 창
+  speech.py                음성 인식·화자 분리 로직 (GUI 없음)
+  srt_io.py, config.py, theme.py, media.py, widgets.py, ime.py, version.py
+  ui/                      기능별 화면 코드 (자동 자막, 화자 분석, 타임라인, 자막 표 등)
+tools/eval_accuracy.py     정답 SRT 대비 자막·화자 분리 정확도 평가
 ```
-
----
-
-끝.
