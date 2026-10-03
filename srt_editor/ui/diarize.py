@@ -746,24 +746,33 @@ class DiarizeMixin:
 
                 _set_status(f"디바이스: {_dev_reason}", "import")
 
+                # 이 torch 버전에서 GPU 설치가 이미 실패했으면 다시 묻지 않음
+                _gpu_skip = _load_config().get("gpu_torch_skip") == _torch_ver
+
                 # CUDA 빌드가 아닌데 GPU 우선 선택이면 → 자동 재설치 제안
-                if _dev_pref != "cpu" and not _cuda_build:
+                if _dev_pref != "cpu" and not _cuda_build and not _gpu_skip:
                     import tkinter.messagebox as _mb
                     import subprocess, sys
 
-                    # NVIDIA 드라이버에서 지원 CUDA 버전 감지
-                    def _detect_cuda_tag():
+                    # 드라이버가 지원하는 CUDA 이하의 torch 빌드 태그 (높은 것부터)
+                    def _detect_cuda_tags():
+                        tags = [("cu130", 13.0), ("cu129", 12.9), ("cu128", 12.8),
+                                ("cu126", 12.6), ("cu124", 12.4), ("cu121", 12.1),
+                                ("cu118", 11.8)]
                         try:
+                            import re as _re
                             out = subprocess.check_output(
-                                ["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
-                                stderr=subprocess.DEVNULL, text=True).strip()
-                            # 드라이버 버전으로 CUDA 지원 버전 추정
-                            drv = float(out.split("\n")[0].split(".")[0])
-                            if drv >= 525: return "cu121"
-                            if drv >= 520: return "cu118"
-                            return "cu117"
+                                ["nvidia-smi"], stderr=subprocess.DEVNULL, text=True,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                            m = _re.search(r"CUDA Version:\s*(\d+\.\d+)", out)
+                            if m:
+                                cap = float(m.group(1))
+                                ok = [t for t, v in tags if v <= cap]
+                                if ok:
+                                    return ok
                         except Exception:
-                            return "cu121"  # 기본값
+                            pass
+                        return [t for t, _ in tags]
 
                     def _ask_and_install():
                         # ⚠ 핵심 수정: prog_win이 모달(grab_set)로 떠있는 상태에서
@@ -781,11 +790,11 @@ class DiarizeMixin:
                         except Exception:
                             pass
 
-                        cuda_tag = _detect_cuda_tag()
+                        cuda_tags = _detect_cuda_tags()
                         ans = _mb.askyesno(
                             "GPU torch 자동 설치",
                             f"현재 torch ({_torch_ver}) 가 CPU 전용 빌드라 GPU를 쓸 수 없어요.\n\n"
-                            f"CUDA 빌드 torch ({cuda_tag}) 를 지금 자동 설치할까요?\n"
+                            f"CUDA 빌드 torch 를 지금 자동 설치할까요?\n"
                             f"(설치 후 앱이 자동 재시작됩니다)\n\n"
                             "아니오 선택 시 CPU로 계속 진행합니다.",
                             parent=self
@@ -806,7 +815,7 @@ class DiarizeMixin:
                         inst_win.transient(self)
                         inst_win.grab_set()
                         tk.Label(inst_win,
-                                 text=f"⏳  torch+{cuda_tag} 설치 중...",
+                                 text="⏳  GPU용 torch 설치 중...",
                                  bg=BG, fg=FG, font=(theme.FONT_FAMILY, 10, "bold")
                                  ).pack(pady=(24, 6))
                         _inst_sub = tk.Label(inst_win,
@@ -820,24 +829,31 @@ class DiarizeMixin:
                             except Exception: pass
 
                         def _do_pip():
-                            idx_url = f"https://download.pytorch.org/whl/{cuda_tag}"
-                            cmd_base = [
-                                sys.executable, "-m", "pip", "install",
-                                "torch", "torchaudio",
-                                "--index-url", idx_url,
-                                "--upgrade",
-                                "--force-reinstall",   # CPU 빌드를 확실히 덮어씀
-                            ]
+                            # 지금 버전과 같은 torch를 CUDA 빌드로 설치 (다른 패키지 호환 유지)
+                            torch_base = _torch_ver.split("+")[0]
 
-                            def _run_cmd(extra_args=[]):
-                                """pip 실행 후 stdout/stderr 캡처해서 반환."""
+                            def _cmd(tag):
+                                return [sys.executable, "-m", "pip", "install",
+                                        f"torch=={torch_base}", "torchaudio",
+                                        "--index-url", f"https://download.pytorch.org/whl/{tag}",
+                                        "--upgrade", "--force-reinstall"]
+
+                            def _run_cmd(cmd):
+                                """pip 실행 후 출력 반환."""
                                 result = subprocess.run(
-                                    cmd_base + extra_args,
+                                    cmd,
                                     stdout=subprocess.PIPE,
                                     stderr=subprocess.STDOUT,
-                                    text=True
+                                    text=True,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                                 )
                                 return result.returncode, result.stdout
+
+                            def _perm_error(log):
+                                low = log.lower()
+                                return any(k in low for k in (
+                                    "permission denied", "access is denied", "winerror 5",
+                                    "[errno 13]", "consider using the `--user`"))
 
                             def _verify_cuda():
                                 """설치 후 실제 CUDA 동작 여부 확인."""
@@ -847,7 +863,8 @@ class DiarizeMixin:
                                          "import torch; print(torch.cuda.is_available()); "
                                          "print(torch.__version__)"],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, timeout=30
+                                        text=True, timeout=30,
+                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                                     )
                                     lines = result.stdout.strip().splitlines()
                                     cuda_ok = len(lines) >= 1 and lines[0].strip() == "True"
@@ -856,31 +873,55 @@ class DiarizeMixin:
                                 except Exception as e:
                                     return False, str(e)
 
-                            # 1차: 일반 설치
-                            self.after(0, lambda: _update_sub("pip 설치 중... (수 분 소요)"))
-                            rc, out = _run_cmd()
+                            def _give_up(msg, log):
+                                """다시 묻지 않도록 기록하고 CPU로 분석 진행."""
+                                def _ui():
+                                    try: inst_win.destroy()
+                                    except Exception: pass
+                                    cfg = _load_config()
+                                    cfg["gpu_torch_skip"] = _torch_ver
+                                    _save_config(cfg)
+                                    _mb.showwarning(
+                                        "GPU torch 설치 실패",
+                                        f"{msg}\n\nCPU로 분석을 계속합니다. "
+                                        "이 torch 버전에서는 다시 묻지 않습니다.\n\n"
+                                        "pip 출력:\n" + log[-300:],
+                                        parent=self)
+                                    self._force_cpu_once = True
+                                    self._run_diarize_whisperx()
+                                self.after(0, _ui)
 
-                            if rc != 0:
-                                # 2차: --user 재시도
-                                self.after(0, lambda: _update_sub("권한 문제 → --user 모드로 재시도 중..."))
-                                rc, out = _run_cmd(["--user"])
+                            # 지원 CUDA 태그를 높은 것부터 차례로 시도
+                            rc, out, used = 1, "", None
+                            for tag in cuda_tags:
+                                self.after(0, lambda t=tag: _update_sub(f"pip 설치 중 ({t})... 수 분 소요"))
+                                rc, out = _run_cmd(_cmd(tag))
+                                if rc == 0:
+                                    used = tag
+                                    break
+                                if _perm_error(out):
+                                    self.after(0, lambda: _update_sub("권한 문제 → --user 모드로 재시도 중..."))
+                                    rc, out = _run_cmd(_cmd(tag) + ["--user"])
+                                    if rc == 0:
+                                        used = tag
+                                    break
 
-                            if rc != 0:
-                                # 3차: UAC 관리자 승격
-                                def _try_admin(log=out):
+                            if rc != 0 and _perm_error(out):
+                                # 권한 문제일 때만 관리자 권한으로 재시도
+                                def _try_admin(log=out, tag=cuda_tags[0]):
                                     try: inst_win.destroy()
                                     except Exception: pass
                                     ans2 = _mb.askyesno(
                                         "설치 실패 — 관리자 권한 필요",
-                                        f"pip 설치가 실패했습니다.\n\n"
+                                        f"pip 설치가 권한 문제로 실패했습니다.\n\n"
                                         f"오류 내용:\n{log[-300:]}\n\n"
                                         "관리자 권한으로 다시 시도할까요? (UAC 창이 뜹니다)",
                                         parent=self)
                                     if ans2:
                                         try:
                                             import ctypes
-                                            args = (f"-m pip install torch torchaudio "
-                                                    f"--index-url {idx_url} --upgrade --force-reinstall")
+                                            import subprocess as _sp
+                                            args = _sp.list2cmdline(_cmd(tag)[1:])
                                             ctypes.windll.shell32.ShellExecuteW(
                                                 None, "runas", sys.executable, args, None, 1)
                                             _mb.showinfo("설치 진행 중",
@@ -891,7 +932,16 @@ class DiarizeMixin:
                                             _mb.showerror("설치 실패",
                                                 f"관리자 설치도 실패했습니다.\n{e2}",
                                                 parent=self)
+                                    else:
+                                        self._force_cpu_once = True
+                                        self._run_diarize_whisperx()
                                 self.after(0, _try_admin)
+                                return
+
+                            if rc != 0:
+                                _give_up(f"torch {torch_base}의 GPU 빌드를 찾지 못했습니다 "
+                                         f"(Python {sys.version_info.major}.{sys.version_info.minor}).",
+                                         out)
                                 return
 
                             # 설치 성공 → CUDA 실제 동작 검증
@@ -902,13 +952,16 @@ class DiarizeMixin:
                                 def _bad_install(log=out, v=ver):
                                     try: inst_win.destroy()
                                     except Exception: pass
+                                    cfg = _load_config()
+                                    cfg["gpu_torch_skip"] = v   # 설치된 버전으로 다시 묻지 않음
+                                    _save_config(cfg)
                                     _mb.showerror(
                                         "GPU 활성화 실패",
                                         f"pip 설치는 완료됐지만 CUDA가 여전히 비활성 상태입니다.\n"
                                         f"(torch {v})\n\n"
                                         "가능한 원인:\n"
                                         "• NVIDIA 드라이버가 너무 오래됨 → 드라이버 업데이트 필요\n"
-                                        f"• CUDA 태그 불일치 (현재: {cuda_tag}) → "
+                                        f"• CUDA 태그 불일치 (현재: {used}) → "
                                         "다른 버전 시도 필요\n\n"
                                         "pip 출력 로그:\n" + log[-400:],
                                         parent=self)
