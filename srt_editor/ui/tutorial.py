@@ -72,7 +72,7 @@ class TutorialMixin:
         _save_config(cfg)
 
         win = tk.Toplevel(self)
-        _apply_dark_titlebar(win)
+        win.withdraw()   # 위치·제목표시줄 적용 전 흰 창이 보이지 않게
         win.title("시작하기")
         win.configure(bg=BG)
         win.resizable(False, False)
@@ -97,6 +97,13 @@ class TutorialMixin:
         x = self.winfo_rootx() + (self.winfo_width() - win.winfo_width()) // 2
         y = self.winfo_rooty() + (self.winfo_height() - win.winfo_height()) // 3
         win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        try:
+            win.attributes("-alpha", 0.0)
+        except tk.TclError:
+            pass
+        win.deiconify()
+        _apply_dark_titlebar(win)
+        win.after(40, lambda: win.winfo_exists() and win.attributes("-alpha", 1.0))
         win.grab_set()
 
     # ── 시작 / 종료 ───────────────────────
@@ -126,6 +133,7 @@ class TutorialMixin:
             return
         if tut["job"]:
             self.after_cancel(tut["job"])
+        self._tut_unhook_click()
         for w in tut["wins"]:
             try:
                 w.destroy()
@@ -152,15 +160,19 @@ class TutorialMixin:
             {"target": lambda: self._tut_rect_rows(2, 2, "speaker"),
              "text": "화자 버튼을 눌러\n이 줄의 화자를 지정해 보세요.",
              "interactive": True, "done": lambda: bool(self.subtitles[2]["speaker"])},
-            {"target": lambda: self._tut_rect_rows(3, 6),
-             "text": "번호 칸을 드래그해 여러 줄을 고른 뒤\n숫자 키 1, 2를 눌러 보세요.",
+            {"target": lambda: self._tut_rect_rows(3, 3),
+             "text": "번호를 클릭해 이 줄을 선택한 뒤\n숫자 키 1 또는 2를 눌러 보세요.",
+             "keys": ("1", "2"),
+             "interactive": True, "done": lambda: bool(self.subtitles[3]["speaker"])},
+            {"target": lambda: self._tut_rect_rows(4, 6),
+             "text": "번호 칸을 드래그하면 여러 줄을 한 번에 고를 수 있어요.\n세 줄을 고른 뒤 숫자 키를 눌러 보세요.",
              "keys": ("1", "2"),
              "interactive": True,
-             "done": lambda: sum(bool(self.subtitles[i]["speaker"]) for i in range(3, 7)) >= 2},
-            {"target": self._tut_rect_count_and_table,
-             "text": "아직 화자가 없는 줄 수예요.\n누르면 그 줄로 이동해요. 남은 줄도 지정해 보세요.",
-             "interactive": True, "skippable": True,
-             "done": lambda: all(s["speaker"] for s in self.subtitles)},
+             "done": lambda: all(self.subtitles[i]["speaker"] for i in range(4, 7))},
+            {"target": lambda: _widget_rect(self.lbl_count),
+             "text": "아직 화자가 없는 줄 수예요.\n누르면 그 줄로 바로 이동해요. 눌러 보세요.",
+             "interactive": True, "click": self.lbl_count,
+             "done": lambda: self._tut.get("clicked")},
             {"target": lambda: self._tut_rect_rows(0, 0, "content"),
              "text": "자막을 클릭하면 바로 고칠 수 있어요.",
              "interactive": True, "skippable": True},
@@ -192,9 +204,6 @@ class TutorialMixin:
         y1 = (last - top + 1) * self.ROW_H
         rx, ry = c.winfo_rootx(), c.winfo_rooty()
         return (rx + x0, ry + max(0, y0), rx + x1, ry + min(c.winfo_height(), y1))
-
-    def _tut_rect_count_and_table(self):
-        return _union(_widget_rect(self.lbl_count), self._tut_rect_table())
 
     # ── 창 구성 ───────────────────────────
     def _tut_build_windows(self):
@@ -245,6 +254,7 @@ class TutorialMixin:
     # ── 단계 이동 ─────────────────────────
     def _tut_goto(self, i):
         tut = self._tut
+        self._tut_unhook_click()
         steps = self._tut_steps()
         tut["step"], tut["cur"], tut["done"] = i, steps[i], False
         st = tut["cur"]
@@ -265,6 +275,8 @@ class TutorialMixin:
             nxt.pack_forget()
         else:
             nxt.pack(side="right")
+        if st.get("click"):
+            self._tut_hook_click(st["click"])
         tut["rect"] = None
         self._tut_layout()
         # 설명만 하는 단계는 말풍선만 조작 가능
@@ -277,6 +289,21 @@ class TutorialMixin:
                 bub.grab_set()
             except tk.TclError:
                 pass
+
+    def _tut_hook_click(self, w):
+        """w 클릭 시 원래 동작 대신 클릭만 기록."""
+        tag = "TutorialClick"
+        self._tut["clicked"] = False
+        self._tut["hooked"] = w
+        w.bind_class(tag, "<Button-1>", lambda e: (self._tut.__setitem__("clicked", True), "break")[1]
+                     if self._tut else None)
+        w.bindtags((tag,) + w.bindtags())
+
+    def _tut_unhook_click(self):
+        tut = getattr(self, "_tut", None)
+        w = tut and tut.pop("hooked", None)
+        if w:
+            w.bindtags(tuple(t for t in w.bindtags() if t != "TutorialClick"))
 
     def _tut_next(self):
         tut = getattr(self, "_tut", None)
@@ -325,6 +352,10 @@ class TutorialMixin:
         ww, wh = self.winfo_width(), self.winfo_height()
         state = (x0, y0, x1, y1, wx, wy, ww, wh)
         if state == tut["rect"]:
+            # 말풍선 위치가 밀렸으면 다시 맞춤
+            want = tut.get("bub_geo")
+            if want and tut["bubble"].wm_geometry() != want:
+                tut["bubble"].geometry(want)
             return
         tut["rect"] = state
         wx1, wy1 = wx + ww, wy + wh
@@ -368,8 +399,9 @@ class TutorialMixin:
                        if wx <= cx and cx + bw <= wx1 and wy <= cy and cy + bh <= wy1),
                       (x1 - bw - 16, y1 - bh - 16))
         bx = min(max(wx + 8, bx), wx1 - bw - 8)
-        bub.geometry(f"{bw}x{bh}+{bx}+{by}")
+        tut["bub_geo"] = f"{bw}x{bh}+{bx}+{by}"
         bub.deiconify()
+        bub.geometry(tut["bub_geo"])
         bub.lift()
 
 
