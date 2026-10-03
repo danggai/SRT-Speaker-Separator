@@ -114,7 +114,9 @@ class SpeakerMixin:
                 lbl.configure(text=text)
 
     def _render_speakers(self):
-        """화자 목록 전체 다시 그리기 (새 프레임에 만든 뒤 교체해 깜빡임 방지)."""
+        """화자 목록 갱신: 바뀐 줄만 다시 만들고, 그대로면 개수만 갱신."""
+        if self._update_speaker_rows():
+            return
         canvas = getattr(self, "_spk_canvas", None)
         if canvas is None:
             for w in self.speaker_inner.winfo_children():
@@ -178,6 +180,8 @@ class SpeakerMixin:
                  font=(theme.FONT_FAMILY, 9))
         cnt_lbl.pack(side="right", padx=2)
         self._spk_count_lbls[name] = cnt_lbl
+        row._cnt_lbl = cnt_lbl
+        row._spk_color = color
 
         # name_frame: 버튼들 배치 후 마지막에 pack → 남은 공간만 차지
         name_frame = tk.Frame(row, bg=BG3)
@@ -272,6 +276,7 @@ class SpeakerMixin:
         # 내용을 다 채운 뒤에 한 번에 보이게 한다 (만드는 도중 흰 바탕이 번쩍이지 않도록)
         row.pack(fill="x", padx=6, pady=3, ipady=2,
                  **({"before": before} if before is not None else {}))
+        return row
 
     def _append_speaker_row(self, name):
         """새 화자 한 줄만 추가 (불가능하면 전체 다시 그림)."""
@@ -283,6 +288,33 @@ class SpeakerMixin:
             return
         self._make_speaker_row(len(self.speakers) - 1, name, before=add_row)
         self._refresh_speaker_counts()
+
+    def _update_speaker_rows(self):
+        """기존 줄을 재사용해 화자 목록을 맞춘다. 처리하지 못하면 False (전체 다시 그리기)."""
+        add_row = getattr(self, "_spk_add_row", None)
+        rows = [w for w in self.speaker_inner.winfo_children() if hasattr(w, "_spk_name")]
+        if not self.speakers or not rows or add_row is None or not add_row.winfo_exists():
+            return False
+        want = [(n, self._speaker_color(n)) for n in self.speakers]
+        keep = {}
+        for r in rows:
+            key = (r._spk_name, r._spk_color)
+            if key in want and want.index(key) == r._spk_idx and r._spk_name not in keep:
+                keep[r._spk_name] = r
+            else:
+                r.destroy()
+        for i in range(len(want) - 1, -1, -1):
+            name = want[i][0]
+            if name in keep:
+                continue
+            nxt = next((keep[n] for n, _ in want[i + 1:] if n in keep), add_row)
+            keep[name] = self._make_speaker_row(i, name, before=nxt)
+        self._spk_count_lbls = {n: keep[n]._cnt_lbl for n in self.speakers}
+        edit = getattr(self, "_spk_edit_row", None)
+        if edit is not None and not edit.winfo_exists():
+            self._spk_edit_row = None
+        self._refresh_speaker_counts()
+        return True
 
     def _render_speakers_body(self):
         self._spk_count_lbls = {}
