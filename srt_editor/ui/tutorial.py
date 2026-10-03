@@ -258,6 +258,7 @@ class TutorialMixin:
         steps = self._tut_steps()
         tut["step"], tut["cur"], tut["done"] = i, steps[i], False
         st = tut["cur"]
+        tut["bubble"].withdraw()   # 내용 바꾸는 동안 이전 위치에 보이지 않게
         tut["b_step"].configure(text=f"{i + 1} / {len(steps)}")
         tut["b_text"].configure(text=st["text"])
         for w in tut["b_keys"].winfo_children():
@@ -363,13 +364,14 @@ class TutorialMixin:
         x0, y0 = max(wx + r, x0), max(wy + r, y0)
         x1, y1 = min(wx1 - r, x1), min(wy1 - r, y1)
 
+        show = []   # 위치를 먼저 모두 정한 뒤 한꺼번에 보이게 함
+
         def _place(w, a, b, c, d):
             if c - a <= 0 or d - b <= 0:
                 w.withdraw()
                 return
             w.geometry(f"{c - a}x{d - b}+{a}+{b}")
-            w.deiconify()
-            w.lift()
+            show.append(w)
 
         top, bot, left, right = tut["dims"]
         _place(top,   wx, wy, wx1, y0)
@@ -400,9 +402,16 @@ class TutorialMixin:
                       (x1 - bw - 16, y1 - bh - 16))
         bx = min(max(wx + 8, bx), wx1 - bw - 8)
         tut["bub_geo"] = f"{bw}x{bh}+{bx}+{by}"
-        bub.deiconify()
         bub.geometry(tut["bub_geo"])
-        bub.lift()
+        show.append(bub)
+
+        # 새 위치가 반영된 뒤에 표시 (이전 위치에 잠깐 그려지지 않게)
+        for w in show:
+            w.update_idletasks()
+        for w in show:
+            if w.state() != "normal":
+                w.deiconify()
+            w.lift()
 
 
 def _widget_rect(w):
