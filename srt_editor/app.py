@@ -313,11 +313,28 @@ class SRTEditor(
         def _sep(side="left"):
             tk.Frame(top, bg="#34343C", width=1).pack(side=side, fill="y", padx=6, pady=12)
 
+        def _primary(text, cmd, tip):
+            """완료 버튼처럼 보이는 강조 버튼 (보라 바탕 둥근 버튼, 흰 굵은 글씨)."""
+            import tkinter.font as tkfont
+            font = tkfont.Font(self, family=theme.FONT_FAMILY, size=10, weight="bold")
+            w, h, r = font.measure(text) + 36, 36, 10
+            cv = tk.Canvas(top, width=w, height=h, bg=TB_BG, highlightthickness=0, cursor="hand2")
+            cv.pack(side="right", padx=(4, 0), pady=10)
+            cv.create_polygon(r, 0, w - r, 0, w, 0, w, r, w, h - r, w, h, w - r, h, r, h,
+                              0, h, 0, h - r, 0, r, 0, 0, smooth=True, fill=ACCENT, tags="bg")
+            cv.create_text(w / 2, h / 2, text=text, fill="white", font=font)
+            run = _defocus(cmd)
+            cv.bind("<Enter>", lambda e: cv.itemconfigure("bg", fill="#AE96E2"))
+            cv.bind("<Leave>", lambda e: cv.itemconfigure("bg", fill=ACCENT))
+            cv.bind("<ButtonPress-1>", lambda e: cv.itemconfigure("bg", fill="#8466C4"))
+            cv.bind("<ButtonRelease-1>", lambda e: (cv.itemconfigure("bg", fill="#AE96E2"), run()))
+            Tooltip(cv, tip, delay=500)
+            return cv
+
         tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
         _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
         _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
-        _tool("📤", "내보내기", self.export, "화자별 자막 내보내기")
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
         _tool("↪", "다시 실행", self._redo, "다시 실행  [Ctrl+Y]")
@@ -327,7 +344,9 @@ class SRTEditor(
         _sep()
         _tool("⌂", "홈으로", self._close_to_home, "파일 닫고 처음 화면으로")
 
-        tk.Frame(top, bg=TB_BG, width=6).pack(side="right")
+        # 오른쪽 끝부터: 내보내기(강조) → 설정 → 미지정 카운터
+        tk.Frame(top, bg=TB_BG, width=12).pack(side="right")
+        self._export_btn = _primary("📤  내보내기", self.export, "화자별 자막 내보내기")
         _tool("⚙", "설정", self._open_settings, "설정", side="right")
         _sep(side="right")
 
