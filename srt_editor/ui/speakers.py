@@ -523,6 +523,8 @@ class SpeakerMixin:
                 self._refresh_row(idx)
         self._unsaved = True
         self._refresh_speaker_counts()
+        self._wf_img_cache = None
+        self._pb_redraw()   # 타임라인에도 바로 반영
         # 설정: 한 줄 지정 후 다음 줄로
         if self._opt("advance_after_assign") and len(targets) == 1 \
                 and targets[0] + 1 < len(self.subtitles):
@@ -540,6 +542,8 @@ class SpeakerMixin:
         self._unsaved = True
         self._refresh_row(idx)
         self._refresh_speaker_counts()
+        self._wf_img_cache = None
+        self._pb_redraw()   # 타임라인에도 바로 반영
 
     def add_speaker(self):
         # 고유 기본 이름 생성 (새화자1, 새화자2 ...)
