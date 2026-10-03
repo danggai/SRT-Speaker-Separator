@@ -1411,13 +1411,16 @@ class TimelineMixin:
         def _worker():
             import traceback
             try:
-                _ensure_pip("librosa", "numpy", "soundfile", "audioread")
-                # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
-                from concurrent.futures import ProcessPoolExecutor
-                import multiprocessing as _mp
-                from ..waveform import extract_waveform_pts
-                with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
-                    pts = ex.submit(extract_waveform_pts, path, N_PTS).result()
+                from ..waveform import extract_waveform_pts, load_cached, save_cached
+                pts = load_cached(path, N_PTS)
+                if pts is None:
+                    _ensure_pip("librosa", "numpy", "soundfile", "audioread")
+                    # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
+                    from concurrent.futures import ProcessPoolExecutor
+                    import multiprocessing as _mp
+                    with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
+                        pts = ex.submit(extract_waveform_pts, path, N_PTS).result()
+                    save_cached(path, N_PTS, pts)
 
                 def _apply():
                     if self.media_path == path:
