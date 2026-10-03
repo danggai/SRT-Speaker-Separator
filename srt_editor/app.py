@@ -342,11 +342,16 @@ class SRTEditor(
                 cv.itemconfigure("label", fill=lfg)
 
             def _layout():
-                # 아이콘+이름 묶음을 세로 가운데에 (단축키 표시 중이면 모든 버튼을 조금 아래로)
+                # 아이콘+이름 묶음을 실제로 그려진 범위 기준으로 세로 가운데에
                 il, ll = _ifont.metrics("linespace"), _lfont.metrics("linespace")
-                top = (_TB_H - (il + ll)) / 2 + (4 if getattr(self, "_key_hints_on", False) else 0)
+                top = (_TB_H - (il + ll)) / 2
                 cv.coords("icon", w / 2, top + il / 2)
                 cv.coords("label", w / 2, top + il + ll / 2)
+                bb = cv.bbox("icon", "label")
+                if bb:
+                    dy = (_TB_H - (bb[3] - bb[1])) / 2 - bb[1]
+                    cv.move("icon", 0, dy)
+                    cv.move("label", 0, dy)
                 cv.coords("hint", w - 5, 2)
                 bb = cv.bbox("hint") if cv.itemcget("hint", "text") else None
                 if bb and bb[0] < 3:   # 버튼 폭을 넘으면 가운데 정렬해 잘리지 않게
