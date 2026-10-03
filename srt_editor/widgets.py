@@ -200,12 +200,12 @@ class _ColorPickerDialog:
     # ── UI 빌드 ──────────────────────────────
     def _build(self):
         win = tk.Toplevel(self._parent)
+        win.attributes("-alpha", 0.0)   # 가운데로 옮기기 전까지 투명 (기본 위치에 잠깐 떴다 이동하는 것 방지)
         _apply_dark_titlebar(win)
         self._win = win
         win.title(self._title)
         win.resizable(False, False)
         win.configure(bg=BG2)
-        win.grab_set()
         win.transient(self._parent)
 
         pad_outer = tk.Frame(win, bg=BG2)
@@ -297,8 +297,11 @@ class _ColorPickerDialog:
         win.update_idletasks()
         pw = self._parent.winfo_rootx() + self._parent.winfo_width() // 2
         ph = self._parent.winfo_rooty() + self._parent.winfo_height() // 2
-        ww, wh = win.winfo_width(), win.winfo_height()
+        ww, wh = win.winfo_reqwidth(), win.winfo_reqheight()
         win.geometry(f"+{pw - ww//2}+{ph - wh//2}")
+        win.update_idletasks()
+        win.attributes("-alpha", 1.0)
+        win.grab_set()
 
     # ── 팔레트 그리기 (H=x, S=y, V=고정) ────
     def _draw_palette(self):
@@ -464,11 +467,10 @@ class PopupMenu:
     def _show(self, x, y):
         self._destroy()
         win = tk.Toplevel(self._root)
-        _apply_dark_titlebar(win)
+        win.attributes("-alpha", 0.0)   # 제자리로 옮기기 전까지 투명
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=BG3)
-        win.attributes("-alpha", 0.97)
         self._win = win
 
         frame = tk.Frame(win, bg=BG3,
@@ -489,6 +491,8 @@ class PopupMenu:
         if y + wh > sh:
             y = y - wh
         win.geometry(f"+{x}+{y}")
+        win.update_idletasks()
+        win.attributes("-alpha", 0.97)
 
         win.bind("<Escape>", lambda e: self._destroy())
 

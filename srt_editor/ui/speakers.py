@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..config import _load_config, _save_config
-from ..theme import BG2, BG3, FG, FG_DIM, SPEAKER_COLORS, _apply_dark_titlebar
+from ..theme import BG2, BG3, FG, FG_DIM, SPEAKER_COLORS
 from ..widgets import Tooltip, _ColorPickerDialog
 
 
@@ -384,8 +384,8 @@ class SpeakerMixin:
         self._spk_drag_y0  = event.y_root
         # 고스트: 반투명 Toplevel
         g = tk.Toplevel(self)
-        _apply_dark_titlebar(g)
         g.overrideredirect(True)
+        g.geometry(f"+{event.x_root+10}+{event.y_root+10}")   # 보이기 전에 위치부터 (떴다가 이동 방지)
         g.attributes("-alpha", 0.7)
         g.attributes("-topmost", True)
         lbl = tk.Label(g, text=row._spk_name, bg=BG3,
@@ -393,7 +393,6 @@ class SpeakerMixin:
                        font=(theme.FONT_FAMILY, 10, "bold"), padx=12, pady=4,
                        relief="solid", bd=1)
         lbl.pack()
-        g.geometry(f"+{event.x_root+10}+{event.y_root+10}")
         self._spk_drag_ghost = g
 
     def _spk_drag_motion(self, event):
