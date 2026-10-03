@@ -1,4 +1,5 @@
 """설정 창과 자동 자막/모델 관리 탭."""
+import json
 import re
 import tkinter as tk
 from tkinter import messagebox
@@ -392,6 +393,111 @@ class SettingsMixin:
             self._apply_key_hints(bool(var.get()))
             cfg = _load_config(); cfg["show_key_hints"] = bool(var.get()); _save_config(cfg)
         ToggleSwitch(right, var, _hints).pack()
+
+        card = self._settings_card(parent, "설정 파일")
+        _, right = self._settings_row(card, "⇅", "설정 내보내기 · 불러오기",
+                                      "토큰·최근 파일은 빼고 저장")
+        win = parent.winfo_toplevel()
+        flat_button(right, "불러오기", lambda: self._import_settings(win), bg=BG3,
+                    hover="#33333C", padx=14, pady=6).pack(side="right")
+        flat_button(right, "내보내기", lambda: self._export_settings(win), bg=BG3,
+                    hover="#33333C", padx=14, pady=6).pack(side="right", padx=(0, 8))
+
+    def _export_settings(self, win):
+        """공유해도 되는 설정만 JSON 파일로 저장."""
+        from tkinter import filedialog
+        path = filedialog.asksaveasfilename(
+            title="설정 내보내기", parent=win, defaultextension=".json",
+            initialfile="srt_speaker_editer_settings.json",
+            filetypes=[("JSON", "*.json"), ("모든 파일", "*.*")])
+        if not path:
+            return
+        cfg = _load_config()
+        data = {k: cfg[k] for k in sorted(self._settings_keys()) if k in cfg}
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError as e:
+            messagebox.showerror("설정 내보내기", f"저장하지 못했어요.\n{e}", parent=win)
+            return
+        messagebox.showinfo("설정 내보내기", "설정을 저장했어요.", parent=win)
+
+    def _import_settings(self, win):
+        """JSON 파일의 설정을 불러와 바로 적용."""
+        from tkinter import filedialog
+        path = filedialog.askopenfilename(
+            title="설정 불러오기", parent=win,
+            filetypes=[("JSON", "*.json"), ("모든 파일", "*.*")])
+        if not path:
+            return
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("형식이 맞지 않아요")
+        except (OSError, ValueError) as e:
+            messagebox.showerror("설정 불러오기", f"불러오지 못했어요.\n{e}", parent=win)
+            return
+        keys = self._settings_keys()
+        picked = {k: v for k, v in data.items() if k in keys}
+        if not picked:
+            messagebox.showwarning("설정 불러오기", "불러올 설정이 없어요.", parent=win)
+            return
+        cfg = _load_config()
+        cfg.update(picked)
+        _save_config(cfg)
+        self._reload_settings_from_config()
+        win.destroy()
+        self._open_settings(0)
+
+    @staticmethod
+    def _settings_keys():
+        """내보내기·불러오기 대상 설정 키."""
+        return set(OPTION_DEFAULTS) | {
+            "show_key_hints", "speaker_colors", "proper_nouns", "proper_nouns_enabled",
+            "transcribe_max_chars", "transcribe_period", "transcribe_spellcheck",
+            "transcribe_language", "diarize_mode", "diarize_device", "diarize_batch",
+            "diarize_sensitivity", "diarize_sens_scale", "diarize_spk_exact", "num_speakers",
+            "volume"}
+
+    def _reload_settings_from_config(self):
+        """설정 파일 값을 앱 상태에 다시 반영."""
+        cfg = _load_config()
+        self.__dict__.pop("_opt_cache", None)
+        self._transcribe_max_chars = cfg.get("transcribe_max_chars", 25)
+        self._transcribe_period = cfg.get("transcribe_period", False)
+        self._transcribe_spellcheck = cfg.get("transcribe_spellcheck", False)
+        self._transcribe_language = cfg.get("transcribe_language", "ko")
+        for name, v in (("_transcribe_max_chars_var", self._transcribe_max_chars),
+                        ("_transcribe_period_var", self._transcribe_period),
+                        ("_transcribe_spellcheck_var", self._transcribe_spellcheck)):
+            var = getattr(self, name, None)
+            if var is not None:
+                var.set(v)
+        self._diarize_num_spk_val = cfg.get("num_speakers", 0)
+        self._diarize_mode_init = cfg.get("diarize_mode", self._diarize_mode_init)
+        self._diarize_device_init = cfg.get("diarize_device", "auto")
+        self._diarize_batch_init = cfg.get("diarize_batch", 3)
+        self._diarize_spk_exact_init = cfg.get("diarize_spk_exact", False)
+        if cfg.get("diarize_sens_scale") == 2:
+            self._diarize_sensitivity_init = cfg.get("diarize_sensitivity", 50)
+        for name, v in (("_diarize_num_spk", self._diarize_num_spk_val),
+                        ("_diarize_mode_var", self._diarize_mode_init),
+                        ("_diarize_device_var", self._diarize_device_init),
+                        ("_diarize_batch_var", self._diarize_batch_init),
+                        ("_diarize_sensitivity_var", self._diarize_sensitivity_init),
+                        ("_diarize_spk_exact_var", self._diarize_spk_exact_init)):
+            var = getattr(self, name, None)
+            if var is not None:
+                try:
+                    var.set(v)
+                except (tk.TclError, AttributeError):
+                    pass
+        pn = cfg.get("proper_nouns", [])
+        self._proper_nouns = list(pn.keys()) if isinstance(pn, dict) else list(dict.fromkeys(pn))
+        self._proper_nouns_enabled = cfg.get("proper_nouns_enabled", True)
+        self._global_speaker_colors = dict(cfg.get("speaker_colors", {}))
+        self._apply_key_hints(bool(cfg.get("show_key_hints", False)))
 
     # ── 섹션: 편집 ────────────────────────────
     def _build_edit_section(self, parent):
