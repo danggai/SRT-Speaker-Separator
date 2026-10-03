@@ -785,6 +785,10 @@ class TimelineMixin:
             self._pb_canvas.configure(cursor="hand2")
 
     def _pb_press(self, event):
+        if self._other_window_grab():
+            self._wf_sub_drag = None
+            self._pb_dragging = False
+            return "break"
         x, y = event.x, event.y
         self._pb_press_x = x
         self._pb_press_y = y
@@ -983,6 +987,8 @@ class TimelineMixin:
         self._pb_redraw()
 
     def _pb_release(self, event):
+        if self._other_window_grab():
+            return "break"
         drag      = getattr(self, "_wf_sub_drag", None)
         press_x   = getattr(self, "_pb_press_x", event.x)
         press_y   = getattr(self, "_pb_press_y", event.y)

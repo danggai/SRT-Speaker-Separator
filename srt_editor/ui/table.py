@@ -288,8 +288,15 @@ class SubtitleTableMixin:
                 return cid
         return None
 
+    def _other_window_grab(self):
+        """설정 창처럼 다른 창이 입력을 잡고 있으면 True."""
+        grab = self.grab_current()
+        return grab is not None and grab.winfo_toplevel() is not self
+
     def _canvas_press(self, e):
         """화자 버튼 → 지정 / 자막 칸 → 편집 / 선택된 자막의 시간 → 편집 / 그 외 → 선택."""
+        if self._other_window_grab():
+            return "break"
         self._canvas_pressed = True
         s = self._slot_at(e)
         if s < 0:
@@ -318,6 +325,8 @@ class SubtitleTableMixin:
         self._drag_sel_active = False
 
     def _canvas_double(self, e):
+        if self._other_window_grab():
+            return "break"
         s = self._slot_at(e)
         if s >= 0 and self._col_at(e.x) == "time":
             self._ts_edit_start(s)
@@ -341,11 +350,15 @@ class SubtitleTableMixin:
                                      max(self.canvas.winfo_width(), 100))
 
     def _canvas_shift_press(self, e):
+        if self._other_window_grab():
+            return "break"
         s = self._slot_at(e)
         if s >= 0:
             self._slot_shift_click(s)
 
     def _canvas_right_press(self, e):
+        if self._other_window_grab():
+            return "break"
         s = self._slot_at(e)
         if s >= 0:
             self._slot_right_click(s, e)
