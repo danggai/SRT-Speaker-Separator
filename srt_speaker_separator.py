@@ -226,7 +226,7 @@ def _friendly_transcribe_error(err_text: str) -> str:
                 "화자 분리 모델(pyannote)은 HuggingFace에서 별도 이용 약관\n"
                 "동의가 필요합니다. 토큰이 올바른지, 그리고 아래 모델 페이지에서\n"
                 "'Access repository'를 눌러 약관에 동의했는지 확인해 주세요:\n"
-                "  huggingface.co/pyannote/speaker-diarization-3.1\n\n"
+                "  huggingface.co/pyannote/speaker-diarization-community-1\n\n"
                 f"(원본 오류: {err_text[:200]})")
     return err_text
 
@@ -263,6 +263,139 @@ def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
         vad_options={"vad_onset": onset, "vad_offset": offset},
     )
     return model, wmodel
+
+
+def _diarize_exclusive(diar_model, audio, num_speakers=0, exact=False):
+    """pyannote 화자 분리를 실행해 DataFrame(start, end, speaker)을 반환한다.
+
+    pyannote 4(community-1)의 exclusive 출력을 우선 사용한다. 여러 명이 동시에
+    말하는 구간에서 '가장 우세한 화자 하나'만 남긴 결과라, 자막 한 줄에
+    화자 하나를 붙이는 용도에 일반 출력보다 잘 맞는다.
+    num_speakers > 0일 때 exact면 정확히 N명, 아니면 최대 N명으로 제한한다."""
+    import torch
+    import pandas as pd
+    kw = {}
+    if num_speakers and int(num_speakers) > 0:
+        kw["num_speakers" if exact else "max_speakers"] = int(num_speakers)
+    audio_data = {"waveform": torch.from_numpy(audio[None, :]), "sample_rate": 16000}
+    out = diar_model.model(audio_data, **kw)
+    ann = getattr(out, "exclusive_speaker_diarization", None)
+    if ann is None:
+        ann = getattr(out, "speaker_diarization", out)   # 구버전 pyannote 호환
+    rows = [(float(seg.start), float(seg.end), spk)
+            for seg, _, spk in ann.itertracks(yield_label=True)]
+    return pd.DataFrame(rows, columns=["start", "end", "speaker"])
+
+
+def _assign_speakers_by_overlap(intervals, turns):
+    """자막 구간 목록 [(start, end), ...]에 화자 구간 [(start, end, speaker), ...]을
+    매핑해, 자막마다 화자 ID(없으면 None) 리스트를 반환한다.
+
+    자막 구간과 겹치는 모든 화자 구간의 교집합 길이를 화자별로 합산해 가장
+    오래 말한 화자를 고른다. 화자 구간끼리 겹치는 경우(동시 발화)도 모든 구간을
+    보므로 놓치지 않는다. 자막 양 끝 10%는 앞뒤 자막과 경계가 애매한 부분이라
+    가중치를 절반으로 낮춘다. 겹치는 구간이 없으면 중간점이 가장 가까운 화자."""
+    import bisect
+    diar_sorted = sorted(turns, key=lambda x: x[0])
+    diar_starts = [d[0] for d in diar_sorted]
+    # 화자 구간 최대 길이 — 이 값만큼 앞쪽까지만 후보로 본다
+    max_len = max((d_e - d_s for d_s, d_e, _ in diar_sorted), default=0.0)
+
+    out = []
+    for t_s, t_e in intervals:
+        if t_s is None or t_e is None or t_e - t_s <= 0 or not diar_sorted:
+            out.append(None)
+            continue
+        edge = (t_e - t_s) * 0.10
+        core_s, core_e = t_s + edge, t_e - edge
+        scores = {}
+        lo = bisect.bisect_left(diar_starts, t_s - max_len)
+        hi = bisect.bisect_left(diar_starts, t_e)
+        for d_s, d_e, d_spk in diar_sorted[lo:hi]:
+            ov = min(d_e, t_e) - max(d_s, t_s)
+            if ov <= 0:
+                continue
+            core_ov = max(0.0, min(d_e, core_e) - max(d_s, core_s))
+            # 핵심 구간 겹침은 1.0, 양 끝 구간 겹침은 0.5 가중치
+            scores[d_spk] = scores.get(d_spk, 0.0) + core_ov + (ov - core_ov) * 0.5
+        if scores:
+            out.append(max(scores, key=scores.__getitem__))
+        else:
+            t_mid = (t_s + t_e) / 2
+            out.append(min(diar_sorted, key=lambda d: abs(t_mid - (d[0] + d[1]) / 2))[2])
+    return out
+
+
+def _split_segments_by_speaker(segments, min_run_sec=0.6):
+    """assign_word_speakers로 붙은 '단어별' 화자를 기준으로, 세그먼트를 화자가
+    바뀌는 지점마다 나눈다. Whisper 세그먼트는 수십 초까지 길어질 수 있어
+    세그먼트 대표 화자 하나만 쓰면 주고받는 대화가 한 화자로 뭉개진다.
+
+    단어 2개 이하이면서 min_run_sec보다 짧게 튀는 화자 구간(A A B A A)은
+    오분류일 가능성이 높으므로 이웃 화자로 흡수한다."""
+    out = []
+    for seg in segments:
+        words = seg.get("words") or []
+        seg_spk = seg.get("speaker", "")
+        if not words:
+            out.append(seg)
+            continue
+
+        # 화자가 없는 단어(숫자 등 정렬 실패)는 앞 단어의 화자를 이어받는다
+        spks, prev = [], None
+        for w in words:
+            s = w.get("speaker") or prev
+            spks.append(s)
+            prev = s
+        first = next((s for s in spks if s), seg_spk)
+        spks = [s or first for s in spks]
+
+        runs = []   # [speaker, 시작 단어 idx, 끝 단어 idx]
+        for i, s in enumerate(spks):
+            if runs and runs[-1][0] == s:
+                runs[-1][2] = i
+            else:
+                runs.append([s, i, i])
+
+        def _run_dur(r):
+            ws = words[r[1]:r[2] + 1]
+            st = next((w["start"] for w in ws if "start" in w), None)
+            en = next((w["end"] for w in reversed(ws) if "end" in w), None)
+            return (en - st) if st is not None and en is not None else 0.0
+
+        while len(runs) > 1:
+            # 가장 짧게 튄 구간부터 흡수해야 정상 구간이 먼저 먹히지 않는다
+            short = [(_run_dur(r), k) for k, r in enumerate(runs)
+                     if r[2] - r[1] < 2 and _run_dur(r) < min_run_sec]
+            if not short:
+                break
+            k = min(short)[1]
+            nbrs = [runs[j] for j in (k - 1, k + 1) if 0 <= j < len(runs)]
+            runs[k][0] = max(nbrs, key=lambda r: r[2] - r[1])[0]
+            merged = []
+            for r in runs:
+                if merged and merged[-1][0] == r[0]:
+                    merged[-1][2] = r[2]
+                else:
+                    merged.append(r)
+            runs = merged
+
+        if len(runs) == 1:
+            seg = dict(seg)
+            seg["speaker"] = runs[0][0] or seg_spk
+            out.append(seg)
+            continue
+
+        cursor = seg.get("start", 0.0)
+        for spk, i0, i1 in runs:
+            ws = words[i0:i1 + 1]
+            st = next((w["start"] for w in ws if "start" in w), cursor)
+            en = next((w["end"] for w in reversed(ws) if "end" in w), st)
+            cursor = en
+            out.append({"start": st, "end": en,
+                        "text": " ".join(w.get("word", "").strip() for w in ws).strip(),
+                        "words": ws, "speaker": spk or ""})
+    return out
 
 
 def _add_recent_token(cfg: dict, token: str):
@@ -1377,7 +1510,12 @@ class SRTEditor(tk.Tk):
         self._transcribe_language   = _cfg.get("transcribe_language", "ko")   # "ko" | "auto"
         self._diarize_mode_init    = _cfg.get("diarize_mode", _DEFAULT_ASR_MODE)
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")
-        self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 65)
+        self._diarize_spk_exact_init = _cfg.get("diarize_spk_exact", False)
+        # 민감도 눈금 v2: 50 = 모델 기본 임계값. 이전 눈금으로 저장된 값은 50으로 초기화.
+        if _cfg.get("diarize_sens_scale") == 2:
+            self._diarize_sensitivity_init = _cfg.get("diarize_sensitivity", 50)
+        else:
+            self._diarize_sensitivity_init = 50
         _pn_raw = _cfg.get("proper_nouns", [])
         if isinstance(_pn_raw, dict):
             self._proper_nouns = list(_pn_raw.keys())     # 이전 버전(빈도 dict) 호환
@@ -1851,16 +1989,22 @@ class SRTEditor(tk.Tk):
                    bg=BG3, fg=FG, insertbackground=FG, buttonbackground=BG3,
                    relief="flat", highlightthickness=1, highlightbackground=BORDER,
                    font=(FONT_FAMILY, 8), width=5).pack(side="left")
+        if not hasattr(self, "_diarize_spk_exact_var"):
+            self._diarize_spk_exact_var = tk.BooleanVar(
+                value=getattr(self, "_diarize_spk_exact_init", False))
+        tk.Checkbutton(_spk_row, variable=self._diarize_spk_exact_var,
+                       text="정확히 이 인원 (해제 시 최대 인원)",
+                       bg=BG, fg=FG_DIM, selectcolor=BG3, activebackground=BG,
+                       font=(FONT_FAMILY, 8), cursor="hand2").pack(side="left", padx=(8, 0))
 
         # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
-        # 화자 수를 직접 지정했을 때는 그 값이 우선이므로 민감도는 자동으로
-        # 최대(100)로 고정하고, 화자 수가 0(자동)일 때만 슬라이더를 노출한다.
+        # 인원을 정확히 고정했을 때는 민감도가 의미 없으므로 슬라이더를 숨긴다.
         _sens_row = tk.Frame(diar_frame, bg=BG)
         tk.Label(_sens_row, text="분리 민감도", bg=BG, fg=FG_DIM,
                  font=(FONT_FAMILY, 8), width=16, anchor="w").pack(side="left")
         if not hasattr(self, "_diarize_sensitivity_var"):
             self._diarize_sensitivity_var = tk.IntVar(
-                value=getattr(self, "_diarize_sensitivity_init", 65))
+                value=getattr(self, "_diarize_sensitivity_init", 50))
         _sens_val = tk.Label(_sens_row, bg=BG, fg=FG, font=(FONT_FAMILY, 8), width=4)
         _sens_val.pack(side="right")
         def _sens_upd(*_):
@@ -1876,22 +2020,16 @@ class SRTEditor(tk.Tk):
         _sens_slider.pack(side="left", padx=(6, 0))
 
         def _sens_visibility_upd(*_):
-            try:
-                spk = int(self._diarize_num_spk.get())
-            except Exception:
-                spk = 0
-            if spk != 0:
-                # 화자 수를 직접 지정 → 민감도는 의미 없으므로 최대치로 고정 후 숨김
-                self._diarize_sensitivity_var.set(100)
-                _sens_slider.set(100, fire=False)
-                _sens_upd()
+            num, exact = self._get_diarize_spk_settings()
+            if num > 0 and exact:
                 _sens_row.pack_forget()
             else:
                 _sens_row.pack(fill="x", padx=10, pady=(0, 8))
         # 이전에 열렸던 다이얼로그의 콜백이 남아있지 않도록 정리 후 등록
-        for _t in self._diarize_num_spk.trace_info():
-            self._diarize_num_spk.trace_remove(_t[0], _t[1])
-        self._diarize_num_spk.trace_add("write", _sens_visibility_upd)
+        for _v in (self._diarize_num_spk, self._diarize_spk_exact_var):
+            for _t in _v.trace_info():
+                _v.trace_remove(_t[0], _t[1])
+            _v.trace_add("write", _sens_visibility_upd)
         _sens_visibility_upd()
 
         # ── 자막 설정 인라인 ──────────────────────────────────
@@ -2081,16 +2219,20 @@ class SRTEditor(tk.Tk):
                 messagebox.showwarning("토큰 필요",
                     "화자 분리에는 HuggingFace 토큰이 필요합니다.", parent=win)
                 return
+            _cfg = _load_config()
             if hf_tok:
                 self._hf_token = hf_tok
-                _cfg = _load_config()
                 _cfg["hf_token"] = hf_tok
                 _add_recent_token(_cfg, hf_tok)
-                # 화자 수·모드 저장
-                _cfg["num_speakers"] = self._diarize_num_spk.get() if hasattr(self, "_diarize_num_spk") else 0
-                _cfg["diarize_mode"] = self._diarize_mode_var.get() if hasattr(self, "_diarize_mode_var") else "balanced"
-                _cfg["diarize_sensitivity"] = self._diarize_sensitivity_var.get() if hasattr(self, "_diarize_sensitivity_var") else 65
-                _save_config(_cfg)
+            # 화자 수·모드·민감도 저장
+            _num, _exact = self._get_diarize_spk_settings()
+            _cfg["num_speakers"]        = _num
+            _cfg["diarize_spk_exact"]   = _exact
+            _cfg["diarize_mode"]        = self._diarize_mode_var.get()
+            _cfg["diarize_device"]      = self._diarize_device_var.get()
+            _cfg["diarize_sensitivity"] = self._get_diarize_sensitivity()
+            _cfg["diarize_sens_scale"]  = 2
+            _save_config(_cfg)
             win.destroy()
             self._auto_transcribe(media_path, with_diarize=(mode_var.get() == "diarize"),
                                    hf_token=hf_tok)
@@ -2352,12 +2494,13 @@ class SRTEditor(tk.Tk):
                     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
                     diar_model = DiarizationPipeline(token=hf_tok, device=device)
                     self._apply_diarize_sensitivity(diar_model, self._get_diarize_sensitivity())
-                    _num_spk_var = getattr(self, "_diarize_num_spk", None)
-                    _num_spk = _num_spk_var.get() if _num_spk_var else getattr(self, "_diarize_num_spk_val", 0)
-                    _diar_kw = {"num_speakers": _num_spk} if _num_spk and _num_spk > 0 else {}
-                    diar_segs  = diar_model(audio, **_diar_kw)
+                    _num_spk, _exact = self._get_diarize_spk_settings()
+                    diar_segs  = _diarize_exclusive(diar_model, audio, _num_spk, _exact)
+                    del diar_model
+                    if device == "cuda": torch.cuda.empty_cache()
                     result2    = assign_word_speakers(diar_segs, result)
-                    segments   = result2["segments"]
+                    # 세그먼트 대표 화자 대신 단어별 화자로 세그먼트를 다시 나눈다
+                    segments   = _split_segments_by_speaker(result2["segments"])
 
                 if _pstate.get("cancelled"):
                     return
@@ -4674,7 +4817,7 @@ class SRTEditor(tk.Tk):
         # 화자 수
         spk_frame = tk.Frame(parent, bg=BG)
         spk_frame.pack(fill="x", padx=20, pady=(0, 8))
-        tk.Label(spk_frame, text="최대 화자 수 (0=자동)", bg=BG, fg=FG,
+        tk.Label(spk_frame, text="화자 수 (0=자동)", bg=BG, fg=FG,
                  font=(FONT_FAMILY, 9, "bold"), width=18, anchor="w"
                  ).pack(side="left")
         self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
@@ -4683,8 +4826,18 @@ class SRTEditor(tk.Tk):
                    bg=BG3, fg=FG, insertbackground=FG,
                    buttonbackground=BG3, relief="flat",
                    font=(FONT_FAMILY, 10)).pack(side="left", padx=(0, 8))
-        tk.Label(spk_frame, text="(0이면 pyannote가 자동 감지)",
-                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8)).pack(side="left")
+        if not hasattr(self, "_diarize_spk_exact_var"):
+            self._diarize_spk_exact_var = tk.BooleanVar(
+                value=getattr(self, "_diarize_spk_exact_init", False))
+        tk.Checkbutton(spk_frame, variable=self._diarize_spk_exact_var,
+                       text="정확히 이 인원",
+                       bg=BG, fg=FG, selectcolor=BG3, activebackground=BG,
+                       activeforeground=FG, font=(FONT_FAMILY, 9),
+                       cursor="hand2").pack(side="left")
+        tk.Label(parent,
+                 text="  해제 시 '최대 N명'으로 제한 (출연자 수를 대략만 알 때 권장)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
+                 ).pack(fill="x", padx=20, pady=(0, 8))
 
         # 분석 모드
         mode_frame = tk.Frame(parent, bg=BG)
@@ -4715,6 +4868,8 @@ class SRTEditor(tk.Tk):
             _bind_tip(rb)
 
         # 모드 설명 레이블
+        # 인식 모드는 '자동 자막 생성'의 음성 인식에만 쓰인다. 기존 SRT에 화자를
+        # 붙이는 '화자 분석'은 음성 인식 없이 화자 분리만 수행한다.
         _mode_tips = {
             "fast":     "⚡ large-v3-turbo, beam 1 — 빠른 속도, 짧은 발화 놓칠 수 있음",
             "balanced": "⚖ large-v3-turbo, beam 3 — CPU 환경 권장",
@@ -4723,14 +4878,16 @@ class SRTEditor(tk.Tk):
         }
         _tip_lbl = tk.Label(parent, text=_mode_tips.get(self._diarize_mode_var.get(), ""),
                             bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w")
-        _tip_lbl.pack(fill="x", padx=20, pady=(0, 4))
+        _tip_lbl.pack(fill="x", padx=20, pady=(0, 0))
+        tk.Label(parent, text="  ※ 자동 자막 생성 시에만 적용 (화자 분석은 음성 인식을 거치지 않음)",
+                 bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
+                 ).pack(fill="x", padx=20, pady=(0, 4))
         def _on_mode_change(*_):
             _tip_lbl.configure(text=_mode_tips.get(self._diarize_mode_var.get(), ""))
         self._diarize_mode_var.trace_add("write", _on_mode_change)
 
         # 화자 분리 민감도 — 높을수록 화자를 더 잘게(예민하게) 구분
-        # 화자 수를 직접 지정했을 때는 그 값이 우선이므로 민감도는 자동으로
-        # 최대(100)로 고정하고, 화자 수가 0(자동)일 때만 슬라이더를 노출한다.
+        # 인원을 정확히 고정했을 때는 민감도가 의미 없으므로 슬라이더를 숨긴다.
         _sens_container = tk.Frame(parent, bg=BG)
 
         sens_frame = tk.Frame(_sens_container, bg=BG)
@@ -4740,7 +4897,7 @@ class SRTEditor(tk.Tk):
                  ).pack(side="left")
         if not hasattr(self, "_diarize_sensitivity_var"):
             self._diarize_sensitivity_var = tk.IntVar(
-                value=getattr(self, "_diarize_sensitivity_init", 65))
+                value=getattr(self, "_diarize_sensitivity_init", 50))
         _sens_val_lbl = tk.Label(sens_frame, bg=BG, fg=FG, font=(FONT_FAMILY, 9), width=4)
         _sens_val_lbl.pack(side="right")
         def _sens_upd(*_):
@@ -4754,27 +4911,25 @@ class SRTEditor(tk.Tk):
                      width=220, command=_sens_cmd, bg=BG)
         _sens_slider.pack(side="left", padx=(0, 6))
         tk.Label(_sens_container,
-                 text="  높을수록 화자를 더 잘게(예민하게) 구분, 낮을수록 비슷한 목소리를 같은 화자로 묶음",
+                 text="  50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요",
                  bg=BG, fg=FG_DIM, font=(FONT_FAMILY, 8), anchor="w"
                  ).pack(fill="x", padx=20, pady=(0, 6))
 
+        # 민감도 컨테이너가 항상 같은 자리에 다시 나타나도록 위치 표시용 프레임
+        _sens_anchor = tk.Frame(parent, bg=BG)
+        _sens_anchor.pack(fill="x")
+
         def _sens_visibility_upd(*_):
-            try:
-                spk = int(self._diarize_num_spk.get())
-            except Exception:
-                spk = 0
-            if spk != 0:
-                # 화자 수를 직접 지정 → 민감도는 의미 없으므로 최대치로 고정 후 숨김
-                self._diarize_sensitivity_var.set(100)
-                _sens_slider.set(100, fire=False)
-                _sens_upd()
+            num, exact = self._get_diarize_spk_settings()
+            if num > 0 and exact:
                 _sens_container.pack_forget()
             else:
-                _sens_container.pack(fill="x")
+                _sens_container.pack(fill="x", before=_sens_anchor)
         # 이전에 열렸던 탭의 콜백이 남아있지 않도록 정리 후 등록
-        for _t in self._diarize_num_spk.trace_info():
-            self._diarize_num_spk.trace_remove(_t[0], _t[1])
-        self._diarize_num_spk.trace_add("write", _sens_visibility_upd)
+        for _v in (self._diarize_num_spk, self._diarize_spk_exact_var):
+            for _t in _v.trace_info():
+                _v.trace_remove(_t[0], _t[1])
+            _v.trace_add("write", _sens_visibility_upd)
         _sens_visibility_upd()
 
         # 디바이스 선택
@@ -4981,7 +5136,8 @@ class SRTEditor(tk.Tk):
         mode        = _safe_get(getattr(self, "_diarize_mode_var", None), getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
         device_pref = _safe_get(getattr(self, "_diarize_device_var", None), getattr(self, "_diarize_device_init", "auto"))
         batch_idx   = _safe_get(getattr(self, "_diarize_batch_var", None), 3)
-        sensitivity = _safe_get(getattr(self, "_diarize_sensitivity_var", None), getattr(self, "_diarize_sensitivity_init", 65))
+        sensitivity = _safe_get(getattr(self, "_diarize_sensitivity_var", None), getattr(self, "_diarize_sensitivity_init", 50))
+        spk_exact   = _safe_get(getattr(self, "_diarize_spk_exact_var", None), getattr(self, "_diarize_spk_exact_init", False))
 
         _cfg = _load_config()
         if hf_tok:
@@ -4994,7 +5150,10 @@ class SRTEditor(tk.Tk):
         _cfg["diarize_device"] = device_pref
         _cfg["diarize_batch"]  = batch_idx
         _cfg["diarize_sensitivity"] = sensitivity
+        _cfg["diarize_sens_scale"]  = 2
+        _cfg["diarize_spk_exact"]   = bool(spk_exact)
         _save_config(_cfg)
+        self._diarize_spk_exact_init = bool(spk_exact)
         self._diarize_num_spk_val = num_spk
         self._diarize_mode_init   = mode
         self._diarize_device_init = device_pref
@@ -5188,34 +5347,43 @@ class SRTEditor(tk.Tk):
                  ).pack(fill="x", padx=20, pady=(0, 6))
         return pn_frame
 
-    def _get_diarize_sensitivity(self):
-        """현재 설정된 화자 분리 민감도(0~100)를 반환. UI가 아직 없으면 저장된/기본값 사용.
-        화자 수를 직접 지정한 경우(0이 아님)는 민감도가 무의미하므로 항상 100(최대)."""
+    def _get_diarize_spk_settings(self):
+        """(화자 수, 정확히 고정 여부) 반환. 화자 수 0 = 자동.
+        고정이 아니면 화자 수는 '최대 N명' 상한으로 쓰인다."""
         num_spk_var = getattr(self, "_diarize_num_spk", None)
         try:
             num_spk = int(num_spk_var.get()) if num_spk_var is not None \
                       else int(getattr(self, "_diarize_num_spk_val", 0))
         except Exception:
             num_spk = 0
-        if num_spk != 0:
-            return 100
+        exact_var = getattr(self, "_diarize_spk_exact_var", None)
+        try:
+            exact = bool(exact_var.get()) if exact_var is not None \
+                    else bool(getattr(self, "_diarize_spk_exact_init", False))
+        except Exception:
+            exact = False
+        return max(0, num_spk), exact
 
+    def _get_diarize_sensitivity(self):
+        """현재 설정된 화자 분리 민감도(0~100)를 반환. UI가 아직 없으면 저장된/기본값 사용."""
         var = getattr(self, "_diarize_sensitivity_var", None)
         if var is not None:
             try:
                 return max(0, min(100, int(var.get())))
             except Exception:
                 pass
-        return max(0, min(100, int(getattr(self, "_diarize_sensitivity_init", 65))))
+        return max(0, min(100, int(getattr(self, "_diarize_sensitivity_init", 50))))
 
     def _apply_diarize_sensitivity(self, diarize_model, sensitivity):
         """화자 분리 민감도(0~100)를 pyannote 파이프라인의 클러스터링 임계값에 반영.
-        민감도가 높을수록 임계값을 낮춰 화자를 더 잘게(예민하게) 구분한다.
-        (clustering.threshold: 값이 작을수록 서로 다른 화자로 더 쉽게 나뉨)
+        50이면 모델 기본 임계값 그대로, 높을수록 임계값을 낮춰 화자를 더 잘게
+        (예민하게) 구분한다. (clustering.threshold: 작을수록 다른 화자로 쉽게 나뉨)
         whisperx/pyannote 버전에 따라 내부 구조가 다를 수 있으므로, 실패해도
         조용히 무시하고 파이프라인 기본 설정으로 계속 진행한다."""
         try:
             sensitivity = max(0, min(100, int(sensitivity)))
+            if sensitivity == 50:
+                return
             pipeline = getattr(diarize_model, "model", None)
             if pipeline is None or not hasattr(pipeline, "parameters"):
                 return
@@ -5223,9 +5391,10 @@ class SRTEditor(tk.Tk):
             clustering = params.get("clustering") if isinstance(params, dict) else None
             if not isinstance(clustering, dict) or "threshold" not in clustering:
                 return
-            # 민감도 0(둔감) → 임계값 0.85 / 100(예민) → 임계값 0.45
-            LOW, HIGH = 0.45, 0.85
-            clustering["threshold"] = HIGH - (sensitivity / 100.0) * (HIGH - LOW)
+            # 민감도 0 → 기본값+0.2 (둔감) / 100 → 기본값-0.2 (예민)
+            base = float(clustering["threshold"])
+            thr = base + (50 - sensitivity) / 50.0 * 0.2
+            clustering["threshold"] = max(0.05, min(0.95, thr))
             pipeline.instantiate(params)
         except Exception:
             pass
@@ -5258,6 +5427,9 @@ class SRTEditor(tk.Tk):
         _cfg["hf_token"]     = hf_tok
         _cfg["num_speakers"] = num_spk
         _cfg["diarize_mode"] = getattr(self, "_diarize_mode_var", tk.StringVar()).get()
+        _cfg["diarize_spk_exact"]   = self._get_diarize_spk_settings()[1]
+        _cfg["diarize_sensitivity"] = self._get_diarize_sensitivity()
+        _cfg["diarize_sens_scale"]  = 2
         _add_recent_token(_cfg, hf_tok)
         self._recent_tokens  = _cfg.get("recent_tokens", [])
         _save_config(_cfg)
@@ -5303,8 +5475,8 @@ class SRTEditor(tk.Tk):
         _eta_lbl.pack(side="right")
 
         # 단계 타임라인 — 전체 너비에 균등 분배
-        STEP_LABELS = ["import", "model", "audio", "transcribe", "align", "diarize", "map"]
-        STEP_NAMES  = ["임포트", "모델로드", "음성로드", "음성인식", "정렬", "화자분리", "매핑"]
+        STEP_LABELS = ["import", "audio", "model", "diarize", "map"]
+        STEP_NAMES  = ["임포트", "음성로드", "모델로드", "화자분리", "매핑"]
         step_row = tk.Frame(prog_win, bg=BG)
         step_row.pack(fill="x", padx=32, pady=(8, 0))
         _step_lbls = []
@@ -5346,15 +5518,13 @@ class SRTEditor(tk.Tk):
         # 단계별 누적 % (예상시간 제거 — 실측 기반으로 계산)
         _STEPS = {
             "import":      5,
-            "model":       20,
-            "audio":       25,
-            "transcribe":  55,
-            "align":       70,
-            "diarize":     90,
+            "audio":       12,
+            "model":       25,
+            "diarize":     92,
             "map":         97,
             "done":        100,
         }
-        _STEP_ORDER = ["import","model","audio","transcribe","align","diarize","map","done"]
+        _STEP_ORDER = ["import","audio","model","diarize","map","done"]
 
         def _fmt_time(sec):
             sec = int(sec)
@@ -5492,9 +5662,7 @@ class SRTEditor(tk.Tk):
             try:
                 if step_key not in _STEPS:
                     return
-                step_start_pct = {
-                    "transcribe": 25.0, "align": 55.0, "diarize": 70.0
-                }.get(step_key, None)
+                step_start_pct = {"diarize": 25.0}.get(step_key, None)
                 step_end_pct = float(_STEPS[step_key])
                 if step_start_pct is None:
                     return
@@ -5731,59 +5899,14 @@ class SRTEditor(tk.Tk):
                 cpu_count = os.cpu_count() or 4
                 torch.set_num_threads(cpu_count)
 
-                # ── 모드별 파라미터 ──────────────────────────────────
-                _mode = getattr(self, "_diarize_mode_var", None)
-                _mode = _mode.get() if _mode else "balanced"
-
-                # GPU batch_size: VRAM 여유에 따라 조정 가능
-                # CPU batch_size: 1 고정 (메모리/속도 균형)
-                if device == "cuda":
-                    _MODE_CFG = {
-                        #           model               beam  batch
-                        "fast":     ("large-v3-turbo",  1,    16),
-                        "balanced": ("large-v3-turbo",  3,    16),
-                        "accurate": ("large-v3",        5,    8),
-                        "best":     ("large-v3",        5,    8),
-                    }
-                else:
-                    _MODE_CFG = {
-                        "fast":     ("large-v3-turbo",  1,    1),
-                        "balanced": ("large-v3-turbo",  3,    1),
-                        "accurate": ("large-v3",        5,    1),
-                        "best":     ("large-v3",        5,    1),
-                    }
-                wmodel, beam, _mb = _MODE_CFG.get(_mode, _MODE_CFG["balanced"])
-                compute = "float16" if device == "cuda" else "float32"
-
-                # batch_size: GPU → 슬라이더, CPU → 1
-                if device == "cuda":
-                    _BATCH_MAP = [2, 4, 8, 16, 32]
-                    _bidx = getattr(self, "_diarize_batch_var", None)
-                    _bidx = _bidx.get() if _bidx else 3
-                    batch_size = _BATCH_MAP[max(0, min(_bidx, len(_BATCH_MAP)-1))]
-                else:
-                    batch_size = 1
-
-                # ── 모델 다운로드 진행 표시 ──────────────────────────────
-                # huggingface_hub의 다운로드 콜백으로 실시간 진행률 수신
-                _dl_state = {"active": False, "desc": "", "pct": 0.0}
-
+                # 기존 SRT의 자막 타이밍에 화자만 붙이는 작업이므로 음성 인식·정렬은
+                # 필요 없다. pyannote의 화자 구간을 자막 구간과 직접 겹쳐 매핑한다.
                 def _progress_ticker(step_key, est_sec):
                     """0.5초마다 세부 진행률 업데이트."""
                     t0 = _time.time()
                     while _prog_state["running"] and _prog_state["step_key"] == step_key:
                         _tick_progress(step_key, _time.time() - t0, est_sec)
                         _time.sleep(0.5)
-
-                _set_status(f"Whisper 모델 로드 중... ({device} / {wmodel})", "model")
-                _pn_hint = self._build_proper_noun_hint()
-                model = whisperx.load_model(
-                    wmodel, device,
-                    compute_type=compute,
-                    asr_options={"beam_size": beam, **_pn_hint},
-                )
-                if _prog_state.get("cancelled"):
-                    return
 
                 _set_status("음성 로드 중...", "audio")
                 audio = whisperx.load_audio(self.media_path)
@@ -5794,49 +5917,19 @@ class SRTEditor(tk.Tk):
 
                 # 오디오 길이 기반 단계별 예상시간 계산
                 audio_dur = len(audio) / 16000.0
-                if device == "cuda":
-                    spd = 20.0 if "turbo" in wmodel else 12.0
-                else:
-                    spd = 1.5
-                _est_transcribe = audio_dur / spd
-                _est_align      = audio_dur / 30.0
-                _est_diarize    = audio_dur / 8.0
+                _est_diarize = audio_dur / (40.0 if device == "cuda" else 3.0)
                 _prog_state["stage_estimates"] = {
-                    "import":    2.0,
-                    "model":     15.0,
-                    "audio":     3.0,
-                    "transcribe": _est_transcribe,
-                    "align":     _est_align,
-                    "diarize":   _est_diarize,
-                    "map":       2.0,
+                    "import":  2.0,
+                    "audio":   3.0,
+                    "model":   10.0,
+                    "diarize": _est_diarize,
+                    "map":     1.0,
                 }
 
-                _set_status("음성 인식 중...", "transcribe")
-                _t = _threading.Thread(
-                    target=_progress_ticker, args=("transcribe", _est_transcribe), daemon=True)
-                _t.start()
-                result = model.transcribe(audio, batch_size=batch_size)
-                # 인식 모델 즉시 해제
-                del model
-                if device == "cuda":
-                    torch.cuda.empty_cache()
-                if _prog_state.get("cancelled"):
-                    return
-
-                _set_status("타임스탬프 정렬 중...", "align")
-                _t = _threading.Thread(
-                    target=_progress_ticker, args=("align", _est_align), daemon=True)
-                _t.start()
-                model_a, meta = whisperx.load_align_model(
-                    language_code=result["language"], device=device)
-                result = whisperx.align(
-                    result["segments"], model_a, meta, audio, device,
-                    return_char_alignments=False,
-                )
-                # align 모델 즉시 해제 (VRAM/RAM 확보 → diarize 여유 확보)
-                del model_a
-                if device == "cuda":
-                    torch.cuda.empty_cache()
+                _set_status(f"화자 분리 모델 로드 중... ({device})", "model")
+                from whisperx.diarize import DiarizationPipeline
+                diarize_model = DiarizationPipeline(token=hf_tok, device=device)
+                self._apply_diarize_sensitivity(diarize_model, self._get_diarize_sensitivity())
                 if _prog_state.get("cancelled"):
                     return
 
@@ -5844,29 +5937,16 @@ class SRTEditor(tk.Tk):
                 _t = _threading.Thread(
                     target=_progress_ticker, args=("diarize", _est_diarize), daemon=True)
                 _t.start()
-                from whisperx.diarize import DiarizationPipeline, assign_word_speakers
-
-                diarize_model = DiarizationPipeline(
-                    token=hf_tok,
-                    device=device,
-                )
-                self._apply_diarize_sensitivity(diarize_model, self._get_diarize_sensitivity())
-                kw = {}
-                if num_spk > 0:
-                    kw["num_speakers"] = num_spk
-                diarize_segments = diarize_model(audio, **kw)
+                _num_spk, _exact = self._get_diarize_spk_settings()
+                diarize_segments = _diarize_exclusive(diarize_model, audio, _num_spk, _exact)
                 if _prog_state.get("cancelled"):
                     return
 
                 _set_status("화자 매핑 중...", "map")
-                result = assign_word_speakers(diarize_segments, result)
+                turns = [{"start": r.start, "end": r.end, "speaker": r.speaker}
+                         for r in diarize_segments.itertuples(index=False)]
 
-                if _prog_state.get("cancelled"):
-                    return
-
-                # 결과를 기존 자막에 매핑
                 def _apply():
-                    nonlocal result
                     if _prog_state.get("cancelled"):
                         return
                     try:
@@ -5874,14 +5954,7 @@ class SRTEditor(tk.Tk):
                         prog_win.after(300, prog_win.destroy)
                     except Exception:
                         pass
-                    self._apply_diarize_result(result["segments"])
-                    # 메인 스레드에서 실제로 다 사용한 뒤 여기서 해제
-                    # (워커 스레드의 finally보다 먼저 실행되면 안 되므로
-                    #  워커의 일괄 정리 목록에는 result를 넣지 않는다)
-                    try:
-                        del result
-                    except Exception:
-                        pass
+                    self._apply_diarize_result(turns)
 
                 self.after(0, _apply)
 
@@ -5971,73 +6044,11 @@ class SRTEditor(tk.Tk):
 
         self._push_undo()
 
-        # ── 각 자막에 화자 배정 (가중치 샘플링 방식) ──────────────────
-        # 자막 구간을 N개 포인트로 샘플링 → 각 포인트의 화자 구간 매핑 → 가중 투표
-        # 경계선 자막에서도 실제 발화 비율대로 화자를 결정
-        SAMPLES = 20   # 자막 1개당 샘플 포인트 수 (많을수록 정밀, 성능 미미)
-
-        # diar를 시작시간 기준으로 정렬 → 이진탐색으로 빠른 lookup
-        diar_sorted = sorted(diar, key=lambda x: x[0])
-
-        def _spk_at(t):
-            """시각 t에 발화 중인 화자 반환. 없으면 None."""
-            # 이진탐색: t보다 start가 작거나 같은 마지막 세그먼트 찾기
-            lo, hi = 0, len(diar_sorted) - 1
-            idx = -1
-            while lo <= hi:
-                mid = (lo + hi) // 2
-                if diar_sorted[mid][0] <= t:
-                    idx = mid
-                    lo = mid + 1
-                else:
-                    hi = mid - 1
-            if idx >= 0:
-                d_s, d_e, d_spk = diar_sorted[idx]
-                if d_s <= t <= d_e:
-                    return spk_map.get(d_spk, "")
-            return None
-
         cache = getattr(self, "_ts_cache", [])
-        for i, (t_s, t_e) in enumerate(cache):
-            if t_s is None or t_e is None:
-                continue
-
-            dur = t_e - t_s
-            if dur <= 0:
-                continue
-
-            # 자막 구간을 SAMPLES개 포인트로 샘플링
-            # 포인트 간격을 균일하게, 경계 부근 0.05초 가중치 낮춤
-            scores: dict[str, float] = {}
-            for k in range(SAMPLES):
-                # 0~1 사이 균일 분포, 양 끝단은 약간 안쪽으로
-                r = (k + 0.5) / SAMPLES
-                t = t_s + dur * r
-
-                # 경계 근처(앞 10% / 뒤 10%)는 가중치 0.5로 낮춤 (경계 오류 완화)
-                weight = 0.5 if r < 0.10 or r > 0.90 else 1.0
-
-                spk = _spk_at(t)
-                if spk:
-                    scores[spk] = scores.get(spk, 0.0) + weight
-
-            if scores:
-                # 가중치 합이 가장 높은 화자 선택
-                best_spk = max(scores, key=scores.__getitem__)
-                self.subtitles[i]["speaker"] = best_spk
-            else:
-                # 겹치는 구간이 아예 없으면 → 중간점 기준 가장 가까운 화자 fallback
-                t_mid = (t_s + t_e) / 2
-                best_spk  = ""
-                best_dist = float("inf")
-                for d_s, d_e, d_spk in diar_sorted:
-                    d_mid = (d_s + d_e) / 2
-                    dist  = abs(t_mid - d_mid)
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_spk  = spk_map.get(d_spk, "")
-                if best_spk:
-                    self.subtitles[i]["speaker"] = best_spk
+        for i, sid in enumerate(_assign_speakers_by_overlap(cache, diar)):
+            name = spk_map.get(sid, "") if sid else ""
+            if name:
+                self.subtitles[i]["speaker"] = name
 
         self._unsaved = True
         self._auto_resize_speaker_col()
