@@ -97,9 +97,25 @@ class SpeakerMixin:
             self._pb_redraw()
 
     # ── 화자 사이드바 렌더 ───────────────────
+    def _refresh_speaker_counts(self):
+        """화자별 자막 수만 갱신. 자막에 화자를 지정할 때는 화자 목록 자체가 바뀌지
+        않으므로, 목록을 통째로 다시 만들어 깜빡이게 하지 않고 숫자만 바꾼다."""
+        lbls = getattr(self, "_spk_count_lbls", {})
+        if list(lbls) != list(self.speakers) or not all(l.winfo_exists() for l in lbls.values()):
+            self._render_speakers()
+            return
+        counts = {}
+        for s in self.subtitles:
+            counts[s["speaker"]] = counts.get(s["speaker"], 0) + 1
+        for name, lbl in lbls.items():
+            text = str(counts.get(name, 0))
+            if lbl.cget("text") != text:
+                lbl.configure(text=text)
+
     def _render_speakers(self):
         for w in self.speaker_inner.winfo_children():
             w.destroy()
+        self._spk_count_lbls = {}
 
         # 화자 해제 단축키 힌트
         tk.Label(self.speaker_inner,
@@ -171,6 +187,7 @@ class SpeakerMixin:
             cnt_lbl = tk.Label(row, text=str(cnt), bg=BG3, fg=FG_DIM,
                      font=(theme.FONT_FAMILY, 9))
             cnt_lbl.pack(side="right", padx=2)
+            self._spk_count_lbls[name] = cnt_lbl
 
             # name_frame: 버튼들 배치 후 마지막에 pack → 남은 공간만 차지
             name_frame = tk.Frame(row, bg=BG3)
@@ -374,7 +391,7 @@ class SpeakerMixin:
                 self.subtitles[idx]["speaker"] = val
                 self._refresh_row(idx)
         self._unsaved = True
-        self._render_speakers()
+        self._refresh_speaker_counts()
         return "break"
 
     def _assign_speaker_from_sidebar(self, name):
@@ -385,7 +402,7 @@ class SpeakerMixin:
         self.subtitles[idx]["speaker"] = name
         self._unsaved = True
         self._refresh_row(idx)
-        self._render_speakers()
+        self._refresh_speaker_counts()
 
     def add_speaker(self):
         # 고유 기본 이름 생성 (새화자1, 새화자2 ...)

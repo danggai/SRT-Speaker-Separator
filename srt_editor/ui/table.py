@@ -28,7 +28,7 @@ class SubtitleTableMixin:
 
     # ── 자막 테이블 (가상 스크롤, 한 줄 카드) ─────────────
     # 컬럼 정의: num / time(시작 + 길이) / content(가변) / speaker
-    # 각 자막은 둥근 테두리 카드로 그리고, 시간을 더블클릭하면 시작/종료
+    # 각 자막은 둥근 테두리 카드로 그리고, 선택된 자막의 시간을 클릭(또는 더블클릭)하면 시작/종료
     # 타임스탬프 입력칸이 나타나 정확한 시각을 편집할 수 있다.
     _WF_HANDLE_W = 5   # 파형 자막 핸들 너비(px)
     _MIN_SUB_DURATION = 0.05   # 리사이즈 시 강제되는 최소 자막 길이(초)
@@ -58,7 +58,7 @@ class SubtitleTableMixin:
         hdr_c.pack(fill="x")
         self._hdr_canvas = hdr_c
 
-        _titles = {"num": "#", "time": "시간 (더블클릭: 편집)",
+        _titles = {"num": "#", "time": "시간 (선택 후 클릭: 편집)",
                    "content": "자막 내용", "speaker": "화자"}
         self._hdr_wins = {}
         for cid in list(self._COL_IDS) + ["content"]:
@@ -238,7 +238,7 @@ class SubtitleTableMixin:
         txt_var = tk.StringVar()
         txt_e = tk.Entry(row, textvariable=txt_var,
                          bg=card_bg, fg=FG, insertbackground=FG,
-                         font=(theme.FONT_FAMILY, 11), relief="flat",
+                         font=(theme.FONT_FAMILY, 10), relief="flat",
                          highlightthickness=1, highlightbackground=card_bg,
                          highlightcolor=ACCENT)
         wi["content"] = txt_e
@@ -297,9 +297,18 @@ class SubtitleTableMixin:
         spk_frame.bind("<B1-Motion>",  _relay_motion)
         spk_frame.bind("<ButtonRelease-1>", _relay_release)
         spk_frame.bind("<Button-3>",   lambda e, s=slot_idx: self._slot_right_click(s, e))
-        # 시간 칸: 한 번 클릭은 다른 칸처럼 선택, 더블클릭은 시각 편집
+        # 시간 칸: 이미 선택된 자막이면 한 번 클릭으로 시각 편집, 아니면 먼저 선택.
+        #          (더블클릭은 선택 여부와 관계없이 바로 편집)
+        def _time_press(e, s=slot_idx):
+            di = self._slot_data_idx(s)
+            if (di >= 0 and di == getattr(self, "_selected_row_idx", None)
+                    and len(getattr(self, "_selected_rows", set())) <= 1):
+                self._ts_edit_start(s)
+                return "break"
+            _relay_press(e, s)
+
         for w in (time_frame, time_lbl, dur_lbl):
-            w.bind("<Button-1>",        _relay_press)
+            w.bind("<Button-1>",        _time_press)
             w.bind("<Shift-Button-1>",  lambda e, s=slot_idx: self._slot_shift_click(s))
             w.bind("<B1-Motion>",       _relay_motion)
             w.bind("<ButtonRelease-1>", _relay_release)
@@ -462,7 +471,7 @@ class SubtitleTableMixin:
                 self.subtitles[idx]["speaker"] = val
                 self._redraw_slot_for(idx)
         self._unsaved = True
-        self._render_speakers()
+        self._refresh_speaker_counts()
         # 재생바(타임라인)의 자막 색상도 즉시 반영 — 그렇지 않으면 재생/이동
         # 등 다른 동작을 해야 뒤늦게 갱신되는 것처럼 보였다.
         self._wf_img_cache = None
@@ -1165,7 +1174,7 @@ class SubtitleTableMixin:
         self.subtitles[sub_idx]["speaker"] = val
         self._unsaved = True
         self._refresh_row(sub_idx)
-        self._render_speakers()
+        self._refresh_speaker_counts()
         # 재생바(타임라인)의 자막 색상도 즉시 반영
         self._wf_img_cache = None
         self._pb_redraw()
