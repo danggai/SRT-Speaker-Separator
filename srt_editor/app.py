@@ -34,7 +34,7 @@ from .theme import (
     _pick_font,
 )
 from .version import APP_VERSION, GITHUB_TAGS_URL
-from .widgets import PopupMenu, Tooltip
+from .widgets import Tooltip
 
 
 class SRTEditor(
@@ -265,40 +265,13 @@ class SRTEditor(
 
     # ── UI 구성 ───────────────────────────────
     def _build_ui(self):
-        # 상단 툴바
-        top = ttk.Frame(self, style="Top.TFrame")
+        # 상단 툴바 — Vrew처럼 아이콘(위) + 이름(아래) 버튼, 기능 묶음 사이 구분선
+        TB_BG, TB_HOVER = "#202024", "#2E2E36"
+        top = tk.Frame(self, bg=TB_BG)
         top.pack(fill="x")
+        tk.Frame(self, bg=BORDER, height=1).pack(fill="x")
         self._top_bar = top   # 업데이트 배지 삽입용
 
-        # ── 파일 메뉴 버튼 (컴팩트 아이콘) ──
-        file_menu = PopupMenu(self)
-        file_menu.add_command(label="열기",             accelerator="Ctrl+O", command=self.open_file)
-        file_menu.add_separator()
-        file_menu.add_command(label="저장",             accelerator="Ctrl+S", command=self.save_file)
-        file_menu.add_command(label="다른 이름으로 저장",                      command=self.save_file_as)
-        file_menu.add_separator()
-        file_menu.add_command(label="닫기 (홈으로)",                          command=self._close_to_home)
-
-        _file_wrap = tk.Frame(top, bg=BG3,
-                              highlightthickness=1, highlightbackground=BORDER)
-        _file_wrap.pack(side="left", padx=(8, 0), pady=10)
-
-        def _show_file_menu(e=None):
-            w = _file_wrap
-            file_menu.tk_popup(w.winfo_rootx(), w.winfo_rooty() + w.winfo_height())
-
-        _file_btn = tk.Button(_file_wrap, text="📁  파일",
-                              bg=BG3, fg=FG, relief="flat", bd=0,
-                              font=(theme.FONT_FAMILY, 10), padx=7, pady=2,
-                              cursor="hand2", takefocus=0,
-                              activebackground=BG2, activeforeground=FG,
-                              command=_show_file_menu)
-        _file_btn.pack(side="left")
-        Tooltip(_file_btn, "파일  열기 / 저장", delay=500)
-
-        tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
-
-        # ── 아이콘 전용 버튼 ──────────────────
         def _defocus(fn):
             """버튼 실행 후 포커스를 루트로 돌려 스페이스바 재실행 방지."""
             def wrapper(*a, **k):
@@ -306,31 +279,64 @@ class SRTEditor(
                 self.focus_set()
             return wrapper
 
-        def _mini_btn(parent, text, cmd, tip):
-            b = tk.Button(parent, text=text, command=cmd,
-                          bg=BG3, fg=FG, relief="flat", bd=0,
-                          font=(theme.FONT_FAMILY, 10), padx=7, pady=2,
-                          cursor="hand2", takefocus=0,
-                          activebackground=BG2, activeforeground=FG)
-            b.pack(side="left")
-            # 버튼 사이 구분선
-            Tooltip(b, tip, delay=500)
-            return b
+        def _tool(icon, label, cmd, tip, side="left"):
+            """아이콘 + 이름을 세로로 둔 툴바 버튼. 마우스를 올리면 배경이 밝아진다."""
+            box = tk.Frame(top, bg=TB_BG, cursor="hand2")
+            box.pack(side=side, padx=1, pady=5)
+            ic = tk.Label(box, text=icon, bg=TB_BG, fg=FG, cursor="hand2",
+                          font=(theme.FONT_FAMILY, 15))
+            ic.pack(padx=12, pady=(4, 0))
+            tx = tk.Label(box, text=label, bg=TB_BG, fg=FG_DIM, cursor="hand2",
+                          font=(theme.FONT_FAMILY, 8))
+            tx.pack(padx=8, pady=(0, 5))
+            parts = (box, ic, tx)
 
-        # 콤팩트 버튼 그룹 (실행취소 / 다시실행)
-        _btn_group = tk.Frame(top, bg=BG3,
-                              highlightthickness=1, highlightbackground=BORDER)
-        _btn_group.pack(side="left", padx=(0, 4), pady=10)
+            def _enter(e):
+                for w in parts:
+                    w.configure(bg=TB_HOVER)
+                tx.configure(fg=FG)
 
-        _mini_btn(_btn_group, "↩",
-                  _defocus(self._undo),
-                  "실행 취소  [Ctrl+Z]")
-        tk.Frame(_btn_group, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
-        _mini_btn(_btn_group, "↪",
-                  _defocus(self._redo),
-                  "다시 실행  [Ctrl+Y]")
+            def _leave(e):
+                for w in parts:
+                    w.configure(bg=TB_BG)
+                tx.configure(fg=FG_DIM)
 
-        tk.Frame(top, bg=BORDER, width=1).pack(side="left", fill="y", padx=8, pady=6)
+            run = _defocus(cmd)
+            for w in parts:
+                w.bind("<Enter>", _enter)
+                w.bind("<Leave>", _leave)
+                w.bind("<Button-1>", lambda e: run())
+            for w in (ic, tx):
+                Tooltip(w, tip, delay=500)
+            return box
+
+        def _sep(side="left"):
+            tk.Frame(top, bg="#34343C", width=1).pack(side=side, fill="y", padx=6, pady=12)
+
+        tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
+        _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
+        _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
+        _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
+        _tool("⌂", "닫기", self._close_to_home, "파일 닫고 처음 화면으로")
+        _sep()
+        _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
+        _tool("↪", "다시 실행", self._redo, "다시 실행  [Ctrl+Y]")
+        _sep()
+        _tool("🎙", "화자 분석", self._open_diarize_dialog, "화자 자동 분석")
+        _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
+        _sep()
+        _tool("📤", "내보내기", self.export, "화자별 자막 내보내기")
+
+        tk.Frame(top, bg=TB_BG, width=6).pack(side="right")
+        _tool("⚙", "설정", self._open_settings, "설정", side="right")
+        _sep(side="right")
+
+        # 미지정 카운터
+        self.lbl_count = tk.Label(top, text="", bg=TB_BG,
+                                  fg="#FF9A5C", cursor="hand2",
+                                  font=(theme.FONT_FAMILY, 9))
+        self.lbl_count.pack(side="right", padx=(0, 4), pady=8)
+        self.lbl_count.bind("<Button-1>", lambda e: self._goto_next_unassigned())
 
         # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
         import webbrowser as _wb_top
@@ -345,40 +351,6 @@ class SRTEditor(
         # 처음엔 숨김 — 신버전 감지 시 command 설정 후 pack
         self._update_badge_anchor = top
         self._update_badge_latest = None
-
-        # ── 우측 버튼 그룹 ───────────────────────────
-        def _right_group(*items):
-            """(text, cmd, tip) 목록으로 컴팩트 버튼 그룹 생성."""
-            grp = tk.Frame(top, bg=BG3,
-                           highlightthickness=1, highlightbackground=BORDER)
-            grp.pack(side="right", padx=(0, 6), pady=10)
-            for i, (text, cmd, tip) in enumerate(items):
-                if i > 0:
-                    tk.Frame(grp, bg=BORDER, width=1).pack(side="left", fill="y", pady=3)
-                b = tk.Button(grp, text=text, command=cmd,
-                              bg=BG3, fg=FG, relief="flat", bd=0,
-                              font=(theme.FONT_FAMILY, 10), padx=8, pady=2,
-                              cursor="hand2", takefocus=0,
-                              activebackground=BG2, activeforeground=FG)
-                b.pack(side="left")
-                Tooltip(b, tip, delay=500)
-            return grp
-
-        # 미지정 카운터
-        self.lbl_count = tk.Label(top, text="", bg=BG3,
-                                  fg="#FF9A5C", cursor="hand2",
-                                  font=(theme.FONT_FAMILY, 9))
-        self.lbl_count.pack(side="right", padx=(0, 4), pady=8)
-        self.lbl_count.bind("<Button-1>", lambda e: self._goto_next_unassigned())
-
-        _right_group(("⚙", self._open_settings, "설정"))
-        _right_group(
-            ("📤  내보내기", self.export, "화자별 자막 내보내기"),
-        )
-        _right_group(
-            ("🎙  화자 분석", self._open_diarize_dialog, "화자 자동 분석"),
-            ("✏  자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기"),
-        )
 
         # 하단 타임라인(미디어 패널) — 화자 목록 아래까지 창 전체 폭을 쓰도록
         # 본문보다 먼저 창 맨 아래에 배치한다.
