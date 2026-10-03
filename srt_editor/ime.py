@@ -9,6 +9,7 @@ _WM_IME_COMPOSITION = 0x010F
 _GWLP_WNDPROC = -4
 _CFS_POINT = 0x0002
 _OFFSCREEN = -32000
+_IACE_DEFAULT = 0x10
 
 
 class ImeCompositionOverlay:
@@ -127,10 +128,15 @@ class ImeCompositionOverlay:
             hwnd = self._user32.GetFocus()
             if hwnd:
                 self._hook(hwnd)
-                if not isinstance(widget, tk.Entry) and hwnd not in self._no_ime:
+                is_entry = isinstance(widget, (tk.Entry, tk.Text))
+                if not is_entry and hwnd not in self._no_ime:
                     # 입력칸이 아닌 곳에서는 입력기를 떼어, 한글 상태여도 S·A·M 같은 단축키가 바로 동작
                     self._imm.ImmAssociateContextEx(hwnd, None, 0)
                     self._no_ime.add(hwnd)
+                elif is_entry and hwnd in self._no_ime:
+                    # 입력칸으로 돌아오면 입력기 다시 연결
+                    self._imm.ImmAssociateContextEx(hwnd, None, _IACE_DEFAULT)
+                    self._no_ime.discard(hwnd)
             text = self._composition() if isinstance(widget, tk.Entry) else ""
             if text:
                 self._push_ime_window_offscreen(hwnd)
