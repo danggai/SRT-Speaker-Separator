@@ -2,25 +2,46 @@
 import sys
 
 
-# ── Windows 다크 타이틀바 강제 적용 ─────────────────────────
-# Toplevel(설정/대화상자 등) 창은 Windows에서 메인 창과 달리 시스템 다크
-# 테마가 자동으로 적용되지 않아 흰색 타이틀바로 튀는 경우가 있다.
-# DWM API로 명시적으로 다크 모드를 지정해 항상 앱 배경과 어울리게 한다.
+# ── Windows 다크 타이틀바 ─────────────────────────
+TITLEBAR_BG = "#202024"   # 툴바와 같은 색
+TITLEBAR_FG = "#E0E0E0"
+
+
+def _colorref(hex_color):
+    r, g, b = (int(hex_color[i:i + 2], 16) for i in (1, 3, 5))
+    return r | (g << 8) | (b << 16)
+
+
 def _apply_dark_titlebar(window):
+    """창 제목표시줄을 다크 모드 + 앱 색상으로 맞춘다 (메인 창·팝업 공통)."""
     if sys.platform != "win32":
         return
+
+    def _apply():
+        try:
+            import ctypes
+            dwm = ctypes.windll.dwmapi
+            hwnd = ctypes.windll.user32.GetParent(window.winfo_id()) or window.winfo_id()
+
+            def _set(attr, val):
+                v = ctypes.c_int(val)
+                return dwm.DwmSetWindowAttribute(hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+
+            for attr in (20, 19):   # 20=최신 Windows, 19=구버전 빌드
+                if _set(attr, 1) == 0:
+                    break
+            _set(35, _colorref(TITLEBAR_BG))   # 제목표시줄 배경 (Windows 11)
+            _set(36, _colorref(TITLEBAR_FG))   # 제목 글자
+        except Exception:
+            pass
+
     try:
-        import ctypes
         window.update_idletasks()
-        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
-        value = ctypes.c_int(1)
-        for attr in (20, 19):   # 20=최신 Windows, 19=구버전 빌드 호환
-            res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                hwnd, attr, ctypes.byref(value), ctypes.sizeof(value))
-            if res == 0:
-                break
     except Exception:
-        pass
+        return
+    _apply()
+    # 창이 실제로 화면에 뜬 뒤 다시 적용 (생성 직후엔 적용이 안 되는 경우 대비)
+    window.bind("<Map>", lambda e: _apply() if e.widget is window else None, add="+")
 
 
 # ─────────────────────────────────────────────
