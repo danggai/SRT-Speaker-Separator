@@ -82,7 +82,7 @@ class SubtitleTableMixin:
         self.vsb    = ttk.Scrollbar(container, orient="vertical",
                                     command=self._vscroll_cmd)
 
-        self.canvas.configure(yscrollcommand=self.vsb.set)
+        # 스크롤바는 _update_vsb로만 갱신 (캔버스는 늘 맨 위라 연결하면 스크롤바가 맨 위로 튐)
         self.canvas.pack(side="left", fill="both", expand=True)
         self.vsb.pack(side="right", fill="y")
 
@@ -288,22 +288,24 @@ class SubtitleTableMixin:
         if s < 0:
             self._canvas_drag_start(e)
             return
+        # 편집을 연 클릭은 "break"로 끝내 전역 클릭 처리가 포커스를 뺏지 않게 함
         pill = next((t for t in self.canvas.gettags("current") if t.startswith("pk")), None)
         if pill:
             ps, pi = pill[2:].split("_")
             if int(ps) == s:
+                self._blur_all_entries()
                 self._slot_pill_click(s, int(pi))
-                return
+                return "break"
         di = self._slot_data[s]
         col = self._col_at(e.x)
         if (col == "time" and di == getattr(self, "_selected_row_idx", None)
                 and len(getattr(self, "_selected_rows", set())) <= 1):
             self._ts_edit_start(s)
-            return
+            return "break"
         if col == "content" and not (e.state & 0x4):
             self._txt_edit_start(s, e.x)
             self._drag_sel_anchor = None
-            return
+            return "break"
         self._slot_click(s, e)
         self._drag_sel_anchor = di
         self._drag_sel_active = False
@@ -312,6 +314,24 @@ class SubtitleTableMixin:
         s = self._slot_at(e)
         if s >= 0 and self._col_at(e.x) == "time":
             self._ts_edit_start(s)
+            return "break"
+
+    def _close_other_edits(self, keep_slot):
+        """다른 줄에 열린 시간·자막 편집칸을 저장하고 닫는다."""
+        for s, wi in enumerate(self._slot_widgets):
+            if s == keep_slot or not (wi.get("_ts_editing") or wi.get("_txt_editing")):
+                continue
+            if wi.get("_txt_editing"):
+                self._slot_save_text(s)
+                self._txt_edit_end(s)
+            if wi.get("_ts_editing"):
+                wi["_ts_editing"] = False
+                self.canvas.itemconfigure(wi["ts_s_win"], state="hidden")
+                self.canvas.itemconfigure(wi["ts_e_win"], state="hidden")
+                di = self._slot_data_idx(s)
+                if 0 <= di < len(self.subtitles):
+                    self._paint_slot(s, di, self._get_col_positions(),
+                                     max(self.canvas.winfo_width(), 100))
 
     def _canvas_shift_press(self, e):
         s = self._slot_at(e)
@@ -326,10 +346,14 @@ class SubtitleTableMixin:
     def _txt_edit_start(self, slot_idx, x=None):
         """자막 칸 클릭 → 그 자리에 입력칸을 띄워 편집."""
         wi = self._slot_widgets[slot_idx]
+        ent = wi["content"]
+        if self.focus_get() is not ent:
+            self._blur_all_entries()   # 다른 편집칸 내용 먼저 저장
+        self._close_other_edits(slot_idx)
         wi["_txt_editing"] = True
         self._apply_col_to_slot(slot_idx, self._get_col_positions(),
                                 max(self.canvas.winfo_width(), 100))
-        ent = wi["content"]
+        self.update_idletasks()   # 입력칸이 나타난 뒤 포커스
         ent.focus_set()
         if x is not None:
             ent.icursor(f"@{int(x - self.canvas.coords(wi['content_win'])[0])}")
@@ -752,11 +776,15 @@ class SubtitleTableMixin:
         if di < 0:
             return
         wi = self._slot_widgets[slot_idx]
+        if self.focus_get() not in (wi["ts_s"], wi["ts_e"]):
+            self._blur_all_entries()   # 다른 편집칸 내용 먼저 저장
+        self._close_other_edits(slot_idx)
         wi["_ts_editing"] = True
         self._ts_style(wi["ts_s"], wi["ts_s_var"].get())
         self._ts_style(wi["ts_e"], wi["ts_e_var"].get())
         self._apply_col_to_slot(slot_idx, self._get_col_positions(),
                                 max(self.canvas.winfo_width(), 100))
+        self.update_idletasks()   # 입력칸이 나타난 뒤 포커스
         wi["ts_s"].focus_set()
         wi["ts_s"].select_range(0, "end")
         wi["ts_s"].icursor("end")
@@ -934,6 +962,7 @@ class SubtitleTableMixin:
     def _update_vsb(self):
         n = len(self.subtitles)
         if n == 0:
+            self.vsb.set(0, 1)
             return
         total_h = n * self.ROW_H
         top = self._vscroll_top * self.ROW_H / total_h
@@ -1022,10 +1051,10 @@ class SubtitleTableMixin:
 
     # ── 가상 스크롤 scrollregion 갱신 ────────
     def _update_scrollregion(self):
-        n = len(self.subtitles)
-        total_h = n * self.ROW_H
-        cw = max(self.canvas.winfo_width(), 100)
-        self.canvas.configure(scrollregion=(0, 0, cw, total_h))
+        # 캔버스 화면은 고정하고 스크롤바만 실제 위치로 갱신
+        self.canvas.configure(scrollregion=(0, 0, 1, 1))
+        self.canvas.yview_moveto(0)
+        self._update_vsb()
 
     # ── 타임스탬프 유효성 패턴 ───────────────
     _TS_RE    = re.compile(r"^\d{2}:\d{2}:\d{2}[,\.]\d{3}$")
