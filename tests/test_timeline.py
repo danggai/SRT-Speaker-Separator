@@ -406,6 +406,19 @@ def playhead_move_does_not_relayout_window(app):
 
 
 @test
+def key_hint_badges_cover_timeline_buttons(app):
+    app._apply_key_hints(True)
+    pump(0.2)
+    shown = {b.cget("text") for b in app._key_badges}
+    for key in ("S", "Ctrl+M", "A", "M", "Space", "←", "→"):
+        expect(key in shown, f"단축키 표시 켜면 '{key}' 배지가 있어야 해요: {sorted(shown)}")
+    merge = [b for b in app._key_badges if b.cget("text") == "Ctrl+M"][0]
+    eq(str(merge.place_info()["in"]), str(app._merge_btn), "병합 버튼 위에 붙음")
+    app._apply_key_hints(False)
+    eq(app._key_badges, [], "끄면 모두 사라짐")
+
+
+@test
 def redraw_variants_do_not_fail(app):
     app._pb_redraw()                              # 아무것도 없음
     load_sample(app)

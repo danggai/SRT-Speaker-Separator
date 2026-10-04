@@ -571,7 +571,7 @@ class SRTEditor(
             badge.destroy()
         self._key_badges = []
         if on:
-            for widget, key in ((self._split_btn, "S"), (self._add_btn, "A"),
+            for widget, key in ((self._split_btn, "S"), (self._merge_btn, "Ctrl+M"), (self._add_btn, "A"),
                                 (self._vol_icon, "M"), (self.btn_play, "Space"),
                                 (self.btn_prev, "←"), (self.btn_next, "→")):
                 badge = tk.Label(self, text=key, bg=_BADGE_BG, fg=_BADGE_FG,
