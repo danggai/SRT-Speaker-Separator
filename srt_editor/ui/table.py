@@ -142,6 +142,12 @@ class SubtitleTableMixin:
                 self._vscroll_to(self._vscroll_top + amount * visible)
 
     def _on_mousewheel(self, event):
+        # 다른 창(분석·설정 등)이 떠 있으면 뒤의 자막이 스크롤되지 않게 무시
+        try:
+            if event.widget.winfo_toplevel() is not self or self._other_window_grab():
+                return
+        except Exception:
+            pass
         # 재생바 패널 위면 seek, 그 외엔 자막 스크롤
         try:
             mp = self._media_panel

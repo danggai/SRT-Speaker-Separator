@@ -178,6 +178,25 @@ def diarize_dialog_opens_and_cancels(app):
 
 
 @test
+def wheel_over_dialog_does_not_scroll_table_behind(app):
+    from harness import Ev
+    load_sample(app, n=60, with_wav=True)
+    app._open_diarize_dialog()
+    win = _only_toplevel()
+    for w in (win, app.canvas):
+        ev = Ev(w, 5, 5)
+        ev.delta = -120
+        app._on_mousewheel(ev)
+    eq(app._vscroll_top, 0, "창이 떠 있는데 뒤의 자막이 스크롤됨")
+    win.destroy()
+    pump(0.2)
+    ev = Ev(app.canvas, 5, 5)
+    ev.delta = -120
+    app._on_mousewheel(ev)
+    expect(app._vscroll_top > 0, "창을 닫으면 다시 스크롤돼야 해요")
+
+
+@test
 def dialogs_are_positioned_inside_screen(app):
     load_sample(app, with_wav=True)
     for opener in (app._open_settings, app._show_shortcuts, app._open_diarize_dialog):
