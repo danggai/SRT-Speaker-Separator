@@ -66,6 +66,7 @@ def setup():
     import tkinter.filedialog as fd
     import tkinter.messagebox as mb
 
+    os.environ["SDL_AUDIODRIVER"] = "dummy"   # 재생 테스트가 실제 스피커로 소리를 내지 않게
     ctx.work = pathlib.Path(tempfile.mkdtemp(prefix="srt_reg_"))
     ctx.cfg_path = ctx.work / "config.json"
     os.environ["HF_HOME"] = str(ctx.work / "hf")
