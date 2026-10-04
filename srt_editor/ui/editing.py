@@ -13,7 +13,7 @@ class EditingMixin:
 
     def _snapshot(self):
         # _col_w도 함께 저장해 undo/redo 시 컬럼 너비가 되돌아가지 않도록 함
-        return (copy.deepcopy(self.subtitles), list(self.speakers),
+        return ([dict(s) for s in self.subtitles], list(self.speakers),   # 값이 모두 문자열·숫자라 얕은 복사로 충분
                 dict(self.speaker_colors), dict(self._col_w))
 
     def _push_undo(self):

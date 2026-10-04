@@ -346,6 +346,20 @@ class TimelineMixin:
             self._wf_num_lanes = num_lanes
             self._wf_lanes_src = cache
 
+        _span_v = end_r - start_r
+
+        def _r2x(ratio, _cw):   # _wf_ratio_to_x와 같은 식 (매번 보이는 구간을 다시 구하지 않게)
+            return int((ratio - start_r) / _span_v * _cw) if _span_v > 0 else 0
+
+        _spk_colors = {}
+
+        def _spk_col(spk):
+            if not spk:
+                return "#404055"
+            if spk not in _spk_colors:
+                _spk_colors[spk] = self._speaker_color(spk)
+            return _spk_colors[spk]
+
         # ── 레이아웃 상수 ──────────────────────
         LANE_H = self._WF_LANE_H
         SUB_H  = LANE_H * num_lanes   # 자막 영역 전체 높이(겹치면 최대 3줄)
@@ -388,7 +402,7 @@ class TimelineMixin:
         cached = getattr(self, "_wf_img_cache", None)
         cache_hit = bool(cached and cached[0] == cache_key)
 
-        head_x = self._wf_ratio_to_x(pos / dur if dur > 0 else 0, cw)
+        head_x = _r2x(pos / dur if dur > 0 else 0, cw)
 
         if cache_hit:
             img_tk = cached[1]
@@ -442,8 +456,8 @@ class TimelineMixin:
                     r_s, r_e = t_s / dur_, t_e / dur_
                     if r_e < start_r or r_s > end_r:
                         continue
-                    x1 = int(self._wf_ratio_to_x(max(r_s, start_r), cw))
-                    x2 = int(self._wf_ratio_to_x(min(r_e, end_r), cw))
+                    x1 = int(_r2x(max(r_s, start_r), cw))
+                    x2 = int(_r2x(min(r_e, end_r), cw))
                     x2 = max(x1 + 2, x2)
 
                     lane = lanes.get(i, 0)
@@ -453,7 +467,7 @@ class TimelineMixin:
                     ln_bot = ln_top + LANE_H
 
                     spk   = self.subtitles[i].get("speaker", "")
-                    raw   = self._speaker_color(spk) if spk else "#404055"
+                    raw   = _spk_col(spk)
                     h_hex = raw.lstrip("#")
                     fr, fg_, fb = int(h_hex[0:2],16), int(h_hex[2:4],16), int(h_hex[4:6],16)
                     # 어두운 바탕에 화자 색을 살짝만 섞는다 (화자 색 22% + 배경 78%)
@@ -572,7 +586,7 @@ class TimelineMixin:
                 t = (int(start_r * dur / tick_step)) * tick_step
                 while t <= end_r * dur:
                     if t > dur: break
-                    x = self._wf_ratio_to_x(t / dur, cw)
+                    x = _r2x(t / dur, cw)
                     if 0 <= x <= cw:
                         draw.line([x, wf_bot, x, wf_bot+4], fill="#444466")
                         h_ = int(t//3600); m_ = int((t%3600)//60); s_ = int(t%60)
@@ -627,10 +641,10 @@ class TimelineMixin:
                 r_s, r_e = ts / dur_, te / dur_
                 if r_e < start_r or r_s > end_r:
                     continue
-                x1 = self._wf_ratio_to_x(max(r_s, start_r), cw)
-                x2 = max(x1+2, self._wf_ratio_to_x(min(r_e, end_r), cw))
+                x1 = _r2x(max(r_s, start_r), cw)
+                x2 = max(x1+2, _r2x(min(r_e, end_r), cw))
                 spk   = self.subtitles[i].get("speaker", "")
-                color = self._speaker_color(spk) if spk else "#404055"
+                color = _spk_col(spk)
                 snapped_s = drag and drag["idx"]==i and drag["mode"]=="head_start"
                 snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
                 moving    = drag and drag["idx"]==i and drag["mode"]=="move"
