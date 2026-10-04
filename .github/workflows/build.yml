@@ -31,6 +31,11 @@ jobs:
             echo "tag=$v" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "v=$(python -c "import json; print(json.load(open('version.json'))['version'])")" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -45,17 +50,22 @@ jobs:
           python -m srt_editor.app_icon icon.ico
           pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico --hidden-import fractions --hidden-import decimal --hidden-import dataclasses --hidden-import inspect --hidden-import numbers --hidden-import dis srt_speaker_separator.py
 
+      # 파일 이름에 버전을 남김 (예: SRTSpeakerEditor_1.1.4.exe)
+      - name: Rename EXE
+        shell: bash
+        run: mv dist/SRTSpeakerEditor.exe "dist/SRTSpeakerEditor_${{ steps.ver.outputs.v }}.exe"
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SRTSpeakerEditor
-          path: dist/SRTSpeakerEditor.exe
+          name: SRTSpeakerEditor_${{ steps.ver.outputs.v }}
+          path: dist/SRTSpeakerEditor_${{ steps.ver.outputs.v }}.exe
 
       - name: Upload to Release
         if: github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/SRTSpeakerEditor.exe
+          files: dist/SRTSpeakerEditor_${{ steps.ver.outputs.v }}.exe
 
       # 태그·릴리즈 생성 후 EXE 첨부
       - name: Create Release
@@ -66,4 +76,4 @@ jobs:
           name: ${{ steps.rel.outputs.tag }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          files: dist/SRTSpeakerEditor.exe
+          files: dist/SRTSpeakerEditor_${{ steps.ver.outputs.v }}.exe
