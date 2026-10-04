@@ -358,7 +358,7 @@ class TimelineMixin:
         # cache_key를 만들기 전에 확정해야 리사이즈된 높이로 이미지 캐시가
         # 올바르게 갱신된다.
         target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H
-        if abs(ch - target_ch) > 1:
+        if int(float(c.cget("height"))) != target_ch:   # winfo_height는 테두리 때문에 항상 조금 달라 매 프레임 재배치됨
             # 재생바·트랙 헤더 높이를 함께 바꾸고 즉시 배치 (깜빡임 방지)
             c.configure(height=target_ch)
             hdr = getattr(self, "_track_hdr", None)

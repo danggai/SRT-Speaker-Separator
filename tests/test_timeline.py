@@ -386,6 +386,26 @@ def add_and_split_at_playhead(app):
 
 
 @test
+def playhead_move_does_not_relayout_window(app):
+    """재생 중 매 프레임 호출되는 다시 그리기가 창 전체 배치를 다시 하면 재생바가 심하게 느려져요."""
+    with_media(app)
+    app._pb_redraw()
+    calls = []
+    orig = app.update_idletasks
+    app.update_idletasks = lambda: (calls.append(1), orig())[1]
+    try:
+        for i in range(20):
+            app.media_progress_var.set(3.0 + i * 0.05)
+            app._pb_redraw()
+    finally:
+        del app.update_idletasks
+    eq(len(calls), 0, "재생헤드만 움직였는데 창 배치를 다시 계산함")
+    app._wf_add_layer()
+    app._pb_redraw()
+    eq(int(float(app._pb_canvas.cget("height"))), app._PB_BASE_CANVAS_H + app._WF_LANE_H, "레이어를 늘리면 높이도 늘어남")
+
+
+@test
 def redraw_variants_do_not_fail(app):
     app._pb_redraw()                              # 아무것도 없음
     load_sample(app)
