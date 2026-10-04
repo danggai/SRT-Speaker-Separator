@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 
-from .. import line_speakers, theme
+from .. import line_speakers, model_download, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
 from ..speech import (
@@ -841,6 +841,17 @@ class DiarizeMixin:
                     "map":     1.0,
                 }
 
+                _set_status("화자 분리 모델 확인 중...", "model")
+
+                def _dl_cb(done, total):
+                    pct = 12.0 + 13.0 * (done / total) if total else 12.0
+                    self.after(0, lambda: (self._diarize_status_lbl.configure(
+                        text="화자 분리 모델 내려받는 중  " + model_download.format_progress("", done, total).strip()),
+                        _prog_state.__setitem__("target", max(_prog_state["target"], pct))))
+                model_download.download(model_download.DIARIZE_REPO, None, token=hf_tok, progress=_dl_cb,
+                                        cancelled=lambda: _prog_state.get("cancelled"))
+                if _prog_state.get("cancelled"):
+                    return
                 _set_status(f"화자 분리 모델 로드 중... ({device})", "model")
                 from whisperx.diarize import DiarizationPipeline
                 diarize_model = DiarizationPipeline(token=hf_tok, device=device)

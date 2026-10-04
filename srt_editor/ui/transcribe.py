@@ -6,10 +6,11 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 
-from .. import theme
+from .. import model_download, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..speech import (
+    _ASR_MODES,
     _DEFAULT_ASR_MODE,
     _DIARIZE_BATCH_MAP,
     _diarize_exclusive,
@@ -289,7 +290,7 @@ class TranscribeMixin:
 
     def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
-        import threading, time as _time
+        import threading
 
         # ── 진행 창 ──────────────────────────────────────────────
         prog = tk.Toplevel(self)
@@ -376,24 +377,24 @@ class TranscribeMixin:
                 _lang = getattr(self, "_transcribe_language", "ko")
                 _lang = None if _lang == "auto" else _lang
 
-                _model_t0 = _time.time()
-                _model_loading = {"on": True}
-                def _model_load_tick():
-                    if not _model_loading["on"] or _pstate.get("cancelled"):
-                        return
-                    elapsed = int(_time.time() - _model_t0)
-                    hint = (" (최초 실행 시 모델 다운로드로 수 분 정도 걸릴 수"
-                            " 있습니다. 계속 이 문구가 보여도 정상입니다)"
-                            if elapsed >= 8 else "")
-                    _set(f"Whisper 모델 로드 중... ({device}) · {elapsed}초 경과{hint}", 5)
-                    self.after(1000, _model_load_tick)
-                self.after(1000, _model_load_tick)
+                def _fetch_model(repo, label, patterns, lo, hi, token=None):
+                    """모델이 없으면 내려받으며 진행률(MB, %)을 표시. 이미 있으면 바로 지나감."""
+                    def _cb(done, total):
+                        pct = lo + (hi - lo) * (done / total) if total else lo
+                        self.after(0, lambda: _set(f"{label} 내려받는 중  " + model_download.format_progress(
+                            "", done, total).strip(), pct))
+                    model_download.download(repo, patterns, token=token, progress=_cb,
+                                            cancelled=lambda: _pstate.get("cancelled"))
 
-                _set(f"Whisper 모델 로드 중... ({device})", 5)
+                _wname = _ASR_MODES.get(_mode, _ASR_MODES[_DEFAULT_ASR_MODE])[0]
+                _fetch_model(model_download.whisper_repo(_wname), "음성 인식 모델",
+                             model_download.WHISPER_PATTERNS, 3, 14)
+                if _pstate.get("cancelled"):
+                    return
+                _set(f"Whisper 모델 로드 중... ({device})", 14)
                 _pn_hint = self._build_proper_noun_hint()
                 model, _wmodel = _load_asr_model(whisperx, _mode, device,
                                                  language=_lang, asr_hint=_pn_hint)
-                _model_loading["on"] = False
                 if _pstate.get("cancelled"):
                     return
 
@@ -416,6 +417,11 @@ class TranscribeMixin:
                     return
 
                 _set("타임스탬프 정렬 중...", 60)
+                _arepo = model_download.align_repo(result["language"])
+                if _arepo:
+                    _fetch_model(_arepo, "정렬 모델", None, 60, 64)
+                    if _pstate.get("cancelled"):
+                        return
                 model_a, meta = whisperx.load_align_model(
                     language_code=result["language"], device=device)
                 result = whisperx.align(result["segments"], model_a, meta,
@@ -450,6 +456,9 @@ class TranscribeMixin:
                     _set("화자 분리 중...", 75)
                     hf_tok = hf_token or getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
                     from whisperx.diarize import DiarizationPipeline, assign_word_speakers
+                    _fetch_model(model_download.DIARIZE_REPO, "화자 분리 모델", None, 75, 80, token=hf_tok)
+                    if _pstate.get("cancelled"):
+                        return
                     diar_model = DiarizationPipeline(token=hf_tok, device=device)
                     self._apply_diarize_sensitivity(diar_model, self._get_diarize_sensitivity())
                     _num_spk, _exact = self._get_diarize_spk_settings()
