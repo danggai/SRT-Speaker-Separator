@@ -177,7 +177,20 @@ class DiarizeMixin:
 
         btn_row = tk.Frame(footer_parent, bg=BG)
         btn_row.pack(fill="x", padx=24, pady=(12, 14))
-        flat_button(btn_row, "화자 분석 시작", self._run_diarize_whisperx, bg=ACCENT, fg="white",
+        def _start():
+            # 선지정이 없으면 먼저 안내: 확인 → 창을 닫아 지정하러 가고, 취소 → 그대로 분석 시작
+            seeds = line_speakers.seed_speakers([s.get("speaker", "") for s in self.subtitles])
+            if on_close and self.subtitles and not seeds and messagebox.askokcancel(
+                    "화자 먼저 지정하기",
+                    "화자마다 3~5줄을 먼저 지정해 두면, 그 목소리를 기준으로 나머지 줄을 채워서 훨씬 정확해요.\n\n"
+                    "확인: 분석 창을 닫고 먼저 지정하러 가기\n"
+                    "취소: 지금 상태로 바로 분석 시작",
+                    parent=self):
+                on_close()
+                return
+            self._run_diarize_whisperx()
+
+        flat_button(btn_row, "화자 분석 시작", _start, bg=ACCENT, fg="white",
                     hover="#AE96E2", font=(theme.FONT_FAMILY, 10, "bold"),
                     padx=22, pady=8).pack(side="right")
         if on_close:

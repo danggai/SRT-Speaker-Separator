@@ -64,6 +64,63 @@ def assign_from_seeds_labels_all_lines_and_handles_missing_embedding():
     expect(acc > 0.9, f"줄을 4개씩 지정하면 나머지는 대부분 맞혀야 해요: {acc:.2f}")
 
 
+def _start_button(win):
+    from harness import find
+    return find(win, "FlatButton", "화자 분석 시작")[0]
+
+
+@test
+def diarize_start_without_seeds_asks_and_ok_closes_dialog(app):
+    from harness import ctx, press, pump, toplevels
+    load_sample(app, with_wav=True)
+    for s in app.subtitles:
+        s["speaker"] = ""
+    app._open_diarize_dialog()
+    pump(0.5)
+    win = toplevels()[-1]
+    ctx.answers["askokcancel"] = True
+    ran = []
+    app._run_diarize_whisperx = lambda: ran.append(1)
+    press(_start_button(win))
+    pump(0.3)
+    expect(any(m[0] == "askokcancel" for m in ctx.msgs), "선지정 안내가 떠야 해요")
+    eq(ran, [], "확인을 누르면 분석을 시작하지 않음")
+    expect(not [w for w in toplevels() if w.winfo_exists()], "확인을 누르면 분석 창이 닫혀야 해요")
+
+
+@test
+def diarize_start_without_seeds_cancel_runs_analysis(app):
+    from harness import ctx, press, pump, toplevels
+    load_sample(app, with_wav=True)
+    for s in app.subtitles:
+        s["speaker"] = ""
+    app._open_diarize_dialog()
+    pump(0.5)
+    win = toplevels()[-1]
+    ctx.answers["askokcancel"] = False
+    ran = []
+    app._run_diarize_whisperx = lambda: ran.append(1)
+    press(_start_button(win))
+    pump(0.3)
+    eq(ran, [1], "취소를 누르면 그대로 분석 시작")
+    expect(win.winfo_exists(), "분석 창은 그대로")
+
+
+@test
+def diarize_start_with_seeds_skips_notice(app):
+    from harness import ctx, press, pump, toplevels
+    load_sample(app, n=12, with_wav=True, tagged_every=1)
+    app._open_diarize_dialog()
+    pump(0.5)
+    win = toplevels()[-1]
+    ran = []
+    app._run_diarize_whisperx = lambda: ran.append(1)
+    press(_start_button(win))
+    pump(0.3)
+    eq(ran, [1], "이미 충분히 지정돼 있으면 안내 없이 시작")
+    expect(not any(m[0] == "askokcancel" for m in ctx.msgs), "안내가 뜨면 안 돼요")
+
+
 @test
 def apply_line_speakers_seeded_fills_only_unassigned_with_undo(app):
     load_sample(app, n=12, tagged_every=3)
