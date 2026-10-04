@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox
 
-from .. import theme
+from .. import line_speakers, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
 from ..speech import (
@@ -58,7 +58,8 @@ class DiarizeMixin:
         if footer_parent is None:
             footer_parent = parent
         self._settings_title(parent, "화자 자동 분석",
-                             "WhisperX + pyannote로 오디오에서 화자를 나눠요. 처음 실행할 때 모델을 내려받아요.")
+                             "자막에 화자를 화자당 3~5줄 먼저 지정해 두면, 그 목소리를 기준으로 나머지 줄을 채워요 "
+                             "(가장 정확해요). 지정한 게 없으면 화자 수대로 목소리를 묶어요. 처음 실행할 때 모델을 내려받아요.")
 
         card = self._settings_card(parent, "계정")
         left, _ = self._settings_row(card, "K", "HuggingFace 토큰", "분석 모델을 내려받을 때 필요해요")
@@ -519,6 +520,9 @@ class DiarizeMixin:
             except Exception:
                 pass
 
+        _line_seeds = line_speakers.seed_speakers([s.get("speaker", "") for s in self.subtitles])
+        _line_intervals = list(getattr(self, "_ts_cache", []))
+
         def _worker():
             try:
                 _set_status("whisperx 임포트 중...", "import")
@@ -831,11 +835,40 @@ class DiarizeMixin:
                 if _prog_state.get("cancelled"):
                     return
 
+                _num_spk, _exact = self._get_diarize_spk_settings()
+                if _line_seeds or _num_spk > 0:
+                    # 자막 줄마다 목소리를 뽑아 구분 (미리 지정한 줄이 있으면 그것을 기준으로)
+                    _est_lines = len(_line_intervals) * (0.03 if device == "cuda" else 0.15)
+                    _prog_state["stage_estimates"]["diarize"] = _est_lines
+                    _set_status("자막 구간 목소리 분석 중...", "diarize")
+                    _threading.Thread(target=_progress_ticker, args=("diarize", _est_lines), daemon=True).start()
+                    _emb = line_speakers.line_embeddings(
+                        diarize_model.model._embedding, audio, _line_intervals,
+                        cancelled=lambda: _prog_state.get("cancelled"))
+                    if _emb is None or _prog_state.get("cancelled"):
+                        return
+                    _set_status("화자 구분 중...", "map")
+                    if _line_seeds:
+                        _result = line_speakers.assign_from_seeds(_emb, _line_seeds)
+                    else:
+                        _result = line_speakers.cluster_lines(_emb, _num_spk)
+
+                    def _apply_lines():
+                        if _prog_state.get("cancelled"):
+                            return
+                        try:
+                            _set_status("완료!", "done")
+                            prog_win.after(300, prog_win.destroy)
+                        except Exception:
+                            pass
+                        self._apply_line_speakers(_result, bool(_line_seeds))
+                    self.after(0, _apply_lines)
+                    return
+
                 _set_status("화자 분리 중...", "diarize")
                 _t = _threading.Thread(
                     target=_progress_ticker, args=("diarize", _est_diarize), daemon=True)
                 _t.start()
-                _num_spk, _exact = self._get_diarize_spk_settings()
                 diarize_segments = _diarize_exclusive(diarize_model, audio, _num_spk, _exact)
                 if _prog_state.get("cancelled"):
                     return
@@ -956,3 +989,40 @@ class DiarizeMixin:
             f"감지된 화자: {', '.join(spk_map.values())}\n\n"
             "결과를 확인하고 필요하면 수동으로 수정하세요.",
             parent=self)
+
+    def _apply_line_speakers(self, result, seeded):
+        """줄 단위 화자 구분 결과 적용. seeded면 이름 목록(지정 안 된 줄만 채움), 아니면 군집 번호 목록(새 화자 추가)."""
+        self._push_undo()
+        added = []
+        if seeded:
+            filled = 0
+            for sub, name in zip(self.subtitles, result):
+                if name and not sub.get("speaker"):
+                    sub["speaker"] = name
+                    filled += 1
+            msg = (f"먼저 지정해 둔 줄을 기준으로 나머지 {filled}줄에 화자를 채웠어요.\n\n"
+                   "결과를 확인하고 틀린 줄은 직접 고쳐 주세요. 몇 줄 고쳐서 다시 분석하면 더 정확해져요.")
+        else:
+            names, n = {}, 1
+            for lab in sorted({int(v) for v in result if v >= 0}):
+                while f"화자 {n}" in self.speakers:
+                    n += 1
+                names[lab] = f"화자 {n}"
+                self.speakers.append(names[lab])
+                n += 1
+            added = list(names.values())
+            for sub, lab in zip(self.subtitles, result):
+                if lab >= 0:
+                    sub["speaker"] = names[int(lab)]
+            n_mapped = sum(1 for s in self.subtitles if s.get("speaker"))
+            msg = (f"총 {len(self.subtitles)}개 자막 중 {n_mapped}개에 화자를 배정했어요.\n"
+                   f"감지된 화자: {', '.join(added)}\n\n"
+                   "결과를 확인하고 필요하면 수동으로 수정하세요. 화자마다 3~5줄을 먼저 지정한 뒤 다시 분석하면 훨씬 정확해져요.")
+        self._unsaved = True
+        self._auto_resize_speaker_col()
+        self._fill_slots(self._vscroll_top)
+        self._render_speakers()
+        self._update_count()
+        self._wf_img_cache = None
+        self._pb_redraw()
+        messagebox.showinfo("화자 분석 완료", msg, parent=self)
