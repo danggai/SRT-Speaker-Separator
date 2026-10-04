@@ -41,22 +41,42 @@ def save_cached(path, n_pts, pts):
         pass
 
 
-def extract_waveform_pts(path, n_pts):
-    """오디오 파일에서 (시간 비율, 진폭) 목록을 만든다."""
-    import librosa
+def _amp(peak, rms):
     import numpy as np
+    return np.clip(np.asarray(peak) * 0.6 + np.asarray(rms) * 2.5, 0.0, 1.0)
 
-    # 22050Hz 모노로 로드 (mp3/wav/flac/ogg/m4a 전부 지원)
-    y, sr = librosa.load(path, sr=22050, mono=True)
-    hop = max(1, len(y) // n_pts)
 
-    # 항상 axis=0이 frame_length, axis=1이 n_frames
-    frames = librosa.util.frame(y, frame_length=hop, hop_length=hop)
-    if frames.ndim == 1:
-        frames = frames.reshape(-1, 1)
-
-    peak = np.max(np.abs(frames), axis=0)
-    rms = np.sqrt(np.mean(frames ** 2, axis=0))
-    amp = np.clip(peak * 0.6 + rms * 2.5, 0.0, 1.0)
-    n = int(amp.shape[0])
+def extract_waveform_pts(path, n_pts):
+    """오디오 파일에서 (시간 비율, 진폭) 목록을 만든다.
+    PyAV(ffmpeg)로 16kHz 모노로 디코딩하며 10ms 조각의 최대값·제곱평균만 모은 뒤 n_pts개로 묶는다
+    (mp3·m4a·aac·wav·flac·ogg 모두 길이가 정확하고, 긴 파일도 메모리는 조각 통계만 쓴다)."""
+    import numpy as np
+    try:
+        import av
+    except ImportError:
+        from .video_deps import load_av
+        av = load_av()
+        if av is None:
+            raise RuntimeError("소리 파일을 읽을 부품(PyAV)이 없어요")
+    step = 160
+    peak, sq = [], []
+    carry = np.zeros(0, np.float32)
+    with av.open(path) as c:
+        res = av.AudioResampler(format="flt", layout="mono", rate=16000)
+        for frame in c.decode(audio=0):
+            for f in res.resample(frame):
+                m = np.concatenate([carry, f.to_ndarray().reshape(-1) * 0.7071])   # ffmpeg 모노 변환은 두 채널 합/√2라 평균 기준으로 맞춤
+                k = len(m) // step
+                fr = m[:k * step].reshape(k, step)
+                peak.append(np.abs(fr).max(axis=1))
+                sq.append((fr * fr).mean(axis=1))
+                carry = m[k * step:]
+    if not peak:
+        raise ValueError("읽은 소리가 없어요")
+    peak, sq = np.concatenate(peak), np.concatenate(sq)
+    per = max(1, -(-len(peak) // n_pts))   # 올림: 점이 n_pts를 넘지 않게
+    n = len(peak) // per
+    if n == 0:
+        raise ValueError("읽은 소리가 없어요")
+    amp = _amp(peak[:n * per].reshape(n, per).max(axis=1), np.sqrt(sq[:n * per].reshape(n, per).mean(axis=1)))
     return [(i / max(1, n - 1), float(amp[i])) for i in range(n)]

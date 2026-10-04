@@ -1,2 +1,6 @@
 Pillow
 tkinterdnd2
+pygame
+mutagen
+numpy
+av

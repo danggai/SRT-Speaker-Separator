@@ -11,16 +11,16 @@ import os
 
 # ── 필수 패키지 자동 설치 (앱 시작 시 1회) ─────────────────────────────
 def _bootstrap_packages():
-    """Pillow, tkinterdnd2, pygame, mutagen, librosa 미설치 시 자동 pip install."""
+    """개발 환경에서 필수 패키지가 없으면 자동 pip install. 빌드된 EXE는 모두 들어 있어서 건너뜀."""
+    if getattr(sys, "frozen", False):
+        return
     _REQUIRED = [
         ("PIL",         "Pillow"),
         ("tkinterdnd2", "tkinterdnd2"),
         ("pygame",      "pygame"),
         ("mutagen",     "mutagen"),
-        ("librosa",     "librosa"),
-        ("soundfile",   "soundfile"),
-        ("audioread",   "audioread"),
         ("numpy",       "numpy"),
+        ("av",          "av"),
     ]
     missing = []
     for import_name, pip_name in _REQUIRED:

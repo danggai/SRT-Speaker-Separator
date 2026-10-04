@@ -1401,7 +1401,7 @@ class TimelineMixin:
             self._set_volume(self._vol_before_mute if self._vol_before_mute > 0 else 80)
 
     def _extract_waveform(self, path, src=None):
-        """librosa 로 파형 추출 — UI 블로킹 없음. src: 실제로 읽을 소리 파일 (영상이면 뽑아 둔 mp3)."""
+        """PyAV로 파형 추출 — UI 블로킹 없음. src: 실제로 읽을 소리 파일 (영상이면 뽑아 둔 mp3)."""
         src = src or path
         self._wf_loading = True
         self._waveform_pts = []
@@ -1410,23 +1410,12 @@ class TimelineMixin:
         cw    = max(self._pb_canvas.winfo_width(), 800)
         N_PTS = max(4000, min(cw * 128, 32000))
 
-        def _ensure_pip(*pkgs):
-            import subprocess as _sp, sys as _sys
-            for pkg in pkgs:
-                try:
-                    __import__(pkg)
-                except ImportError:
-                    _sp.check_call(
-                        [_sys.executable, "-m", "pip", "install", pkg, "-q"],
-                        stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-
         def _worker():
             import traceback
             try:
                 from ..waveform import extract_waveform_pts, load_cached, save_cached
                 pts = load_cached(src, N_PTS)
                 if pts is None:
-                    _ensure_pip("librosa", "numpy", "soundfile", "audioread")
                     # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
                     from concurrent.futures import ProcessPoolExecutor
                     import multiprocessing as _mp
