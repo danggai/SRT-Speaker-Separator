@@ -1212,3 +1212,128 @@ def present_dialog(win, parent, grab=True):
     win.after(40, lambda: win.winfo_exists() and win.attributes("-alpha", 1.0))
     if grab:
         win.grab_set()
+
+
+def ask_choice(parent, title, message, primary, secondary):
+    """앱 스타일 버튼 두 개 질문 창. primary → True, secondary → False, 닫으면 None.
+    message 안의 **글자**는 강조색·굵게."""
+    win = tk.Toplevel(parent)
+    win.withdraw()
+    win.title(title)
+    win.configure(bg=BG)
+    win.resizable(False, False)
+    win.transient(parent)
+    res = {"v": None}
+    body = tk.Frame(win, bg=BG)
+    body.pack(anchor="w", padx=24, pady=(22, 18))
+    for line in message.split("\n"):
+        row_ = tk.Frame(body, bg=BG)
+        row_.pack(anchor="w")
+        for k, part in enumerate(line.split("**")):
+            if part:
+                hl = k % 2 == 1
+                tk.Label(row_, text=part, bg=BG, fg="#C4B2F2" if hl else FG, padx=0, bd=0,
+                         font=(theme.FONT_FAMILY, 10, "bold" if hl else "normal")).pack(side="left")
+    row = tk.Frame(win, bg=BG)
+    row.pack(fill="x", padx=20, pady=(0, 16))
+
+    def pick(v):
+        res["v"] = v
+        win.destroy()
+    flat_button(row, primary, lambda: pick(True), bg=ACCENT, fg="white", hover="#AE96E2",
+                font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=7).pack(side="right")
+    flat_button(row, secondary, lambda: pick(False), bg=BG3, hover="#33333C",
+                font=(theme.FONT_FAMILY, 10), padx=16, pady=7).pack(side="right", padx=(0, 8))
+    win.bind("<Return>", lambda e: pick(True))
+    win.bind("<Escape>", lambda e: win.destroy())
+    win.update_idletasks()
+    win.geometry(f"{max(360, win.winfo_reqwidth())}x{win.winfo_reqheight()}")
+    present_dialog(win, parent)
+    win.focus_force()
+    parent.wait_window(win)
+    return res["v"]
+
+
+def _capture_client(win):
+    """창 안쪽(클라이언트 영역)을 그대로 찍은 PIL 이미지 (실패하면 None)."""
+    try:
+        import ctypes
+        from PIL import Image
+        win.update_idletasks()
+        u, g = ctypes.windll.user32, ctypes.windll.gdi32
+        hwnd = win.winfo_id()
+        w, h = win.winfo_width(), win.winfo_height()
+        hdc = u.GetDC(hwnd)
+        mdc = g.CreateCompatibleDC(hdc)
+        bmp = g.CreateCompatibleBitmap(hdc, w, h)
+        g.SelectObject(mdc, bmp)
+        u.PrintWindow(hwnd, mdc, 2)
+
+        class BIH(ctypes.Structure):
+            _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32), ("biHeight", ctypes.c_int32),
+                        ("biPlanes", ctypes.c_uint16), ("biBitCount", ctypes.c_uint16),
+                        ("biCompression", ctypes.c_uint32), ("biSizeImage", ctypes.c_uint32),
+                        ("a", ctypes.c_int32), ("b", ctypes.c_int32), ("c", ctypes.c_uint32), ("d", ctypes.c_uint32)]
+        bi = BIH(biSize=ctypes.sizeof(BIH), biWidth=w, biHeight=-h, biPlanes=1, biBitCount=32)
+        buf = ctypes.create_string_buffer(w * h * 4)
+        g.GetDIBits(mdc, bmp, 0, h, buf, ctypes.byref(bi), 0)
+        g.DeleteObject(bmp)
+        g.DeleteDC(mdc)
+        u.ReleaseDC(hwnd, hdc)
+        return Image.frombuffer("RGBA", (w, h), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    except Exception:
+        return None
+
+
+class DimOverlay:
+    """창 전체를 흐리게 어둡게 덮어 입력을 막고, 가운데에 떠 있는 카드(.card)를 띄운다."""
+
+    def __init__(self, host, card_bg=BG2):
+        from PIL import Image, ImageFilter, ImageTk
+        self.host = host
+        self._prev_grab = host.grab_current()
+        self.canvas = tk.Canvas(host, bg="#0B0B0E", highlightthickness=0, bd=0)
+        shot = _capture_client(host)
+        if shot is not None:
+            shot = shot.filter(ImageFilter.GaussianBlur(3))
+            shot = Image.blend(shot, Image.new("RGB", shot.size, "#000000"), 0.55)
+            self._img = ImageTk.PhotoImage(shot)
+            self.canvas.create_image(0, 0, anchor="nw", image=self._img)
+        outer = tk.Frame(self.canvas, bg=card_bg, highlightthickness=1, highlightbackground=BORDER)
+        self.card = tk.Frame(outer, bg=card_bg)
+        self.card.pack(padx=28, pady=6)
+        self._win = self.canvas.create_window(0, 0, window=outer)
+        self.canvas.place(x=0, y=0, relwidth=1, relheight=1)
+        self.canvas.tk.call("raise", self.canvas._w)   # Canvas.lift는 그림 항목용이라 창 자체를 올림
+        self.canvas.bind("<Configure>", lambda e: self.canvas.coords(self._win, e.width // 2, e.height // 2))
+        self.canvas.update_idletasks()
+        self.canvas.coords(self._win, self.canvas.winfo_width() // 2, self.canvas.winfo_height() // 2)
+        try:
+            self.canvas.grab_set()
+        except tk.TclError:
+            pass
+        self.canvas.focus_set()
+
+    def after(self, ms, fn):
+        return self.canvas.after(ms, fn)
+
+    def winfo_exists(self):
+        try:
+            return bool(self.canvas.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def destroy(self):
+        if not self.winfo_exists():
+            return
+        try:
+            self.canvas.grab_release()
+        except tk.TclError:
+            pass
+        self.canvas.destroy()
+        prev = self._prev_grab
+        try:
+            if prev is not None and prev.winfo_exists():
+                prev.grab_set()
+        except tk.TclError:
+            pass

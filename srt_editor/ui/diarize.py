@@ -7,9 +7,9 @@ from .. import ai_runtime, line_speakers, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
-from ..widgets import (NumberStepper, PopupMenu, Segmented, ToggleSwitch, _gradient_bar_rows,
-                       _watch, flat_button, present_dialog)
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO
+from ..widgets import (DimOverlay, NumberStepper, PopupMenu, Segmented, ToggleSwitch, _gradient_bar_rows,
+                       _watch, ask_choice, flat_button, present_dialog)
 
 
 class DiarizeMixin:
@@ -88,6 +88,7 @@ class DiarizeMixin:
         """화자 분석 창 내용 (설정창과 같은 카드 스타일). 실행 버튼 행은 footer_parent에 둔다."""
         if footer_parent is None:
             footer_parent = parent
+        self._diarize_host = parent.winfo_toplevel()   # 분석 중 이 창을 흐리게 덮음
         self._settings_title(parent, "화자 자동 분석",
                              "화자마다 3~5줄을 먼저 지정하면 더 정확해요.")
 
@@ -168,16 +169,18 @@ class DiarizeMixin:
         btn_row = tk.Frame(footer_parent, bg=BG)
         btn_row.pack(fill="x", padx=24, pady=(12, 14))
         def _start():
-            # 선지정이 없으면 먼저 안내: 확인 → 창을 닫아 지정하러 가고, 취소 → 그대로 분석 시작
-            seeds = line_speakers.seed_speakers([s.get("speaker", "") for s in self.subtitles])
-            if on_close and self.subtitles and not seeds and messagebox.askokcancel(
-                    "화자 먼저 지정하기",
-                    "화자마다 3~5줄을 먼저 지정하면 더 정확해요.\n\n"
-                    "확인: 지정하러 가기\n"
-                    "취소: 그냥 분석",
-                    parent=self):
-                on_close()
-                return
+            # 직접 지정한 줄이 모자라면 먼저 안내
+            seeds = line_speakers.seed_speakers(
+                ["" if s.get("_auto") else s.get("speaker", "") for s in self.subtitles])
+            if on_close and self.subtitles and not seeds:
+                ans = ask_choice(self, "화자 분석",
+                                 "각 화자별로 **5줄가량 지정 후 분석**하면 더 정확한 결과를 얻을 수 있습니다.\n"
+                                 "이대로 진행할까요?", "지정하러 가기", "진행")   # 지정하러 가기로 유도
+                if ans is None:
+                    return
+                if ans:
+                    on_close()
+                    return
             self._run_diarize_whisperx()
 
         flat_button(btn_row, "화자 분석 시작", _start, bg=ACCENT, fg="white",
@@ -316,50 +319,49 @@ class DiarizeMixin:
         self._recent_tokens  = _cfg.get("recent_tokens", [])
         _save_config(_cfg)
 
-        # 진행 다이얼로그
+        # 진행 표시: 분석 창(없으면 메인 창)을 흐리게 덮고 가운데 카드에 표시
         import time as _time
-        prog_win = tk.Toplevel(self)
-        _apply_dark_titlebar(prog_win)
-        prog_win.title("화자 분석 중...")
-        prog_win.configure(bg=BG)
-        prog_win.geometry("440x260")
-        prog_win.resizable(False, False)
-        prog_win.transient(self)
-        prog_win.grab_set()
+        host = getattr(self, "_diarize_host", None)
+        try:
+            host = host if host is not None and host.winfo_exists() else self
+        except tk.TclError:
+            host = self
+        prog_win = DimOverlay(host)
+        card = prog_win.card
 
-        tk.Label(prog_win, text="🎙  화자 자동 분석 중...", bg=BG, fg=FG,
+        tk.Label(card, text="화자 분석 중", bg=BG2, fg=FG,
                  font=(theme.FONT_FAMILY, 11, "bold")).pack(pady=(18, 2))
 
         # 현재 단계 텍스트
-        self._diarize_status_lbl = tk.Label(prog_win, text="초기화 중...",
-                                             bg=BG, fg=FG, font=(theme.FONT_FAMILY, 9, "bold"))
+        self._diarize_status_lbl = tk.Label(card, text="초기화 중...",
+                                             bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 9, "bold"))
         self._diarize_status_lbl.pack()
 
         # 단계별 서브 상태 (점 애니메이션 + 경과시간)
-        _sub_lbl = tk.Label(prog_win, text="", bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
+        _sub_lbl = tk.Label(card, text="", bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
         _sub_lbl.pack(pady=(1, 0))
 
         # ── 그라데이션 웨이브 프로그레스바 ──
         BAR_W, BAR_H = 380, 20
-        bar_canvas = tk.Canvas(prog_win, width=BAR_W, height=BAR_H,
+        bar_canvas = tk.Canvas(card, width=BAR_W, height=BAR_H,
                                bg=BG3, highlightthickness=1,
                                highlightbackground=BORDER)
         bar_canvas.pack(pady=(10, 6))
 
         # 시간 정보 행 (경과 / 예상)
-        time_row = tk.Frame(prog_win, bg=BG)
+        time_row = tk.Frame(card, bg=BG2)
         time_row.pack(fill="x", padx=32, pady=(2, 0))
-        _elapsed_lbl = tk.Label(time_row, text="경과  0:00", bg=BG, fg=FG_DIM,
+        _elapsed_lbl = tk.Label(time_row, text="경과  0:00", bg=BG2, fg=FG_DIM,
                                 font=(theme.FONT_FAMILY, 8), anchor="w")
         _elapsed_lbl.pack(side="left")
-        _eta_lbl = tk.Label(time_row, text="", bg=BG, fg=ACCENT,
+        _eta_lbl = tk.Label(time_row, text="", bg=BG2, fg=ACCENT,
                             font=(theme.FONT_FAMILY, 10, "bold"), anchor="e")
         _eta_lbl.pack(side="right")
 
         # 단계 타임라인 — 전체 너비에 균등 분배
         STEP_LABELS = ["import", "audio", "model", "diarize", "map"]
         STEP_NAMES  = ["준비", "음성로드", "모델로드", "목소리분석", "화자구분"]
-        step_row = tk.Frame(prog_win, bg=BG)
+        step_row = tk.Frame(card, bg=BG2)
         step_row.pack(fill="x", padx=32, pady=(8, 0))
         _step_lbls = []
         for sname in STEP_NAMES:
@@ -389,13 +391,8 @@ class DiarizeMixin:
             try: prog_win.destroy()
             except Exception: pass
 
-        prog_win.protocol("WM_DELETE_WINDOW", _cancel_diarize)
-
-        tk.Button(prog_win, text="중단", bg="#3A2A2A", fg="#E08080",
-                  relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9), padx=14, pady=4,
-                  activebackground="#4A3232",
-                  command=_cancel_diarize).pack(pady=(10, 0))
+        flat_button(card, "중단", _cancel_diarize, bg="#3A2A2A", fg="#E08080", hover="#4A3232",
+                    padx=16, pady=5).pack(pady=(12, 16))
 
         # 단계별 누적 % (예상시간 제거 — 실측 기반으로 계산)
         _STEPS = {

@@ -94,6 +94,11 @@ def setup():
                           ("askyesno", True), ("askokcancel", True), ("askyesnocancel", True)):
         setattr(mb, kind, _rec(kind, default))
 
+    import srt_editor.widgets as widgets
+    import srt_editor.ui.diarize as dz
+    ask = _rec("ask_choice", True)
+    widgets.ask_choice = dz.ask_choice = lambda parent, title, message, primary, secondary: ask(title, message)
+
     def _path(**kw):
         return ctx.paths.pop(0) if ctx.paths else ""
     for name in ("askopenfilename", "asksaveasfilename", "askdirectory"):

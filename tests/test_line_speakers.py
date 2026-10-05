@@ -82,14 +82,14 @@ def diarize_start_without_seeds_asks_and_ok_closes_dialog(app):
     app._open_diarize_dialog()
     pump(0.5)
     win = toplevels()[-1]
-    ctx.answers["askokcancel"] = True
+    ctx.answers["ask_choice"] = True   # 지정하러 가기 (강조 버튼)
     ran = []
     app._run_diarize_whisperx = lambda: ran.append(1)
     press(_start_button(win))
     pump(0.3)
-    expect(any(m[0] == "askokcancel" for m in ctx.msgs), "선지정 안내가 떠야 해요")
-    eq(ran, [], "확인을 누르면 분석을 시작하지 않음")
-    expect(not [w for w in toplevels() if w.winfo_exists()], "확인을 누르면 분석 창이 닫혀야 해요")
+    expect(any(m[0] == "ask_choice" for m in ctx.msgs), "선지정 안내가 떠야 해요")
+    eq(ran, [], "지정하러 가기는 분석을 시작하지 않음")
+    expect(not [w for w in toplevels() if w.winfo_exists()], "지정하러 가기는 분석 창을 닫음")
 
 
 @test
@@ -101,12 +101,12 @@ def diarize_start_without_seeds_cancel_runs_analysis(app):
     app._open_diarize_dialog()
     pump(0.5)
     win = toplevels()[-1]
-    ctx.answers["askokcancel"] = False
+    ctx.answers["ask_choice"] = False   # 진행
     ran = []
     app._run_diarize_whisperx = lambda: ran.append(1)
     press(_start_button(win))
     pump(0.3)
-    eq(ran, [1], "취소를 누르면 그대로 분석 시작")
+    eq(ran, [1], "진행은 그대로 분석 시작")
     expect(win.winfo_exists(), "분석 창은 그대로")
 
 
@@ -122,7 +122,7 @@ def diarize_start_with_seeds_skips_notice(app):
     press(_start_button(win))
     pump(0.3)
     eq(ran, [1], "이미 충분히 지정돼 있으면 안내 없이 시작")
-    expect(not any(m[0] == "askokcancel" for m in ctx.msgs), "안내가 뜨면 안 돼요")
+    expect(not any(m[0] == "ask_choice" for m in ctx.msgs), "안내가 뜨면 안 돼요")
 
 
 @test
@@ -246,3 +246,20 @@ def auto_and_check_flags_survive_save_and_reopen(app):
     eq([i for i, s in enumerate(app.subtitles) if s.get("_check")], [2, 7], "확인 필요 복원")
     expect(all(s.get("_auto") for s in app.subtitles), "자동 표시 복원")
     expect(app.lbl_check.winfo_ismapped(), "다시 열어도 확인 필요 숫자가 보임")
+
+
+@test
+def ask_choice_dialog_returns_button_result(app):
+    import importlib
+    import srt_editor.widgets as W
+    real = importlib.reload(W).ask_choice   # 테스트용 대체 함수가 아닌 실제 창
+    from harness import flat, toplevels
+    for btn, want in (("진행", True), ("지정하러 가기", False)):
+        def click(b=btn):
+            win = [w for w in toplevels() if w.title() == "질문"][0]
+            flat(win, b).event_generate("<ButtonRelease-1>", x=2, y=2)
+        app.after(300, click)
+        eq(real(app, "질문", "내용", "진행", "지정하러 가기"), want, btn)
+    app.after(300, lambda: [w.destroy() for w in toplevels() if w.title() == "질문"])
+    eq(real(app, "질문", "내용", "진행", "지정하러 가기"), None, "닫으면 None")
+    W.ask_choice = __import__("srt_editor.ui.diarize", fromlist=["x"]).ask_choice

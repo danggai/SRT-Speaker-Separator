@@ -836,6 +836,7 @@ class SettingsMixin:
                          bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)
                          ).pack(padx=16, pady=16)
                 _del_btn.configure(state="disabled")
+                _del_all_btn.configure(state="disabled")
                 return
 
             # 헤더
@@ -870,6 +871,7 @@ class SettingsMixin:
                      font=(theme.FONT_FAMILY, 9, "bold"), width=10, anchor="e").pack(side="right")
 
             _del_btn.configure(state="normal")
+            _del_all_btn.configure(state="normal")
 
         def _delete_selected():
             targets = [(kind, path)
@@ -883,6 +885,17 @@ class SettingsMixin:
                     f"선택한 {len(targets)}개 모델을 삭제합니다.\n\n{names}\n\n계속하시겠습니까?",
                     parent=parent.winfo_toplevel()):
                 return
+            _remove(targets)
+
+        def _delete_all():
+            targets = [(kind, path) for kind, path, _, _ in _scan_models()]
+            if not targets or not messagebox.askyesno(
+                    "모델 전체 삭제", f"모델 {len(targets)}개를 모두 지울까요?",
+                    parent=parent.winfo_toplevel()):
+                return
+            _remove(targets)
+
+        def _remove(targets):
             errors = []
             for kind, path in targets:
                 try:
@@ -905,5 +918,8 @@ class SettingsMixin:
         _del_btn = flat_button(btn_row, "선택 삭제", _delete_selected, bg="#5A2A2E",
                                fg="#FFD8D8", hover="#6E3438", padx=14, pady=6)
         _del_btn.pack(side="left", padx=(8, 0))
+        _del_all_btn = flat_button(btn_row, "전체 삭제", _delete_all, bg="#5A2A2E",
+                                   fg="#FFD8D8", hover="#6E3438", padx=14, pady=6)
+        _del_all_btn.pack(side="left", padx=(8, 0))
 
         _refresh()

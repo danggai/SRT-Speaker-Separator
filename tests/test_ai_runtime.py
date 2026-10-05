@@ -90,3 +90,23 @@ def settings_storage_shows_ai_card(app):
     expect("AI 부품" in labels, "저장 공간에 AI 부품 카드가 있어야 해요")
     expect(any("설치 안 됨" in t or "개발 환경" in t for t in labels), f"상태 표시: {labels[:40]}")
     eq(ctx.tk_errors, [])
+
+
+@test
+def storage_delete_all_models_removes_every_cached_model(app):
+    import os
+    import pathlib
+    from harness import flat
+    hub = pathlib.Path(os.environ["HF_HOME"]) / "hub"
+    expect(str(hub).startswith(str(ctx.work)), "테스트는 임시 모델 폴더만 써야 해요")
+    for name in ("models--a--one", "models--b--two"):
+        (hub / name).mkdir(parents=True, exist_ok=True)
+        (hub / name / "w.bin").write_bytes(b"x" * 10)
+    app._open_settings(4)
+    pump(0.5)
+    win = [w for w in toplevels() if w.title() == "설정"][0]
+    from harness import press
+    press(flat(win, "전체 삭제"))
+    pump(0.3)
+    expect(any(m[1] == "모델 전체 삭제" for m in ctx.msgs), "확인을 물어야 해요")
+    eq([p.name for p in hub.iterdir()], [], "모두 지워짐")
