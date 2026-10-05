@@ -61,6 +61,29 @@ SEED = {"tutorial_seen": True, "update_check": False, "volume": 80}
 
 
 # ───────── 격리 환경 ─────────
+def _home_snapshot():
+    """실제 사용자 데이터(홈의 앱 파일) 상태: 경로 → (크기, 수정 시각)."""
+    home = pathlib.Path.home()
+    out = {}
+    for p in list(home.glob(".srt_speaker*")) + [home / ".srt_speaker_editor_ai" / "embcache"]:
+        targets = [p] if p.is_file() else (list(p.glob("*")) if p.is_dir() and p.name in (
+            ".srt_speaker_editor_backup", "embcache") else [])
+        for f in targets:
+            try:
+                st = f.stat()
+                out[str(f)] = (st.st_size, st.st_mtime_ns)
+            except OSError:
+                pass
+    return out
+
+
+def home_changes():
+    """테스트 중 바뀐 실제 사용자 파일 목록 (없어야 정상)."""
+    after = _home_snapshot()
+    before = getattr(ctx, "home_snapshot", after)
+    return sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+
+
 def setup():
     """실제 설정·백업·모델 캐시를 건드리지 않도록 임시 폴더로 돌린다."""
     import tkinter.filedialog as fd
@@ -83,6 +106,11 @@ def setup():
     wf.CACHE_DIR = ctx.work / "wavecache"
     import srt_editor.ai_runtime as air
     air.ROOT = ctx.work / "ai"
+    import srt_editor.version as ver
+    ver.UPDATE_LOG = ctx.work / "update.log"
+    import srt_editor.video as vid
+    vid.AUDIO_CACHE = ctx.work / "audiocache"
+    ctx.home_snapshot = _home_snapshot()
 
     def _rec(kind, default):
         def fn(title=None, message=None, **kw):
@@ -497,4 +525,7 @@ def run_all(only=None, verbose=False, out=print):
         f"(소요 {time.time() - started:.0f}초)")
     if failed:
         out("실패한 테스트: " + ", ".join(r[0] for r in failed))
+    leaked = home_changes()
+    if leaked:   # 실행 중인 실제 앱이 바꿨을 수도 있으니 경고로만
+        out("[경고] 실제 사용자 파일이 바뀌었어요: " + ", ".join(leaked))
     return 1 if failed else 0
