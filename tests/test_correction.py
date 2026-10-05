@@ -63,7 +63,8 @@ def correction_audio_check_uses_ai_job_and_hides_wrong(app):
 def app_dialogs_return_values_per_button_and_escape(app):
     import importlib
     import srt_editor.dialogs as D
-    saved = {k: getattr(D, k) for k in ("showinfo", "askyesno", "askyesnocancel")}
+    saved = {k: getattr(D, k) for k in ("showinfo", "showwarning", "showerror",
+                                        "askyesno", "askokcancel", "askyesnocancel")}   # reload가 전부 되돌리므로 모두 복원
     real = importlib.reload(D)
     from harness import flat, toplevels
 
