@@ -590,7 +590,8 @@ class DiarizeMixin:
         _line_intervals = [[t_s, t_e] if t_s is not None and t_e is not None else None
                            for t_s, t_e in getattr(self, "_ts_cache", [])]
         _num_spk, _exact = self._get_diarize_spk_settings()
-        _gpu = bool((ai_runtime.installed_info() or {}).get("cuda"))
+        _sens = self._get_diarize_sensitivity()   # Tk 변수는 메인 스레드에서 읽음
+        _gpu =bool((ai_runtime.installed_info() or {}).get("cuda"))
         _prog_state["stage_estimates"] = {"import": 8.0, "audio": 3.0, "model": 10.0,
                                           "diarize": len(_line_intervals) * (0.03 if _gpu else 0.08), "map": 2.0}
 
@@ -625,7 +626,7 @@ class DiarizeMixin:
                 res = self._run_ai_job(
                     {"type": "diarize", "media": self.media_path, "hf_token": hf_tok,
                      "intervals": _line_intervals, "seeds": {str(k): v for k, v in _line_seeds.items()},
-                     "num_speakers": _num_spk, "exact": _exact, "sensitivity": self._get_diarize_sensitivity()},
+                     "num_speakers": _num_spk, "exact": _exact, "sensitivity": _sens},
                     on_event=_on_ev, cancelled=lambda: _prog_state.get("cancelled"))
                 if _prog_state.get("cancelled"):
                     return

@@ -240,16 +240,20 @@ class TranscribeMixin:
                     _pstate["target"] = float(pct)
             except Exception: pass
 
-        # ── 워커 ─────────────────────────────────────────────────
+        # ── 워커 (Tk 변수는 여기 메인 스레드에서 미리 읽음) ─────────
+        import os as _os
+        _mode_var = getattr(self, "_diarize_mode_var", None)
+        _mode = _mode_var.get() if _mode_var else getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE)
+        _lang = getattr(self, "_transcribe_language", "ko")
+        _lang = None if _lang == "auto" else _lang
+        _bidx = getattr(self, "_diarize_batch_var", None)
+        _bidx = _bidx.get() if _bidx else getattr(self, "_diarize_batch_init", 3)
+        _hint = self._build_proper_noun_hint()
+        _num_spk, _exact = self._get_diarize_spk_settings()
+        _sens = self._get_diarize_sensitivity()
+
         def _worker():
             try:
-                import os as _os
-                _mode_var = getattr(self, "_diarize_mode_var", None)
-                _mode = _mode_var.get() if _mode_var else getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE)
-                _lang = getattr(self, "_transcribe_language", "ko")
-                _lang = None if _lang == "auto" else _lang
-                _bidx = getattr(self, "_diarize_batch_var", None)
-                _bidx = _bidx.get() if _bidx else getattr(self, "_diarize_batch_init", 3)
                 _cancelled = lambda: _pstate.get("cancelled")
 
                 def _on_ev(ev, lo=0.0, hi=100.0):
@@ -259,7 +263,7 @@ class TranscribeMixin:
                         self.after(0, lambda: _set(msg, pct))
 
                 res = self._run_ai_job({"type": "transcribe", "media": media_path, "mode": _mode,
-                                        "language": _lang, "asr_hint": self._build_proper_noun_hint(),
+                                        "language": _lang, "asr_hint": _hint,
                                         "batch": _bidx},
                                        on_event=lambda ev: _on_ev(ev, 0, 72 if with_diarize else 90),
                                        cancelled=_cancelled)
@@ -273,13 +277,12 @@ class TranscribeMixin:
 
                 _auto = None
                 if with_diarize and split_segs:
-                    _num_spk, _exact = self._get_diarize_spk_settings()
                     hf_tok = hf_token or getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
                     dres = self._run_ai_job(
                         {"type": "diarize", "media": media_path, "hf_token": hf_tok,
                          "intervals": [[sg["start"], sg["end"]] for sg in split_segs],
                          "num_speakers": _num_spk, "exact": _exact,
-                         "sensitivity": self._get_diarize_sensitivity()},
+                         "sensitivity": _sens},
                         on_event=lambda ev: _on_ev(ev, 72, 94), cancelled=_cancelled)
                     if _cancelled():
                         return

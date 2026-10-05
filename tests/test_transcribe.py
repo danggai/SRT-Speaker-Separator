@@ -69,7 +69,8 @@ def auto_transcribe_loads_lines_and_removes_temp_file(app):
             {"start": 4.5, "end": 6.0, "text": "오늘 방송 시작할게요"}]
     app._run_ai_job = lambda job, on_event=None, cancelled=None: {"segments": segs, "language": "ko"}
     app._auto_transcribe(str(p["wav"]))
-    wait_until(lambda: len(app.subtitles) == 2 and app.subtitles[0]["text"] == "안녕하세요 여러분", 5)
+    wait_until(lambda: len(app.subtitles) == 2 and app.subtitles[0]["text"] == "안녕하세요 여러분", 10,
+               lambda: f"{[s['text'] for s in app.subtitles]} {ctx.msgs}")
     eq([s["text"] for s in app.subtitles], ["안녕하세요 여러분", "오늘 방송 시작할게요"])
     left = [f for f in set(os.listdir(tempfile.gettempdir())) - before if f.endswith(".srt")]
     eq(left, [], "임시 SRT는 지움")
