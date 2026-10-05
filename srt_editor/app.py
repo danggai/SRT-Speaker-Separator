@@ -664,7 +664,7 @@ class SRTEditor(
         # ── 헤더 / 카운터 ─────────────────────
         T(self._hdr_canvas, "컬럼 경계를 좌우로 드래그해 너비 조절")
         T(self.lbl_count,   "미배정 자막 수\n클릭 → 다음 미배정 자막으로 이동")
-        T(self.lbl_check,   "화자 분석이 확신하지 못한 줄 (번호 앞 ?)\n클릭 → 다음 줄로 이동 · 화자를 지정하면 표시가 사라져요")
+        T(self.lbl_check,   "확신이 낮은 줄\n클릭 → 다음 줄로 이동")
 
     def _setup_dnd(self):
         """tkinterdnd2가 있으면 DnD, 없으면 조용히 무시"""

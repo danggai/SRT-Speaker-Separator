@@ -8,7 +8,7 @@ from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
-from ..widgets import (DarkScrollbar, NumberStepper, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
+from ..widgets import (DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
                        _watch, flat_button, present_dialog)
 
 
@@ -44,46 +44,7 @@ class TranscribeMixin:
         card = self._settings_card(diar_holder, "화자 분리")
         left, _ = self._settings_row(card, "K", "HuggingFace 토큰", "화자 분리 모델을 내려받을 때 필요해요")
         self._hf_token_row(left, hf_tok_var).pack(fill="x", pady=(8, 0))
-        _, right = self._settings_row(card, "#", "화자 수", "0이면 자동으로 정해요")
-        if not hasattr(self, "_diarize_num_spk"):
-            self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
-        NumberStepper(right, self._diarize_num_spk, 0, 20).pack()
-        _, right = self._settings_row(card, "=", "정확히 이 인원",
-                                      "끄면 '최대 N명'으로 제한해요 (출연자 수를 대략만 알 때 권장)")
-        if not hasattr(self, "_diarize_spk_exact_var"):
-            self._diarize_spk_exact_var = tk.BooleanVar(
-                value=getattr(self, "_diarize_spk_exact_init", False))
-        ToggleSwitch(right, self._diarize_spk_exact_var).pack()
-
-        sens_holder = tk.Frame(diar_holder, bg=BG)
-        sens_anchor = tk.Frame(diar_holder, bg=BG)
-        sens_anchor.pack()
-        card = self._settings_card(sens_holder, "분리 민감도")
-        left, right = self._settings_row(
-            card, "~", "분리 민감도",
-            "50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요")
-        if not hasattr(self, "_diarize_sensitivity_var"):
-            self._diarize_sensitivity_var = tk.IntVar(
-                value=getattr(self, "_diarize_sensitivity_init", 50))
-        sens_val = tk.Label(right, text=str(int(self._diarize_sensitivity_var.get())), bg=BG2, fg=FG,
-                            width=4, font=(theme.FONT_FAMILY, 10, "bold"))
-        sens_val.pack()
-
-        def _sens_cmd(v):
-            self._diarize_sensitivity_var.set(int(v))
-            sens_val.configure(text=str(int(v)))
-        PurpleSlider(left, from_=0, to=100, value=self._diarize_sensitivity_var.get(), width=340,
-                     command=_sens_cmd, bg=BG2).pack(anchor="w", pady=(8, 0))
-
-        def _sens_visibility():
-            num, exact = self._get_diarize_spk_settings()
-            if num > 0 and exact:
-                sens_holder.pack_forget()
-            else:
-                sens_holder.pack(fill="x", before=sens_anchor)
-        _watch(sens_holder, self._diarize_num_spk, _sens_visibility)
-        _watch(sens_holder, self._diarize_spk_exact_var, _sens_visibility)
-        _sens_visibility()
+        self._speaker_count_rows(card)
 
         def _on_mode_change():
             if mode_var.get() == "diarize":

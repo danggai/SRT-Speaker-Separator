@@ -42,10 +42,7 @@ class AISetupMixin:
         body = tk.Frame(win, bg=BG)
         body.pack(fill="both", expand=True, padx=28, pady=(22, 8))
         tk.Label(body, text="AI 부품 설치", bg=BG, fg=FG, font=(theme.FONT_FAMILY, 15, "bold")).pack(anchor="w")
-        desc = ("자동 자막·화자 분석·음성 확인에 쓰는 음성 인식 부품을 이 PC에 한 번만 설치해요.\n"
-                "앱과 따로 설치돼서 앱은 가볍게 유지되고, 설정 → 저장 공간에서 지울 수 있어요.")
-        if needed:
-            desc = "이 기능을 쓰려면 AI 부품이 필요해요.\n" + desc
+        desc = "자동 자막·화자 분석에 필요해요. 처음 한 번만 설치해요."
         tk.Label(body, text=desc, bg=BG, fg=FG_DIM, justify="left",
                  font=(theme.FONT_FAMILY, 9)).pack(anchor="w", pady=(4, 14))
 
@@ -59,8 +56,7 @@ class AISetupMixin:
         Segmented(row, [(f"NVIDIA GPU  (약 {ai_runtime.EST_MB['cuda'] / 1024:.0f} GB)", "cuda"),
                         (f"CPU만  (약 {ai_runtime.EST_MB['cpu'] / 1024:.0f} GB)", "cpu")],
                   dev_var).pack(anchor="w", pady=(8, 4))
-        tk.Label(row, text=("NVIDIA 그래픽카드를 찾았어요. GPU를 고르면 훨씬 빨라요." if gpu else
-                            "NVIDIA 그래픽카드를 찾지 못했어요. CPU로 설치하는 걸 권장해요."),
+        tk.Label(row, text=("NVIDIA GPU 있음" if gpu else "NVIDIA GPU 없음 · CPU 권장"),
                  bg=BG2, fg=FG_HINT, font=(theme.FONT_FAMILY, 8)).pack(anchor="w")
         tk.Label(body, text=f"설치 위치: {ai_runtime.ROOT}", bg=BG, fg=FG_HINT, justify="left", wraplength=460,
                  font=(theme.FONT_FAMILY, 8)).pack(anchor="w", pady=(8, 0))
@@ -94,7 +90,7 @@ class AISetupMixin:
 
         def _cancel():
             if state["running"]:
-                if messagebox.askyesno("설치 중단", "설치를 중단할까요? 다음에 처음부터 다시 받아요.", parent=win):
+                if messagebox.askyesno("설치 중단", "설치를 중단할까요?", parent=win):
                     state["cancel"] = True
             else:
                 win.destroy()
@@ -108,11 +104,10 @@ class AISetupMixin:
                 if not state["cancel"]:
                     messagebox.showerror("AI 부품 설치 실패", err[:900], parent=self)
                 return
-            msg = "AI 부품을 설치했어요."
+            msg = "설치 완료"
             if info.get("device") == "cuda":
-                msg += (f"\nGPU로 동작해요 ({info.get('gpu')})." if info.get("cuda") else
-                        "\n\nGPU를 쓸 수 없어 CPU로 동작해요. 그래픽 드라이버를 최신으로 업데이트한 뒤 "
-                        "설정 → 저장 공간에서 다시 설치해 보세요.")
+                msg += (f" · GPU ({info.get('gpu')})" if info.get("cuda") else
+                        "\nGPU를 못 써서 CPU로 동작해요. 드라이버 업데이트 후 다시 설치해 보세요.")
             messagebox.showinfo("설치 완료", msg, parent=self)
             if on_done:
                 on_done()
@@ -148,8 +143,7 @@ class AISetupMixin:
     def _build_ai_card(self, parent):
         """설정 → 저장 공간의 'AI 부품' 카드: 상태와 설치·다시 설치·삭제."""
         card = self._settings_card(parent, "AI 부품")
-        left, right = self._settings_row(card, "AI", "음성 인식 부품 (whisperx · torch)",
-                                         "자동 자막·화자 분석·음성 확인에 써요")
+        left, right = self._settings_row(card, "AI", "AI 부품", "자동 자막·화자 분석용")
         info_lbl = tk.Label(left, text="", bg=BG2, fg=ACCENT, anchor="w", justify="left",
                             font=(theme.FONT_FAMILY, 9, "bold"))
         info_lbl.pack(fill="x", pady=(4, 0))
@@ -172,7 +166,7 @@ class AISetupMixin:
                 flat_button(right, "삭제", _remove, bg="#5A2A2E", fg="#FFD8D8", hover="#6E3438",
                             padx=12, pady=6).pack(side="left")
             elif ai_runtime.ai_python():
-                info_lbl.configure(text="개발 환경의 파이썬에 설치된 whisperx를 쓰는 중")
+                info_lbl.configure(text="개발 환경 파이썬 사용 중")
                 flat_button(right, "따로 설치", lambda: self._open_ai_install_dialog(on_done=_refresh),
                             bg=BG3, hover="#33333C", padx=12, pady=6).pack(side="left")
             else:
@@ -181,7 +175,7 @@ class AISetupMixin:
                             bg=ACCENT, fg="white", hover="#AE96E2", padx=14, pady=6).pack(side="left")
 
         def _remove():
-            if messagebox.askyesno("AI 부품 삭제", "AI 부품을 지울까요?\n자동 자막·화자 분석을 쓰려면 다시 설치해야 해요.",
+            if messagebox.askyesno("AI 부품 삭제", "AI 부품을 지울까요?",
                                    parent=parent.winfo_toplevel()):
                 ai_runtime.uninstall()
                 _refresh()

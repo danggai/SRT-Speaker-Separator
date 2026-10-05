@@ -8,7 +8,7 @@ from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
-from ..widgets import (NumberStepper, PopupMenu, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
+from ..widgets import (NumberStepper, PopupMenu, Segmented, ToggleSwitch, _gradient_bar_rows,
                        _watch, flat_button, present_dialog)
 
 
@@ -47,66 +47,62 @@ class DiarizeMixin:
             btn.pack(side="left", padx=(6, 0))
         return row
 
+    def _speaker_count_rows(self, card, seed_note=False):
+        """출연자 수 + '인원이 확실해요' (화자 분석·자막 생성 창 공용). 0명이면 확실 여부 줄은 숨김."""
+        desc = "0이면 자동"
+        if seed_note:
+            desc += " · 미리 지정한 화자가 있으면 무시"
+        _, right = self._settings_row(card, "#", "출연자 수", desc)
+        if not hasattr(self, "_diarize_num_spk"):
+            self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
+        NumberStepper(right, self._diarize_num_spk, 0, 20).pack()
+        left, right = self._settings_row(card, "=", "인원이 확실해요", "")
+        if not hasattr(self, "_diarize_spk_exact_var"):
+            self._diarize_spk_exact_var = tk.BooleanVar(
+                value=getattr(self, "_diarize_spk_exact_init", False))
+        ToggleSwitch(right, self._diarize_spk_exact_var).pack()
+        row = left.master
+        sep = card.winfo_children()[-2]   # _settings_row가 줄 앞에 넣은 구분선
+        hint = tk.Label(left, bg=BG2, fg=FG_DIM, justify="left", anchor="w", font=(theme.FONT_FAMILY, 9))
+        hint.pack(fill="x", pady=(2, 0))
+
+        def _update():
+            try:
+                num = int(self._diarize_num_spk.get())
+                exact = bool(self._diarize_spk_exact_var.get())
+            except (tk.TclError, ValueError):
+                return
+            if num <= 0:
+                sep.pack_forget()
+                row.pack_forget()
+                return
+            if not row.winfo_ismapped():
+                sep.pack(fill="x", padx=14)
+                row.pack(fill="x", padx=14, pady=12)
+            hint.configure(text=f"정확히 {num}명" if exact else f"최대 {num}명")
+        _watch(row, self._diarize_num_spk, _update)
+        _watch(row, self._diarize_spk_exact_var, _update)
+        _update()
+
     def _build_diarize_tab(self, parent, footer_parent=None, on_close=None):
         """화자 분석 창 내용 (설정창과 같은 카드 스타일). 실행 버튼 행은 footer_parent에 둔다."""
         if footer_parent is None:
             footer_parent = parent
         self._settings_title(parent, "화자 자동 분석",
-                             "자막에 화자를 화자당 3~5줄 먼저 지정해 두면, 그 목소리를 기준으로 나머지 줄을 채워요 "
-                             "(가장 정확해요). 지정한 게 없으면 화자 수대로 목소리를 묶어요. 처음 실행할 때 모델을 내려받아요.")
+                             "화자마다 3~5줄을 먼저 지정하면 더 정확해요.")
 
         card = self._settings_card(parent, "계정")
         left, _ = self._settings_row(card, "K", "HuggingFace 토큰", "분석 모델을 내려받을 때 필요해요")
         self._hf_token_var = tk.StringVar(value=getattr(self, "_hf_token", ""))
         self._hf_token_row(left, self._hf_token_var).pack(fill="x", pady=(8, 0))
 
-        card = self._settings_card(parent, "화자 수")
-        _, right = self._settings_row(card, "#", "화자 수", "0이면 자동으로 정해요")
-        if not hasattr(self, "_diarize_num_spk"):
-            self._diarize_num_spk = tk.IntVar(value=getattr(self, "_diarize_num_spk_val", 0))
-        NumberStepper(right, self._diarize_num_spk, 0, 20).pack()
-        _, right = self._settings_row(card, "=", "정확히 이 인원",
-                                      "끄면 '최대 N명'으로 제한해요 (출연자 수를 대략만 알 때 권장)")
-        if not hasattr(self, "_diarize_spk_exact_var"):
-            self._diarize_spk_exact_var = tk.BooleanVar(
-                value=getattr(self, "_diarize_spk_exact_init", False))
-        ToggleSwitch(right, self._diarize_spk_exact_var).pack()
+        card = self._settings_card(parent, "출연자 수")
+        self._speaker_count_rows(card, seed_note=True)
 
         # 인식 모드는 자동 자막 생성에서만 쓰지만, 설정 저장에 필요해 변수는 만들어 둔다
         if not hasattr(self, "_diarize_mode_var"):
             self._diarize_mode_var = tk.StringVar(
                 value=getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE))
-
-        # 분리 민감도 (인원을 정확히 고정하면 숨김)
-        sens_holder = tk.Frame(parent, bg=BG)
-        sens_anchor = tk.Frame(parent, bg=BG)
-        sens_anchor.pack()
-        card = self._settings_card(sens_holder, "분리 민감도")
-        left, right = self._settings_row(
-            card, "~", "분리 민감도",
-            "50 = 모델 기본값. 한 사람이 여러 화자로 쪼개지면 낮추고, 다른 사람이 합쳐지면 높이세요")
-        if not hasattr(self, "_diarize_sensitivity_var"):
-            self._diarize_sensitivity_var = tk.IntVar(
-                value=getattr(self, "_diarize_sensitivity_init", 50))
-        sens_val = tk.Label(right, text=str(int(self._diarize_sensitivity_var.get())), bg=BG2, fg=FG,
-                            width=4, font=(theme.FONT_FAMILY, 10, "bold"))
-        sens_val.pack()
-
-        def _sens_cmd(v):
-            self._diarize_sensitivity_var.set(int(v))
-            sens_val.configure(text=str(int(v)))
-        PurpleSlider(left, from_=0, to=100, value=self._diarize_sensitivity_var.get(), width=340,
-                     command=_sens_cmd, bg=BG2).pack(anchor="w", pady=(8, 0))
-
-        def _sens_visibility():
-            num, exact = self._get_diarize_spk_settings()
-            if num > 0 and exact:
-                sens_holder.pack_forget()
-            else:
-                sens_holder.pack(fill="x", before=sens_anchor)
-        _watch(sens_holder, self._diarize_num_spk, _sens_visibility)
-        _watch(sens_holder, self._diarize_spk_exact_var, _sens_visibility)
-        _sens_visibility()
 
         # 연산: 처리 장치 + GPU 사용량 (5단계)
         card = self._settings_card(parent, "연산")
@@ -176,9 +172,9 @@ class DiarizeMixin:
             seeds = line_speakers.seed_speakers([s.get("speaker", "") for s in self.subtitles])
             if on_close and self.subtitles and not seeds and messagebox.askokcancel(
                     "화자 먼저 지정하기",
-                    "화자마다 3~5줄을 먼저 지정해 두면, 그 목소리를 기준으로 나머지 줄을 채워서 훨씬 정확해요.\n\n"
-                    "확인: 분석 창을 닫고 먼저 지정하러 가기\n"
-                    "취소: 지금 상태로 바로 분석 시작",
+                    "화자마다 3~5줄을 먼저 지정하면 더 정확해요.\n\n"
+                    "확인: 지정하러 가기\n"
+                    "취소: 그냥 분석",
                     parent=self):
                 on_close()
                 return
@@ -629,7 +625,7 @@ class DiarizeMixin:
                 if name and (not sub.get("speaker") or sub.get("_auto")):
                     sub["speaker"] = name
                     done.append(i)
-            head = f"직접 지정한 줄을 기준으로 {len(done)}줄에 화자를 채웠어요."
+            head = f"{len(done)}줄을 채웠어요."
         else:
             names, n = {}, 1
             for lab in sorted({int(v) for v in result if v >= 0}):
@@ -642,14 +638,12 @@ class DiarizeMixin:
                 if lab >= 0:
                     sub["speaker"] = names[int(lab)]
                     done.append(i)
-            head = (f"{len(done)}줄을 {len(names)}명으로 나눴어요 ({', '.join(names.values())}).\n"
-                    "화자 이름을 바꾸고, 틀린 줄을 몇 줄 고친 뒤 다시 분석하면 훨씬 정확해져요.")
+            head = f"{len(done)}줄을 {len(names)}명으로 나눴어요."
         self._mark_auto_speakers(done, conf)
         n_check = sum(1 for s in self.subtitles if s.get("_check"))
         msg = head
         if n_check:
-            msg += (f"\n\n확신이 낮은 {n_check}줄에 '확인 필요' 표시를 했어요. 위쪽 '확인 필요' 숫자를 누르면 "
-                    "차례로 이동해요. 고친 줄은 다시 분석할 때 기준으로 쓰여요.")
+            msg += f"\n확인 필요 {n_check}줄 (번호 앞 ?)"
         self._unsaved = True
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)
