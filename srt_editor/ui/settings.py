@@ -720,6 +720,8 @@ class SettingsMixin:
                     padx=14, pady=6).pack(side="left")
         _refresh_size()
 
+        self._build_ai_card(parent)
+
         tk.Label(parent, text="모델", bg=BG, fg="#8A8A96",
                  font=(theme.FONT_FAMILY, 9, "bold")).pack(anchor="w", padx=34, pady=(18, 6))
         self._build_model_mgmt_tab(parent)

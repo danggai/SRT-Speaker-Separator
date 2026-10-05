@@ -1,23 +1,12 @@
 """자막 자동 생성(음성 인식)과 고유명사 사전."""
 import os
-import subprocess
-import sys
-import threading
 import tkinter as tk
 from tkinter import messagebox
 
-from .. import model_download, theme
+from .. import theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
-from ..speech import (
-    _ASR_MODES,
-    _DEFAULT_ASR_MODE,
-    _DIARIZE_BATCH_MAP,
-    _diarize_exclusive,
-    _friendly_transcribe_error,
-    _load_asr_model,
-    _split_segments_by_speaker,
-)
+from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
 from ..widgets import (DarkScrollbar, NumberStepper, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
                        _watch, flat_button, present_dialog)
@@ -224,70 +213,6 @@ class TranscribeMixin:
                     font=(theme.FONT_FAMILY, 10), padx=18, pady=8).pack(side="right", padx=(0, 8))
         present_dialog(win, self)
 
-    def _offer_whisperx_autoinstall(self, retry_fn):
-        """whisperx가 설치되어 있지 않을 때 자동 설치를 제안하고, 동의해서
-        설치가 완료되면 원래 하려던 작업(retry_fn)을 자동으로 이어서
-        실행한다. 거부하거나 설치에 실패하면 조용히 끝난다(별도 안내는
-        설치 실패 메시지로 대체)."""
-        ans = messagebox.askyesno(
-            "설치 필요",
-            "자동 자막 생성/화자 분석에 필요한 whisperx 패키지가\n"
-            "설치되어 있지 않습니다.\n\n"
-            "지금 자동으로 설치할까요?\n"
-            "(인터넷 연결 필요, 수 분 소요될 수 있습니다)\n\n"
-            "설치가 끝나면 하던 작업을 자동으로 이어서 진행합니다.",
-            parent=self)
-        if not ans:
-            return
-
-        inst_win = tk.Toplevel(self)
-        _apply_dark_titlebar(inst_win)
-        inst_win.title("whisperx 설치 중...")
-        inst_win.configure(bg=BG)
-        inst_win.geometry("420x120")
-        inst_win.resizable(False, False)
-        inst_win.transient(self)
-        inst_win.grab_set()
-        tk.Label(inst_win, text="⏳  whisperx 설치 중...",
-                 bg=BG, fg=FG, font=(theme.FONT_FAMILY, 10, "bold")).pack(pady=(24, 6))
-        tk.Label(inst_win, text="pip install 실행 중 (수 분 소요될 수 있습니다)",
-                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8)).pack()
-        inst_win.update()
-
-        def _do_install():
-            ok = False
-            err_text = ""
-            try:
-                subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", "whisperx", "-q"])
-                ok = True
-            except subprocess.CalledProcessError:
-                try:
-                    subprocess.check_call(
-                        [sys.executable, "-m", "pip", "install", "whisperx", "-q", "--user"])
-                    ok = True
-                except subprocess.CalledProcessError as e2:
-                    err_text = str(e2)
-            except Exception as e:
-                err_text = str(e)
-
-            def _finish():
-                try: inst_win.destroy()
-                except Exception: pass
-                if ok:
-                    # 감지된 설치 완료 → 하던 작업을 자동으로 이어서 실행
-                    retry_fn()
-                else:
-                    messagebox.showerror(
-                        "설치 실패",
-                        "whisperx 자동 설치에 실패했습니다.\n\n"
-                        "수동으로 설치 후 다시 시도해주세요:\n"
-                        "pip install whisperx\n\n"
-                        f"(오류: {err_text[:200]})", parent=self)
-            self.after(0, _finish)
-
-        threading.Thread(target=_do_install, daemon=True).start()
-
     def _auto_transcribe(self, media_path, with_diarize=False, hf_token=""):
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
         import threading
@@ -367,71 +292,29 @@ class TranscribeMixin:
         # ── 워커 ─────────────────────────────────────────────────
         def _worker():
             try:
-                import whisperx, torch, os as _os
-
-                _dev_var = getattr(self, "_diarize_device_var", None)
-                _dev_pref = _dev_var.get() if _dev_var else "auto"
-                device = "cuda" if (torch.cuda.is_available() and _dev_pref != "cpu") else "cpu"
+                import os as _os
                 _mode_var = getattr(self, "_diarize_mode_var", None)
                 _mode = _mode_var.get() if _mode_var else getattr(self, "_diarize_mode_init", _DEFAULT_ASR_MODE)
                 _lang = getattr(self, "_transcribe_language", "ko")
                 _lang = None if _lang == "auto" else _lang
+                _bidx = getattr(self, "_diarize_batch_var", None)
+                _bidx = _bidx.get() if _bidx else getattr(self, "_diarize_batch_init", 3)
+                _cancelled = lambda: _pstate.get("cancelled")
 
-                def _fetch_model(repo, label, patterns, lo, hi, token=None):
-                    """모델이 없으면 내려받으며 진행률(MB, %)을 표시. 이미 있으면 바로 지나감."""
-                    def _cb(done, total):
-                        pct = lo + (hi - lo) * (done / total) if total else lo
-                        self.after(0, lambda: _set(f"{label} 내려받는 중  " + model_download.format_progress(
-                            "", done, total).strip(), pct))
-                    model_download.download(repo, patterns, token=token, progress=_cb,
-                                            cancelled=lambda: _pstate.get("cancelled"))
+                def _on_ev(ev, lo=0.0, hi=100.0):
+                    if ev.get("type") == "status":
+                        msg, pct = ev.get("msg", ""), ev.get("pct")
+                        pct = None if pct is None else lo + (hi - lo) * float(pct) / 100.0
+                        self.after(0, lambda: _set(msg, pct))
 
-                _wname = _ASR_MODES.get(_mode, _ASR_MODES[_DEFAULT_ASR_MODE])[0]
-                _fetch_model(model_download.whisper_repo(_wname), "음성 인식 모델",
-                             model_download.WHISPER_PATTERNS, 3, 14)
-                if _pstate.get("cancelled"):
+                res = self._run_ai_job({"type": "transcribe", "media": media_path, "mode": _mode,
+                                        "language": _lang, "asr_hint": self._build_proper_noun_hint(),
+                                        "batch": _bidx},
+                                       on_event=lambda ev: _on_ev(ev, 0, 72 if with_diarize else 90),
+                                       cancelled=_cancelled)
+                if _cancelled():
                     return
-                _set(f"Whisper 모델 로드 중... ({device})", 14)
-                _pn_hint = self._build_proper_noun_hint()
-                model, _wmodel = _load_asr_model(whisperx, _mode, device,
-                                                 language=_lang, asr_hint=_pn_hint)
-                if _pstate.get("cancelled"):
-                    return
-
-                _set("음성 로드 중...", 15)
-                audio = whisperx.load_audio(media_path)
-                if _pstate.get("cancelled"):
-                    return
-
-                _set(f"음성 인식 중... ({device} / {_wmodel})", 20)
-                if device == "cuda":
-                    _bidx = getattr(self, "_diarize_batch_var", None)
-                    _bidx = _bidx.get() if _bidx else getattr(self, "_diarize_batch_init", 3)
-                    batch_size = _DIARIZE_BATCH_MAP[max(0, min(int(_bidx), len(_DIARIZE_BATCH_MAP) - 1))]
-                else:
-                    batch_size = 1
-                result = model.transcribe(audio, batch_size=batch_size, language=_lang)
-                del model
-                if device == "cuda": torch.cuda.empty_cache()
-                if _pstate.get("cancelled"):
-                    return
-
-                _set("타임스탬프 정렬 중...", 60)
-                _arepo = model_download.align_repo(result["language"])
-                if _arepo:
-                    _fetch_model(_arepo, "정렬 모델", None, 60, 64)
-                    if _pstate.get("cancelled"):
-                        return
-                model_a, meta = whisperx.load_align_model(
-                    language_code=result["language"], device=device)
-                result = whisperx.align(result["segments"], model_a, meta,
-                                        audio, device, return_char_alignments=False)
-                del model_a
-                if device == "cuda": torch.cuda.empty_cache()
-                if _pstate.get("cancelled"):
-                    return
-
-                segments = result["segments"]
+                segments = res["segments"]
 
                 # 설정값 읽기 (먼저 읽어야 이후 로직에서 참조 가능)
                 _max_chars   = getattr(self, "_transcribe_max_chars", 25)
@@ -443,6 +326,8 @@ class TranscribeMixin:
                 if _spellcheck:
                     try:
                         import subprocess as _sp
+                        if getattr(__import__("sys"), "frozen", False):
+                            raise ImportError("빌드된 앱에서는 설치할 수 없음")
                         _sp.check_call(
                             [__import__("sys").executable, "-m", "pip",
                              "install", "py-hanspell", "-q"],
@@ -451,23 +336,6 @@ class TranscribeMixin:
                         _spell_checker = _sc
                     except Exception:
                         pass
-
-                if with_diarize:
-                    _set("화자 분리 중...", 75)
-                    hf_tok = hf_token or getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
-                    from whisperx.diarize import DiarizationPipeline, assign_word_speakers
-                    _fetch_model(model_download.DIARIZE_REPO, "화자 분리 모델", None, 75, 80, token=hf_tok)
-                    if _pstate.get("cancelled"):
-                        return
-                    diar_model = DiarizationPipeline(token=hf_tok, device=device)
-                    self._apply_diarize_sensitivity(diar_model, self._get_diarize_sensitivity())
-                    _num_spk, _exact = self._get_diarize_spk_settings()
-                    diar_segs  = _diarize_exclusive(diar_model, audio, _num_spk, _exact)
-                    del diar_model
-                    if device == "cuda": torch.cuda.empty_cache()
-                    result2    = assign_word_speakers(diar_segs, result)
-                    # 세그먼트 대표 화자 대신 단어별 화자로 세그먼트를 다시 나눈다
-                    segments   = _split_segments_by_speaker(result2["segments"])
 
                 if _pstate.get("cancelled"):
                     return
@@ -615,6 +483,22 @@ class TranscribeMixin:
                     spk = seg.get("speaker", "")
                     split_segs.extend(_split_seg_with_words(seg, _max_chars, spk))
 
+                _auto = None
+                if with_diarize and split_segs:
+                    _num_spk, _exact = self._get_diarize_spk_settings()
+                    hf_tok = hf_token or getattr(self, "_hf_token", "") or _load_config().get("hf_token", "")
+                    dres = self._run_ai_job(
+                        {"type": "diarize", "media": media_path, "hf_token": hf_tok,
+                         "intervals": [[sg["start"], sg["end"]] for sg in split_segs],
+                         "num_speakers": _num_spk, "exact": _exact,
+                         "sensitivity": self._get_diarize_sensitivity()},
+                        on_event=lambda ev: _on_ev(ev, 72, 94), cancelled=_cancelled)
+                    if _cancelled():
+                        return
+                    for sg, lab in zip(split_segs, dres["labels"]):
+                        sg["speaker"] = f"화자 {lab + 1}" if lab >= 0 else ""
+                    _auto = dres["conf"]
+
                 srt_lines = []
                 for i, seg in enumerate(split_segs, 1):
                     t_s  = seg["start"]
@@ -668,6 +552,8 @@ class TranscribeMixin:
                     try: prog.destroy()
                     except Exception: pass
                     self._load_srt(tmp_path)
+                    if _auto is not None and len(_auto) == len(self.subtitles):
+                        self._mark_auto_speakers(range(len(self.subtitles)), _auto)
                     # 저장 경로를 원본 미디어 파일과 같은 이름/위치로 미리 지정
                     # (예: movie.mp4 → movie.srt). 아직 그 경로에 실제로 쓰여진
                     # 것은 아니므로 미저장 상태로 표시해, 저장(Ctrl+S) 한 번이면
@@ -680,23 +566,8 @@ class TranscribeMixin:
                     self._set_doc_title(_base)
                 self.after(0, _done)
 
-            except ImportError:
-                def _ei():
-                    if _pstate.get("cancelled"):
-                        return
-                    _pstate["run"] = False
-                    try: prog.destroy()
-                    except Exception: pass
-                    self._offer_whisperx_autoinstall(
-                        lambda: self._auto_transcribe(media_path, with_diarize, hf_token))
-                self.after(0, _ei)
             except Exception as e:
                 err = _friendly_transcribe_error(str(e))
-                try:
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
                 def _ee():
                     if _pstate.get("cancelled"):
                         return
@@ -705,34 +576,6 @@ class TranscribeMixin:
                     except Exception: pass
                     messagebox.showerror("오류", err, parent=self)
                 self.after(0, _ee)
-            finally:
-                # 작업이 성공/실패/취소 어떤 경우로 끝나든, 여기서 쓰던
-                # 무거운 객체(모델·오디오·인식결과)들을 일괄 해제한다.
-                try: del model
-                except Exception: pass
-                try: del model_a
-                except Exception: pass
-                try: del diar_model
-                except Exception: pass
-                try: del audio
-                except Exception: pass
-                try: del result
-                except Exception: pass
-                try: del result2
-                except Exception: pass
-                try: del segments
-                except Exception: pass
-                try: del diar_segs
-                except Exception: pass
-                try:
-                    import gc
-                    gc.collect()
-                    import torch as _torch
-                    if _torch.cuda.is_available():
-                        _torch.cuda.empty_cache()
-                        _torch.cuda.ipc_collect()
-                except Exception:
-                    pass
 
         threading.Thread(target=_worker, daemon=True).start()
 

@@ -557,10 +557,11 @@ class SpeakerMixin:
             return False
         self._push_undo()
         for idx in targets:
-            self.subtitles[idx]["speaker"] = val
+            self._set_line_speaker(idx, val)
             self._refresh_row(idx)
         self._unsaved = True
         self._refresh_speaker_counts()
+        self._update_check_count()
         self._wf_img_cache = None
         self._pb_redraw()   # 타임라인에도 바로 반영
         if advance and self._opt("advance_after_assign") and len(targets) == 1 \
@@ -569,6 +570,13 @@ class SpeakerMixin:
             self._select_row(nxt)
             self._scroll_to_row(nxt)
         return True
+
+    def _set_line_speaker(self, idx, val):
+        """사용자가 직접 화자를 정함 → 분석이 붙인 '자동·확인 필요' 표시를 지움."""
+        sub = self.subtitles[idx]
+        sub["speaker"] = val
+        for k in ("_auto", "_conf", "_check"):
+            sub.pop(k, None)
 
     def _assign_speaker_from_sidebar(self, name):
         self._assign_speaker_to_selection(name)
@@ -676,9 +684,9 @@ class SpeakerMixin:
         self._push_undo()
         self.speakers.remove(name)
         self.speaker_colors.pop(name, None)   # 커스텀 색상 제거
-        for sub in self.subtitles:
+        for i, sub in enumerate(self.subtitles):
             if sub["speaker"] == name:
-                sub["speaker"] = ""
+                self._set_line_speaker(i, "")
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)
         self._render_speakers()

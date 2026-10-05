@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk
 
+from .ui.ai_setup import AISetupMixin
 from .ui.transcribe import TranscribeMixin
 from .ui.diarize import DiarizeMixin
 from .ui.settings import SettingsMixin
@@ -53,6 +54,7 @@ _BADGE_FG = "#CFC7EE"   # 단축키 배지 글자
 
 
 class SRTEditor(
+    AISetupMixin,
     TranscribeMixin,
     DiarizeMixin,
     SettingsMixin,
@@ -454,6 +456,10 @@ class SRTEditor(
                                   font=(theme.FONT_FAMILY, 9))
         self.lbl_count.pack(side="right", padx=(0, 4), pady=8)
         self.lbl_count.bind("<Button-1>", lambda e: self._goto_next_unassigned())
+        # 확인 필요 카운터 (화자 분석이 확신하지 못한 줄이 있을 때만 보임)
+        self.lbl_check = tk.Label(top, text="", bg=TB_BG, fg="#E8C547", cursor="hand2",
+                                  font=(theme.FONT_FAMILY, 9))
+        self.lbl_check.bind("<Button-1>", lambda e: self._goto_next_check())
 
         # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
         self._update_btn = tk.Button(
@@ -658,6 +664,7 @@ class SRTEditor(
         # ── 헤더 / 카운터 ─────────────────────
         T(self._hdr_canvas, "컬럼 경계를 좌우로 드래그해 너비 조절")
         T(self.lbl_count,   "미배정 자막 수\n클릭 → 다음 미배정 자막으로 이동")
+        T(self.lbl_check,   "화자 분석이 확신하지 못한 줄 (번호 앞 ?)\n클릭 → 다음 줄로 이동 · 화자를 지정하면 표시가 사라져요")
 
     def _setup_dnd(self):
         """tkinterdnd2가 있으면 DnD, 없으면 조용히 무시"""

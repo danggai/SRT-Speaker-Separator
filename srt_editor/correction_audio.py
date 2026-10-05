@@ -1,7 +1,10 @@
 """교정 후보를 실제 음성으로 다시 확인 (해당 자막 구간만 다시 인식). GUI 없음."""
 import re
 
-from .speech import _ASR_MODES, _DEFAULT_ASR_MODE
+try:
+    from .speech import _ASR_MODES, _DEFAULT_ASR_MODE
+except ImportError:   # AI 부품에서 단독 모듈로 불릴 때
+    from speech import _ASR_MODES, _DEFAULT_ASR_MODE
 
 _SR = 16000
 _PAD = 0.3   # 자막 앞뒤로 더 잘라 들을 초

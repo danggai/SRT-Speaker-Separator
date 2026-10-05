@@ -9,6 +9,7 @@ from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FONT_MON
 from ..widgets import DarkScrollbar, PopupMenu, Tooltip
 
 _BR = " ↵ "   # 입력칸·목록에서 줄바꿈 표시
+_CHECK_FG = "#E8C547"   # 확인 필요 줄 번호 색
 
 
 class SubtitleTableMixin:
@@ -515,10 +516,11 @@ class SubtitleTableMixin:
         self._push_undo()
         for idx in targets:
             if idx < len(self.subtitles):
-                self.subtitles[idx]["speaker"] = val
+                self._set_line_speaker(idx, val)
                 self._redraw_slot_for(idx)
         self._unsaved = True
         self._refresh_speaker_counts()
+        self._update_check_count()
         # 재생바(타임라인)의 자막 색상도 즉시 반영 — 그렇지 않으면 재생/이동
         # 등 다른 동작을 해야 뒤늦게 갱신되는 것처럼 보였다.
         self._wf_img_cache = None
@@ -774,7 +776,10 @@ class SubtitleTableMixin:
         c   = self.canvas
         bg, outline, width = self._slot_colors(di)
         c.itemconfigure(t + "card", fill=bg, outline=outline, width=width)
-        c.itemconfigure(t + "num", text=str(di + 1))
+        if sub.get("_check"):   # 화자 분석이 확신하지 못한 줄
+            c.itemconfigure(t + "num", text=f"? {di + 1}", fill=_CHECK_FG, font=(theme.FONT_FAMILY, 8, "bold"))
+        else:
+            c.itemconfigure(t + "num", text=str(di + 1), fill="#6A6A76", font=(theme.FONT_FAMILY, 8))
         spk = sub.get("speaker", "")
         c.itemconfigure(t + "bar", fill=self._speaker_color(spk) if spk else "")
 
@@ -1256,10 +1261,11 @@ class SubtitleTableMixin:
 
     def _pill_select(self, sub_idx, val):
         self._push_undo()
-        self.subtitles[sub_idx]["speaker"] = val
+        self._set_line_speaker(sub_idx, val)
         self._unsaved = True
         self._refresh_row(sub_idx)
         self._refresh_speaker_counts()
+        self._update_check_count()
         # 재생바(타임라인)의 자막 색상도 즉시 반영
         self._wf_img_cache = None
         self._pb_redraw()

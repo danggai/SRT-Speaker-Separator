@@ -132,22 +132,20 @@ class CorrectionMixin:
             mode = getattr(self, "_diarize_mode_init", None) or "accurate"
             device = getattr(self, "_diarize_device_init", "auto")
 
-            def progress(n, total):
-                self.after(0, lambda: status_lbl.configure(text=f"음성 확인 중…  {n} / {total}"))
+            def on_ev(ev):
+                if ev.get("type") == "status" and ev.get("msg"):
+                    self.after(0, lambda m=ev["msg"]: status_lbl.winfo_exists() and status_lbl.configure(text=m))
 
             def work():
                 try:
-                    from .. import correction_audio
-                    results = correction_audio.verify(
-                        self.media_path, items, mode=mode, device=device,
-                        on_progress=progress, cancelled=lambda: state["cancel"])
-                    err = None
-                except ImportError:
-                    results, err = [], "음성 확인에는 자동 자막 기능(whisperx)이 설치돼 있어야 해요."
+                    res = self._run_ai_job({"type": "verify", "media": self.media_path, "items": items,
+                                            "mode": mode, "device": device},
+                                           on_event=on_ev, cancelled=lambda: state["cancel"])
+                    results, err = res["results"], None
                 except Exception as e:
                     results, err = [], f"음성 확인 중 오류가 났어요: {e}"
                 self.after(0, lambda: _audio_done(targets, results, err))
-            threading.Thread(target=work, daemon=True).start()
+            self._ensure_ai(lambda: threading.Thread(target=work, daemon=True).start())
 
         def _audio_done(targets, results, err):
             if not win.winfo_exists():

@@ -5,6 +5,7 @@ SR = 16000
 MIN_CROP_SEC = 1.0    # 이보다 짧은 줄은 가운데 기준으로 늘려서 임베딩
 SEED_MIN_LINES = 3    # 기준 화자로 쓰려면 이 줄 수 이상 지정돼 있어야 함
 SEED_MIN_SPEAKERS = 2
+UNSURE_FRAC = 0.2     # 자동 지정 줄 중 확신도 하위 이 비율을 '확인 필요'로 표시
 
 
 def _norm(z):
@@ -39,27 +40,59 @@ def _valid(x):
     return ~np.isnan(x).any(axis=1)
 
 
-def cluster_lines(x, k):
-    """줄 임베딩을 k명으로 군집화 → 줄별 군집 번호 (임베딩 없는 줄은 -1). 스펙트럴, 실패하면 KMeans."""
+def _cluster(z, k):
     from sklearn.cluster import KMeans, SpectralClustering
-    ok = _valid(x)
-    labels = np.full(len(x), -1, int)
-    z = _norm(x[ok])
-    k = max(1, min(int(k), len(z)))
-    if k == 1:
-        labels[ok] = 0
-        return labels
-    lab = None
     if len(z) >= 2 * k:
         try:
             aff = np.clip(z @ z.T, 0, 1) ** 2
-            lab = SpectralClustering(k, affinity="precomputed", random_state=0).fit_predict(aff)
+            return SpectralClustering(k, affinity="precomputed", random_state=0).fit_predict(aff)
         except Exception:
-            lab = None
-    if lab is None:
-        lab = KMeans(k, n_init=10, random_state=0).fit_predict(z)
+            pass
+    return KMeans(k, n_init=10, random_state=0).fit_predict(z)
+
+
+def _centroid_conf(z, lab):
+    """줄마다 자기 군집 중심과 가장 가까운 다른 중심의 유사도 차이로 만든 확신도 (0~1)."""
+    ks = sorted(set(int(v) for v in lab))
+    if len(ks) < 2:
+        return np.ones(len(z))
+    c = _norm(np.vstack([z[lab == k].mean(0) for k in ks]))
+    s = z @ c.T
+    own = s[np.arange(len(z)), [ks.index(int(v)) for v in lab]]
+    s[np.arange(len(z)), [ks.index(int(v)) for v in lab]] = -np.inf
+    return np.clip((own - s.max(1)) / 0.2, 0.0, 1.0)
+
+
+def estimate_speakers(z, k_min=2, k_max=10):
+    """실루엣 점수가 가장 높은 화자 수."""
+    from sklearn.metrics import silhouette_score
+    best, best_k = -1.0, k_min
+    for k in range(k_min, min(k_max, len(z) - 1) + 1):
+        lab = _cluster(z, k)
+        if len(set(lab)) < 2:
+            continue
+        sc = silhouette_score(z, lab, metric="cosine")
+        if sc > best:
+            best, best_k = sc, k
+    return best_k
+
+
+def cluster_lines(x, k, k_max=10):
+    """줄 임베딩을 k명으로 군집화 (k가 0이면 화자 수도 추정, 최대 k_max명). 반환: (줄별 군집 번호, 줄별 확신도 0~1).
+    임베딩 없는 줄은 번호 -1, 확신도 0."""
+    ok = _valid(x)
+    labels = np.full(len(x), -1, int)
+    conf = np.zeros(len(x))
+    z = _norm(x[ok])
+    if len(z) == 0:
+        return labels, conf
+    if int(k) <= 0:
+        k = estimate_speakers(z, k_max=max(2, int(k_max))) if len(z) >= 6 else 1
+    k = max(1, min(int(k), len(z)))
+    lab = np.zeros(len(z), int) if k == 1 else _cluster(z, k)
     labels[ok] = lab
-    return labels
+    conf[ok] = _centroid_conf(z, lab)
+    return labels, conf
 
 
 def seed_speakers(speaker_per_line):
@@ -75,7 +108,7 @@ def seed_speakers(speaker_per_line):
 
 def assign_from_seeds(x, seeds, rounds=5, frac=0.3, c=100):
     """지정된 줄({줄 번호: 이름})로 학습하고, 확신이 높은 줄부터 스스로 라벨로 추가하며 반복해 모든 줄의 화자를 예측.
-    반환: 줄별 이름 (임베딩 없는 줄은 빈 문자열)."""
+    반환: (줄별 이름, 줄별 확신도 0~1). 임베딩 없는 줄은 빈 문자열·0."""
     from sklearn.linear_model import LogisticRegression
     ok = _valid(x)
     z = _norm(np.where(ok[:, None], x, 0.0))
@@ -95,4 +128,19 @@ def assign_from_seeds(x, seeds, rounds=5, frac=0.3, c=100):
             cur[i] = int(pred[i])
     clf = fit()
     pred = clf.classes_[clf.predict_proba(z).argmax(1)]
-    return [names[int(p)] if ok[i] else "" for i, p in enumerate(pred)]
+    conf = np.zeros(len(z))
+    conf[ok] = _centroid_conf(z[ok], pred[ok])
+    return [names[int(q)] if ok[i] else "" for i, q in enumerate(pred)], conf
+
+
+def unsure_mask(conf, auto, frac=UNSURE_FRAC):
+    """자동으로 정한 줄(auto) 가운데 확신도가 가장 낮은 frac 비율을 '확인 필요'로."""
+    conf, auto = np.asarray(conf, float), np.asarray(auto, bool)
+    out = np.zeros(len(conf), bool)
+    if auto.sum() == 0:
+        return out
+    c = conf[auto]
+    cut = np.quantile(c, frac)
+    low = (conf < cut) | ((conf == cut) & (cut < c.max()))   # 대부분 같은 값이면 그 값은 표시하지 않음
+    out[auto & low] = True
+    return out

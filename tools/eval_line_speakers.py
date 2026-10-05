@@ -25,7 +25,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--media", required=True)
     p.add_argument("--ref", required=True)
-    p.add_argument("--k", type=int, default=0, help="군집 화자 수 (0이면 정답 화자 수)")
+    p.add_argument("--k", type=int, default=0, help="군집 화자 수 (0이면 앱처럼 스스로 추정)")
     p.add_argument("--seeds", type=int, nargs="*", default=[3, 5, 10], help="화자당 선지정 줄 수")
     p.add_argument("--device", default="cpu", choices=["cpu", "cuda"])
     a = p.parse_args()
@@ -45,13 +45,13 @@ def main():
     print(f"줄 {len(ref)}개 (임베딩 {int(ok.sum())}개), 화자 {len(names)}명")
 
     from scipy.optimize import linear_sum_assignment
-    k = a.k or len(names)
-    lab = L.cluster_lines(x, k)
+    k = a.k
+    lab, _ = L.cluster_lines(x, k)
     ids = sorted(set(lab[ok]))
     m = np.array([[np.sum((lab == i) & (y == j)) for j in range(len(names))] for i in ids])
     ri, ci = linear_sum_assignment(-m)
     mapping = {ids[i]: j for i, j in zip(ri, ci)}
-    print(f"군집(k={k}): 줄 정확도 {np.mean([mapping.get(l) == t for l, t in zip(lab, y)]):.1%}")
+    print(f"군집(k={k or "자동"} → {len(ids)}명): 줄 정확도 {np.mean([mapping.get(l) == t for l, t in zip(lab, y)]):.1%}")
 
     for n_lab in a.seeds:
         accs = []
@@ -63,7 +63,7 @@ def main():
                 if len(c) > n_lab:
                     idx += list(rng.choice(c, n_lab, replace=False))
             seeds = {int(i): names[y[i]] for i in idx}
-            pred = L.assign_from_seeds(x, seeds)
+            pred, _ = L.assign_from_seeds(x, seeds)
             rest = [i for i in range(len(y)) if i not in seeds]
             accs.append(np.mean([pred[i] == names[y[i]] for i in rest]))
         print(f"선지정(화자당 {n_lab}줄): 나머지 줄 정확도 {np.mean(accs):.1%}")

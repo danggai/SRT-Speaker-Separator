@@ -48,7 +48,7 @@ jobs:
       - name: Build EXE
         run: |
           python -m srt_editor.app_icon icon.ico
-          pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico --hidden-import fractions --hidden-import decimal --hidden-import dataclasses --hidden-import inspect --hidden-import numbers --hidden-import dis srt_speaker_separator.py
+          pyinstaller --onefile --windowed --name SRTSpeakerEditor --icon icon.ico --hidden-import fractions --hidden-import decimal --hidden-import dataclasses --hidden-import inspect --hidden-import numbers --hidden-import dis --add-data "srt_editor/ai_worker.py;aiworker" --add-data "srt_editor/speech.py;aiworker" --add-data "srt_editor/line_speakers.py;aiworker" --add-data "srt_editor/model_download.py;aiworker" --add-data "srt_editor/correction_audio.py;aiworker" srt_speaker_separator.py
 
       # 파일 이름에 버전을 남김 (예: SRTSpeakerEditor_1.1.4.exe)
       - name: Rename EXE

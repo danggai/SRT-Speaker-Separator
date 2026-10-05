@@ -231,6 +231,11 @@ class FileMixin:
             meta["lanes"] = n
             meta["sub_lanes"] = [s.get("_lane", 0) if isinstance(s.get("_lane"), int) else 0
                                  for s in self.subtitles]
+        # 화자 분석이 자동으로 정한 줄·확인 필요 줄 (다시 분석할 때 직접 지정한 줄만 기준으로 쓰도록)
+        auto = [i for i, s in enumerate(self.subtitles) if s.get("_auto")]
+        if auto:
+            meta["auto_lines"] = auto
+            meta["check_lines"] = [i for i, s in enumerate(self.subtitles) if s.get("_check")]
 
     def _restore_lanes(self, meta):
         """메타의 레이어 수와 자막별 레이어를 복원."""
@@ -241,6 +246,13 @@ class FileMixin:
             for sub, ln in zip(self.subtitles, sub_lanes):
                 if isinstance(ln, int):
                     sub["_lane"] = ln
+        n_sub = len(self.subtitles)
+        for key, flag in (("auto_lines", "_auto"), ("check_lines", "_check")):
+            idx = meta.get(key)
+            if isinstance(idx, list):
+                for i in idx:
+                    if isinstance(i, int) and 0 <= i < n_sub:
+                        self.subtitles[i][flag] = True
         self._wf_lanes_src = None
         self._wf_img_cache = None
 
@@ -394,9 +406,29 @@ class FileMixin:
         else:
             self.lbl_count.configure(
                 text=f"▼  미지정 {unassigned}개", fg="#FF9A5C")
+        self._update_check_count()
+
+    def _update_check_count(self):
+        """화자 분석이 확신하지 못한 줄 수 (없으면 숨김)."""
+        lbl = getattr(self, "lbl_check", None)
+        if lbl is None:
+            return
+        n = sum(1 for s in self.subtitles if s.get("_check"))
+        if n:
+            lbl.configure(text=f"?  확인 필요 {n}줄")
+            if not lbl.winfo_ismapped():
+                lbl.pack(side="right", padx=(0, 12), pady=8, after=self.lbl_count)
+        elif lbl.winfo_ismapped():
+            lbl.pack_forget()
+
+    def _goto_next_check(self):
+        self._goto_next_line(lambda s: s.get("_check"))
 
     def _goto_next_unassigned(self):
-        """현재 선택/스크롤 위치 이후 첫 번째 미지정 화자 행으로 순환 이동."""
+        self._goto_next_line(lambda s: not s["speaker"])
+
+    def _goto_next_line(self, want):
+        """현재 선택/스크롤 위치 이후 조건에 맞는 첫 줄로 순환 이동."""
         if not self.subtitles:
             return
 
@@ -408,7 +440,7 @@ class FileMixin:
         n = len(self.subtitles)
         for offset in range(1, n + 1):
             idx = (start + offset) % n
-            if not self.subtitles[idx]["speaker"]:
+            if want(self.subtitles[idx]):
                 self._scroll_to_row(idx)
                 self._select_row(idx)   # 숫자 키가 이 줄에 적용되도록 선택도 옮김
                 self.focus_set()

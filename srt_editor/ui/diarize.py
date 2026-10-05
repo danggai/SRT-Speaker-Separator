@@ -1,18 +1,12 @@
 """화자 분석(화자 분리 후 기존 자막에 화자 매핑)과 관련 설정."""
-import os
 import threading
 import tkinter as tk
 from tkinter import messagebox
 
-from .. import line_speakers, model_download, theme
+from .. import ai_runtime, line_speakers, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
-from ..speech import (
-    _DEFAULT_ASR_MODE,
-    _assign_speakers_by_overlap,
-    _diarize_exclusive,
-    _friendly_transcribe_error,
-)
+from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
 from ..widgets import (NumberStepper, PopupMenu, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
                        _watch, flat_button, present_dialog)
@@ -305,6 +299,10 @@ class DiarizeMixin:
                 parent=self)
             return
 
+        if not ai_runtime.ai_python():
+            self._open_ai_install_dialog(on_done=self._run_diarize_whisperx, needed=True)
+            return
+
         num_spk_var = getattr(self, "_diarize_num_spk", None)
         num_spk = num_spk_var.get() if num_spk_var else 0
         self._hf_token            = hf_tok
@@ -364,7 +362,7 @@ class DiarizeMixin:
 
         # 단계 타임라인 — 전체 너비에 균등 분배
         STEP_LABELS = ["import", "audio", "model", "diarize", "map"]
-        STEP_NAMES  = ["임포트", "음성로드", "모델로드", "화자분리", "매핑"]
+        STEP_NAMES  = ["준비", "음성로드", "모델로드", "목소리분석", "화자구분"]
         step_row = tk.Frame(prog_win, bg=BG)
         step_row.pack(fill="x", padx=32, pady=(8, 0))
         _step_lbls = []
@@ -533,373 +531,51 @@ class DiarizeMixin:
             except Exception:
                 pass
 
-        _line_seeds = line_speakers.seed_speakers([s.get("speaker", "") for s in self.subtitles])
-        _line_intervals = list(getattr(self, "_ts_cache", []))
+        # 사용자가 직접 지정한 줄만 기준으로 씀 (분석이 자동으로 채운 줄은 다시 분석할 때 새로 정함)
+        _line_seeds = line_speakers.seed_speakers(
+            ["" if s.get("_auto") else s.get("speaker", "") for s in self.subtitles])
+        _line_intervals = [[t_s, t_e] if t_s is not None and t_e is not None else None
+                           for t_s, t_e in getattr(self, "_ts_cache", [])]
+        _num_spk, _exact = self._get_diarize_spk_settings()
+        _gpu = bool((ai_runtime.installed_info() or {}).get("cuda"))
+        _prog_state["stage_estimates"] = {"import": 8.0, "audio": 3.0, "model": 10.0,
+                                          "diarize": len(_line_intervals) * (0.03 if _gpu else 0.08), "map": 2.0}
+
+        def _ticker():
+            while _prog_state["running"] and not _prog_state.get("cancelled"):
+                if _prog_state.get("step_key") == "diarize":
+                    _tick_progress("diarize", _time.time() - _prog_state.get("wall_diarize", _time.time()),
+                                   _prog_state["stage_estimates"]["diarize"])
+                _time.sleep(0.5)
+
+        def _on_ev(ev):
+            if ev.get("type") != "status":
+                return
+            step, msg, pct = ev.get("step"), ev.get("msg", ""), ev.get("pct")
+
+            def ui():
+                if step in _STEPS and step != _prog_state.get("step_key"):
+                    _set_status(msg, step)
+                else:
+                    try:
+                        self._diarize_status_lbl.configure(text=msg)
+                    except Exception:
+                        pass
+                if pct is not None:
+                    _prog_state["target"] = max(_prog_state["target"], min(float(pct), 99.0))
+            self.after(0, ui)
 
         def _worker():
             try:
-                _set_status("whisperx 임포트 중...", "import")
-                import whisperx
-                import torch
-
-                # ── GPU 진단 ──────────────────────────────────────────
-                _cuda_build   = torch.cuda.is_available()
-                _cuda_ver     = torch.version.cuda if _cuda_build else None
-                _gpu_name     = torch.cuda.get_device_name(0) if _cuda_build else None
-                _torch_ver    = torch.__version__
-
-                # 디바이스 결정
-                _force_cpu_once = getattr(self, "_force_cpu_once", False)
-                self._force_cpu_once = False   # 1회성 — 바로 소모
-                _dev_pref = getattr(self, "_diarize_device_var", None)
-                _dev_pref = _dev_pref.get() if _dev_pref else "auto"
-                if _force_cpu_once:
-                    _dev_pref = "cpu"   # GPU 설치 제안을 "아니오"로 답한 직후 재시도
-                if _dev_pref == "cpu":
-                    device = "cpu"
-                    _dev_reason = "CPU 강제 모드"
-                elif not _cuda_build:
-                    device = "cpu"
-                    _dev_reason = f"CUDA 불가 (torch {_torch_ver} — CPU 전용 빌드일 수 있음)"
-                else:
-                    device = "cuda"
-                    _dev_reason = f"GPU: {_gpu_name}  |  CUDA {_cuda_ver}"
-
-                _set_status(f"디바이스: {_dev_reason}", "import")
-
-                # 이 torch 버전에서 GPU 설치가 이미 실패했으면 다시 묻지 않음
-                _gpu_skip = _load_config().get("gpu_torch_skip") == _torch_ver
-
-                # CUDA 빌드가 아닌데 GPU 우선 선택이면 → 자동 재설치 제안
-                if _dev_pref != "cpu" and not _cuda_build and not _gpu_skip:
-                    import tkinter.messagebox as _mb
-                    import subprocess, sys
-
-                    # 드라이버가 지원하는 CUDA 이하의 torch 빌드 태그 (높은 것부터)
-                    def _detect_cuda_tags():
-                        tags = [("cu130", 13.0), ("cu129", 12.9), ("cu128", 12.8),
-                                ("cu126", 12.6), ("cu124", 12.4), ("cu121", 12.1),
-                                ("cu118", 11.8)]
-                        try:
-                            import re as _re
-                            out = subprocess.check_output(
-                                ["nvidia-smi"], stderr=subprocess.DEVNULL, text=True,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                            m = _re.search(r"CUDA Version:\s*(\d+\.\d+)", out)
-                            if m:
-                                cap = float(m.group(1))
-                                ok = [t for t, v in tags if v <= cap]
-                                if ok:
-                                    return ok
-                        except Exception:
-                            pass
-                        return [t for t, _ in tags]
-
-                    def _ask_and_install():
-                        # ⚠ 핵심 수정: prog_win이 모달(grab_set)로 떠있는 상태에서
-                        # 그 위에 또 다른 모달 대화상자(askyesno)를 띄우면, 새
-                        # 대화상자가 포커스를 제대로 받지 못해 사실상 응답 불가능한
-                        # 상태로 멈춰버린다 — "모델 체크하다가 진행이 안 되는" 것처럼
-                        # 보이던 원인이 바로 이것. 새 대화상자를 띄우기 전에 먼저
-                        # prog_win의 grab을 반드시 풀어준다.
-                        try:
-                            prog_win.grab_release()
-                        except Exception:
-                            pass
-                        try:
-                            prog_win.destroy()
-                        except Exception:
-                            pass
-
-                        cuda_tags = _detect_cuda_tags()
-                        ans = _mb.askyesno(
-                            "GPU torch 자동 설치",
-                            f"현재 torch ({_torch_ver}) 가 CPU 전용 빌드라 GPU를 쓸 수 없어요.\n\n"
-                            f"CUDA 빌드 torch 를 지금 자동 설치할까요?\n"
-                            f"(설치 후 앱이 자동 재시작됩니다)\n\n"
-                            "아니오 선택 시 CPU로 계속 진행합니다.",
-                            parent=self
-                        )
-                        if not ans:
-                            # 실제로 CPU 모드로 분석을 재시작한다 (안내 문구대로 동작하도록).
-                            self._force_cpu_once = True
-                            self._run_diarize_whisperx()
-                            return
-
-                        # 설치 진행 (별도 창)
-                        inst_win = tk.Toplevel(self)
-                        _apply_dark_titlebar(inst_win)
-                        inst_win.title("torch 설치 중...")
-                        inst_win.configure(bg=BG)
-                        inst_win.geometry("400x120")
-                        inst_win.resizable(False, False)
-                        inst_win.transient(self)
-                        inst_win.grab_set()
-                        tk.Label(inst_win,
-                                 text="⏳  GPU용 torch 설치 중...",
-                                 bg=BG, fg=FG, font=(theme.FONT_FAMILY, 10, "bold")
-                                 ).pack(pady=(24, 6))
-                        _inst_sub = tk.Label(inst_win,
-                                 text="pip install 실행 중 (수 분 소요될 수 있습니다)",
-                                 bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
-                        _inst_sub.pack()
-                        inst_win.update()
-
-                        def _update_sub(text):
-                            try: _inst_sub.configure(text=text)
-                            except Exception: pass
-
-                        def _do_pip():
-                            # 지금 버전과 같은 torch를 CUDA 빌드로 설치 (다른 패키지 호환 유지)
-                            torch_base = _torch_ver.split("+")[0]
-
-                            def _cmd(tag):
-                                return [sys.executable, "-m", "pip", "install",
-                                        f"torch=={torch_base}", "torchaudio",
-                                        "--index-url", f"https://download.pytorch.org/whl/{tag}",
-                                        "--upgrade", "--force-reinstall"]
-
-                            def _run_cmd(cmd):
-                                """pip 실행 후 출력 반환."""
-                                result = subprocess.run(
-                                    cmd,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT,
-                                    text=True,
-                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                                )
-                                return result.returncode, result.stdout
-
-                            def _perm_error(log):
-                                low = log.lower()
-                                return any(k in low for k in (
-                                    "permission denied", "access is denied", "winerror 5",
-                                    "[errno 13]", "consider using the `--user`"))
-
-                            def _verify_cuda():
-                                """설치 후 실제 CUDA 동작 여부 확인."""
-                                try:
-                                    result = subprocess.run(
-                                        [sys.executable, "-c",
-                                         "import torch; print(torch.cuda.is_available()); "
-                                         "print(torch.__version__)"],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                        text=True, timeout=30,
-                                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                                    )
-                                    lines = result.stdout.strip().splitlines()
-                                    cuda_ok = len(lines) >= 1 and lines[0].strip() == "True"
-                                    ver = lines[1].strip() if len(lines) >= 2 else "?"
-                                    return cuda_ok, ver
-                                except Exception as e:
-                                    return False, str(e)
-
-                            def _give_up(msg, log):
-                                """다시 묻지 않도록 기록하고 CPU로 분석 진행."""
-                                def _ui():
-                                    try: inst_win.destroy()
-                                    except Exception: pass
-                                    cfg = _load_config()
-                                    cfg["gpu_torch_skip"] = _torch_ver
-                                    _save_config(cfg)
-                                    _mb.showwarning(
-                                        "GPU torch 설치 실패",
-                                        f"{msg}\n\nCPU로 분석을 계속합니다. "
-                                        "이 torch 버전에서는 다시 묻지 않습니다.\n\n"
-                                        "pip 출력:\n" + log[-300:],
-                                        parent=self)
-                                    self._force_cpu_once = True
-                                    self._run_diarize_whisperx()
-                                self.after(0, _ui)
-
-                            # 지원 CUDA 태그를 높은 것부터 차례로 시도
-                            rc, out, used = 1, "", None
-                            for tag in cuda_tags:
-                                self.after(0, lambda t=tag: _update_sub(f"pip 설치 중 ({t})... 수 분 소요"))
-                                rc, out = _run_cmd(_cmd(tag))
-                                if rc == 0:
-                                    used = tag
-                                    break
-                                if _perm_error(out):
-                                    self.after(0, lambda: _update_sub("권한 문제 → --user 모드로 재시도 중..."))
-                                    rc, out = _run_cmd(_cmd(tag) + ["--user"])
-                                    if rc == 0:
-                                        used = tag
-                                    break
-
-                            if rc != 0 and _perm_error(out):
-                                # 권한 문제일 때만 관리자 권한으로 재시도
-                                def _try_admin(log=out, tag=cuda_tags[0]):
-                                    try: inst_win.destroy()
-                                    except Exception: pass
-                                    ans2 = _mb.askyesno(
-                                        "설치 실패 — 관리자 권한 필요",
-                                        f"pip 설치가 권한 문제로 실패했습니다.\n\n"
-                                        f"오류 내용:\n{log[-300:]}\n\n"
-                                        "관리자 권한으로 다시 시도할까요? (UAC 창이 뜹니다)",
-                                        parent=self)
-                                    if ans2:
-                                        try:
-                                            import ctypes
-                                            import subprocess as _sp
-                                            args = _sp.list2cmdline(_cmd(tag)[1:])
-                                            ctypes.windll.shell32.ShellExecuteW(
-                                                None, "runas", sys.executable, args, None, 1)
-                                            _mb.showinfo("설치 진행 중",
-                                                "관리자 권한으로 설치를 시작했습니다.\n"
-                                                "완료 후 앱을 직접 재시작해주세요.",
-                                                parent=self)
-                                        except Exception as e2:
-                                            _mb.showerror("설치 실패",
-                                                f"관리자 설치도 실패했습니다.\n{e2}",
-                                                parent=self)
-                                    else:
-                                        self._force_cpu_once = True
-                                        self._run_diarize_whisperx()
-                                self.after(0, _try_admin)
-                                return
-
-                            if rc != 0:
-                                _give_up(f"torch {torch_base}의 GPU 빌드를 찾지 못했습니다 "
-                                         f"(Python {sys.version_info.major}.{sys.version_info.minor}).",
-                                         out)
-                                return
-
-                            # 설치 성공 → CUDA 실제 동작 검증
-                            self.after(0, lambda: _update_sub("설치 완료 — CUDA 동작 검증 중..."))
-                            cuda_ok, ver = _verify_cuda()
-
-                            if not cuda_ok:
-                                def _bad_install(log=out, v=ver):
-                                    try: inst_win.destroy()
-                                    except Exception: pass
-                                    cfg = _load_config()
-                                    cfg["gpu_torch_skip"] = v   # 설치된 버전으로 다시 묻지 않음
-                                    _save_config(cfg)
-                                    _mb.showerror(
-                                        "GPU 활성화 실패",
-                                        f"pip 설치는 완료됐지만 CUDA가 여전히 비활성 상태입니다.\n"
-                                        f"(torch {v})\n\n"
-                                        "가능한 원인:\n"
-                                        "• NVIDIA 드라이버가 너무 오래됨 → 드라이버 업데이트 필요\n"
-                                        f"• CUDA 태그 불일치 (현재: {used}) → "
-                                        "다른 버전 시도 필요\n\n"
-                                        "pip 출력 로그:\n" + log[-400:],
-                                        parent=self)
-                                self.after(0, _bad_install)
-                                return
-
-                            def _restart(v=ver):
-                                try: inst_win.destroy()
-                                except Exception: pass
-                                _mb.showinfo("설치 완료",
-                                    f"torch {v} GPU 빌드 설치 완료!\n"
-                                    "앱을 재시작합니다.",
-                                    parent=self)
-                                self.destroy()
-                                _frozen = getattr(sys, "frozen", False)
-                                if _frozen:
-                                    os.execv(sys.executable, [sys.executable])
-                                else:
-                                    os.execv(sys.executable, [sys.executable] + sys.argv)
-                            self.after(0, _restart)
-
-                        import threading as _t2
-                        _t2.Thread(target=_do_pip, daemon=True).start()
-
-                    self.after(0, _ask_and_install)
-                    # 설치 완료 전까지 분석은 중단 (창 닫히면서 자연스럽게 종료)
-                    return
-
-                # CPU 스레드 최대한 활용
-                cpu_count = os.cpu_count() or 4
-                torch.set_num_threads(cpu_count)
-
-                # 음성 인식 없이 화자 구간을 자막에 직접 매핑
-                def _progress_ticker(step_key, est_sec):
-                    """0.5초마다 세부 진행률 업데이트."""
-                    t0 = _time.time()
-                    while _prog_state["running"] and _prog_state["step_key"] == step_key:
-                        _tick_progress(step_key, _time.time() - t0, est_sec)
-                        _time.sleep(0.5)
-
-                _set_status("음성 로드 중...", "audio")
-                audio = whisperx.load_audio(self.media_path)
+                _set_status("AI 부품 시작 중...", "import")
+                threading.Thread(target=_ticker, daemon=True).start()
+                res = self._run_ai_job(
+                    {"type": "diarize", "media": self.media_path, "hf_token": hf_tok,
+                     "intervals": _line_intervals, "seeds": {str(k): v for k, v in _line_seeds.items()},
+                     "num_speakers": _num_spk, "exact": _exact, "sensitivity": self._get_diarize_sensitivity()},
+                    on_event=_on_ev, cancelled=lambda: _prog_state.get("cancelled"))
                 if _prog_state.get("cancelled"):
                     return
-
-                import threading as _threading
-
-                # 오디오 길이 기반 단계별 예상시간 계산
-                audio_dur = len(audio) / 16000.0
-                _est_diarize = audio_dur / (40.0 if device == "cuda" else 3.0)
-                _prog_state["stage_estimates"] = {
-                    "import":  2.0,
-                    "audio":   3.0,
-                    "model":   10.0,
-                    "diarize": _est_diarize,
-                    "map":     1.0,
-                }
-
-                _set_status("화자 분리 모델 확인 중...", "model")
-
-                def _dl_cb(done, total):
-                    pct = 12.0 + 13.0 * (done / total) if total else 12.0
-                    self.after(0, lambda: (self._diarize_status_lbl.configure(
-                        text="화자 분리 모델 내려받는 중  " + model_download.format_progress("", done, total).strip()),
-                        _prog_state.__setitem__("target", max(_prog_state["target"], pct))))
-                model_download.download(model_download.DIARIZE_REPO, None, token=hf_tok, progress=_dl_cb,
-                                        cancelled=lambda: _prog_state.get("cancelled"))
-                if _prog_state.get("cancelled"):
-                    return
-                _set_status(f"화자 분리 모델 로드 중... ({device})", "model")
-                from whisperx.diarize import DiarizationPipeline
-                diarize_model = DiarizationPipeline(token=hf_tok, device=device)
-                self._apply_diarize_sensitivity(diarize_model, self._get_diarize_sensitivity())
-                if _prog_state.get("cancelled"):
-                    return
-
-                _num_spk, _exact = self._get_diarize_spk_settings()
-                if _line_seeds or _num_spk > 0:
-                    # 자막 줄마다 목소리를 뽑아 구분 (미리 지정한 줄이 있으면 그것을 기준으로)
-                    _est_lines = len(_line_intervals) * (0.03 if device == "cuda" else 0.15)
-                    _prog_state["stage_estimates"]["diarize"] = _est_lines
-                    _set_status("자막 구간 목소리 분석 중...", "diarize")
-                    _threading.Thread(target=_progress_ticker, args=("diarize", _est_lines), daemon=True).start()
-                    _emb = line_speakers.line_embeddings(
-                        diarize_model.model._embedding, audio, _line_intervals,
-                        cancelled=lambda: _prog_state.get("cancelled"))
-                    if _emb is None or _prog_state.get("cancelled"):
-                        return
-                    _set_status("화자 구분 중...", "map")
-                    if _line_seeds:
-                        _result = line_speakers.assign_from_seeds(_emb, _line_seeds)
-                    else:
-                        _result = line_speakers.cluster_lines(_emb, _num_spk)
-
-                    def _apply_lines():
-                        if _prog_state.get("cancelled"):
-                            return
-                        try:
-                            _set_status("완료!", "done")
-                            prog_win.after(300, prog_win.destroy)
-                        except Exception:
-                            pass
-                        self._apply_line_speakers(_result, bool(_line_seeds))
-                    self.after(0, _apply_lines)
-                    return
-
-                _set_status("화자 분리 중...", "diarize")
-                _t = _threading.Thread(
-                    target=_progress_ticker, args=("diarize", _est_diarize), daemon=True)
-                _t.start()
-                diarize_segments = _diarize_exclusive(diarize_model, audio, _num_spk, _exact)
-                if _prog_state.get("cancelled"):
-                    return
-
-                _set_status("화자 매핑 중...", "map")
-                turns = [{"start": r.start, "end": r.end, "speaker": r.speaker}
-                         for r in diarize_segments.itertuples(index=False)]
 
                 def _apply():
                     if _prog_state.get("cancelled"):
@@ -909,123 +585,51 @@ class DiarizeMixin:
                         prog_win.after(300, prog_win.destroy)
                     except Exception:
                         pass
-                    self._apply_diarize_result(turns)
-
+                    if res.get("mode") == "seeded":
+                        self._apply_line_speakers(res["names"], True, res["conf"])
+                    else:
+                        self._apply_line_speakers(res["labels"], False, res["conf"])
                 self.after(0, _apply)
-
-            except ImportError:
-                def _err_import():
-                    if _prog_state.get("cancelled"):
-                        return
-                    try: prog_win.destroy()
-                    except Exception: pass
-                    self._offer_whisperx_autoinstall(self._run_diarize_whisperx)
-                self.after(0, _err_import)
             except Exception as e:
                 err_msg = _friendly_transcribe_error(str(e))
-                try:
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
+
                 def _err():
                     if _prog_state.get("cancelled"):
                         return
+                    _prog_state["running"] = False
                     try: prog_win.destroy()
                     except Exception: pass
                     messagebox.showerror("화자 분석 오류", err_msg, parent=self)
                 self.after(0, _err)
-            finally:
-                # 모델·오디오 메모리 해제
-                try: del diarize_model
-                except Exception: pass
-                try: del audio
-                except Exception: pass
-                try: del diarize_segments
-                except Exception: pass
-                try:
-                    import gc
-                    gc.collect()
-                    import torch as _torch
-                    if _torch.cuda.is_available():
-                        _torch.cuda.empty_cache()
-                        _torch.cuda.ipc_collect()
-                except Exception:
-                    pass
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_diarize_result(self, segments):
-        """WhisperX 결과를 기존 SRT 자막에 화자 매핑으로 적용."""
-        if not segments:
-            messagebox.showinfo("화자 분석", "분석 결과가 없습니다.", parent=self)
-            return
+    def _mark_auto_speakers(self, indices, conf):
+        """분석이 정한 줄에 '자동' 표시를 남기고, 자동 줄 중 확신도가 낮은 줄을 '확인 필요'로 표시."""
+        for i in indices:
+            sub = self.subtitles[i]
+            sub["_auto"] = True
+            sub["_conf"] = float(conf[i])
+        mask = line_speakers.unsure_mask([s.get("_conf", 1.0) for s in self.subtitles],
+                                         [bool(s.get("_auto")) for s in self.subtitles])
+        for sub, m in zip(self.subtitles, mask):
+            if m:
+                sub["_check"] = True
+            else:
+                sub.pop("_check", None)
+        self._update_check_count()
 
-        # WhisperX 세그먼트에서 (start, end, speaker) 추출
-        diar = []
-        for seg in segments:
-            spk = seg.get("speaker", "")
-            if spk:
-                diar.append((seg["start"], seg["end"], spk))
-
-        if not diar:
-            messagebox.showinfo("화자 분석",
-                "화자 정보를 추출하지 못했습니다.\n"
-                "HuggingFace 토큰과 pyannote 모델 접근 권한을 확인하세요.",
-                parent=self)
-            return
-
-        # 화자 목록에 새 화자를 추가하기 전에 기록해야 실행 취소 시 함께 사라진다
+    def _apply_line_speakers(self, result, seeded, conf=None):
+        """줄 단위 화자 구분 결과 적용. seeded면 이름 목록(직접 지정한 줄 외 모두 채움), 아니면 군집 번호(새 화자 추가)."""
+        conf = conf if conf is not None else [1.0] * len(self.subtitles)
         self._push_undo()
-
-        # WhisperX 화자 ID → 앱 화자명 매핑 (SPEAKER_00 → 화자 N)
-        spk_ids = sorted(set(s for _, _, s in diar))
-        spk_map = {}
-        n = 1  # 카운터를 루프 밖에서 관리해 sid마다 재초기화되지 않도록 수정
-        for sid in spk_ids:
-            # 기존 이름과 겹치지 않는 번호 찾기
-            while True:
-                name = f"화자 {n}"
-                if name not in self.speakers:
-                    break
-                n += 1
-            self.speakers.append(name)
-            spk_map[sid] = name
-            n += 1  # 방금 쓴 번호는 건너뛰어 다음 sid가 중복되지 않도록
-
-        cache = getattr(self, "_ts_cache", [])
-        for i, sid in enumerate(_assign_speakers_by_overlap(cache, diar)):
-            name = spk_map.get(sid, "") if sid else ""
-            if name:
-                self.subtitles[i]["speaker"] = name
-
-        self._unsaved = True
-        self._auto_resize_speaker_col()
-        self._fill_slots(self._vscroll_top)
-        self._render_speakers()
-        self._update_count()
-        self._wf_img_cache = None
-        self._pb_redraw()
-
-        n_mapped = sum(1 for s in self.subtitles if s.get("speaker"))
-        messagebox.showinfo("화자 분석 완료",
-            f"총 {len(self.subtitles)}개 자막 중 {n_mapped}개에 화자를 배정했습니다.\n"
-            f"감지된 화자: {', '.join(spk_map.values())}\n\n"
-            "결과를 확인하고 필요하면 수동으로 수정하세요.",
-            parent=self)
-
-    def _apply_line_speakers(self, result, seeded):
-        """줄 단위 화자 구분 결과 적용. seeded면 이름 목록(지정 안 된 줄만 채움), 아니면 군집 번호 목록(새 화자 추가)."""
-        self._push_undo()
-        added = []
+        done = []
         if seeded:
-            filled = 0
-            for sub, name in zip(self.subtitles, result):
-                if name and not sub.get("speaker"):
+            for i, (sub, name) in enumerate(zip(self.subtitles, result)):
+                if name and (not sub.get("speaker") or sub.get("_auto")):
                     sub["speaker"] = name
-                    filled += 1
-            msg = (f"먼저 지정해 둔 줄을 기준으로 나머지 {filled}줄에 화자를 채웠어요.\n\n"
-                   "결과를 확인하고 틀린 줄은 직접 고쳐 주세요. 몇 줄 고쳐서 다시 분석하면 더 정확해져요.")
+                    done.append(i)
+            head = f"직접 지정한 줄을 기준으로 {len(done)}줄에 화자를 채웠어요."
         else:
             names, n = {}, 1
             for lab in sorted({int(v) for v in result if v >= 0}):
@@ -1034,14 +638,18 @@ class DiarizeMixin:
                 names[lab] = f"화자 {n}"
                 self.speakers.append(names[lab])
                 n += 1
-            added = list(names.values())
-            for sub, lab in zip(self.subtitles, result):
+            for i, (sub, lab) in enumerate(zip(self.subtitles, result)):
                 if lab >= 0:
                     sub["speaker"] = names[int(lab)]
-            n_mapped = sum(1 for s in self.subtitles if s.get("speaker"))
-            msg = (f"총 {len(self.subtitles)}개 자막 중 {n_mapped}개에 화자를 배정했어요.\n"
-                   f"감지된 화자: {', '.join(added)}\n\n"
-                   "결과를 확인하고 필요하면 수동으로 수정하세요. 화자마다 3~5줄을 먼저 지정한 뒤 다시 분석하면 훨씬 정확해져요.")
+                    done.append(i)
+            head = (f"{len(done)}줄을 {len(names)}명으로 나눴어요 ({', '.join(names.values())}).\n"
+                    "화자 이름을 바꾸고, 틀린 줄을 몇 줄 고친 뒤 다시 분석하면 훨씬 정확해져요.")
+        self._mark_auto_speakers(done, conf)
+        n_check = sum(1 for s in self.subtitles if s.get("_check"))
+        msg = head
+        if n_check:
+            msg += (f"\n\n확신이 낮은 {n_check}줄에 '확인 필요' 표시를 했어요. 위쪽 '확인 필요' 숫자를 누르면 "
+                    "차례로 이동해요. 고친 줄은 다시 분석할 때 기준으로 쓰여요.")
         self._unsaved = True
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)

@@ -81,6 +81,8 @@ def setup():
     optmod.OptionsMixin._offer_backup_restore = lambda self: None
     import srt_editor.waveform as wf
     wf.CACHE_DIR = ctx.work / "wavecache"
+    import srt_editor.ai_runtime as air
+    air.ROOT = ctx.work / "ai"
 
     def _rec(kind, default):
         def fn(title=None, message=None, **kw):
