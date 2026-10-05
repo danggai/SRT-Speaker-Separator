@@ -1176,6 +1176,7 @@ class TimelineMixin:
         update_selection=True(기본): 재생바 직접 이동 시, 해당 위치 자막을 선택으로 설정.
         update_selection=False: 내부 seek(재생/정지, 좌우키 등)에서 호출 시 현재 선택 자막을 변경하지 않음."""
         was_playing = self.player.is_playing
+        self._review_stop_at = None   # 다른 곳으로 옮기면 '? 줄 듣기' 자동 멈춤 해제
         self.player.seek_to(pos)
         self.media_progress_var.set(pos)
         self.lbl_pos.configure(text=self._fmt_time(pos))

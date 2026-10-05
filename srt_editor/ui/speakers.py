@@ -13,7 +13,7 @@ _ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
 _KEY_BG    = "#2C2C36"   # 단축키 키캡 배경
 _KEY_FG    = "#C9C9D4"   # 단축키 숫자
 from ..widgets import (DarkScrollbar, PopupMenu, Tooltip, _ColorPickerDialog, _circle_image,
-                       rounded_rect_image)
+                       rounded_rect_image, show_toast)
 
 
 class SpeakerMixin:
@@ -539,8 +539,33 @@ class SpeakerMixin:
             val = self.speakers[spk_idx]
         else:
             return
-        if self._assign_speaker_to_selection(val, advance=True):
+        sel = getattr(self, "_selected_rows", set())
+        cur = getattr(self, "_selected_row_idx", None)
+        reviewing = len(sel) <= 1 and cur is not None and cur < len(self.subtitles) \
+            and self.subtitles[cur].get("_check")
+        if self._assign_speaker_to_selection(val, advance=not reviewing):
+            if reviewing:   # ? 줄을 정했으면 다음 ? 줄로 가서 바로 들려줌
+                self._review_next_check()
             return "break"
+
+    def _review_next_check(self, event=None):
+        """F: 다음 확인 필요(?) 줄로 가서 그 줄만 재생."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        if not any(s.get("_check") for s in self.subtitles):
+            if event is not None:
+                show_toast(self, "확인 필요한 줄이 없어요")
+            return "break"
+        self._goto_next_check()
+        idx = getattr(self, "_selected_row_idx", None)
+        cache = getattr(self, "_ts_cache", [])
+        if self.media_path and idx is not None and idx < len(cache) and cache[idx][0] is not None:
+            t_s, t_e = cache[idx]
+            self._do_seek(t_s, update_selection=False)
+            self._review_stop_at = t_e + 0.15
+            if not self.player.is_playing:
+                self._media_play_pause()
+        return "break"
 
     def _assign_speaker_to_selection(self, val, advance=False):
         """선택한 줄(없으면 마지막으로 누른 줄)에 화자 지정. 지정했으면 True.

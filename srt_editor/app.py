@@ -222,12 +222,15 @@ class SRTEditor(
         self.bind("S", self._split_subtitle_shortcut)
         self.bind("v", self._toggle_video)
         self.bind("V", self._toggle_video)
+        self.bind("f", self._review_next_check)
+        self.bind("F", self._review_next_check)
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
             self.bind("ㅁ", self._add_subtitle_shortcut)
             self.bind("ㅡ", self._mute_shortcut)
             self.bind("ㅍ", self._toggle_video)
+            self.bind("ㄹ", self._review_next_check)
         except tk.TclError:
             pass
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -481,7 +484,7 @@ class SRTEditor(
         # 확인 필요 카운터 (화자 분석이 확신하지 못한 줄이 있을 때만 보임)
         self.lbl_check = tk.Label(top, text="", bg=TB_BG, fg="#E8C547", cursor="hand2",
                                   font=(theme.FONT_FAMILY, 9))
-        self.lbl_check.bind("<Button-1>", lambda e: self._goto_next_check())
+        self.lbl_check.bind("<Button-1>", lambda e: self._review_next_check())
 
         # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
         self._update_btn = tk.Button(
@@ -600,7 +603,7 @@ class SRTEditor(
         self._key_badges = []
         if on:
             for widget, key in ((self._split_btn, "S"), (self._merge_btn, "Ctrl+M"), (self._add_btn, "A"),
-                                (self._vol_icon, "M"), (self.btn_play, "Space"),
+                                (self._vol_icon, "M"), (self.btn_play, "Space"), (self.lbl_check, "F"),
                                 (self.btn_prev, "←"), (self.btn_next, "→")):
                 badge = tk.Label(self, text=key, bg=_BADGE_BG, fg=_BADGE_FG,
                                  font=(theme.FONT_FAMILY, 7), padx=3, pady=0)
@@ -686,7 +689,7 @@ class SRTEditor(
         # ── 헤더 / 카운터 ─────────────────────
         T(self._hdr_canvas, "컬럼 경계를 좌우로 드래그해 너비 조절")
         T(self.lbl_count,   "미배정 자막 수\n클릭 → 다음 미배정 자막으로 이동")
-        T(self.lbl_check,   "확신이 낮은 줄\n클릭 → 다음 줄로 이동")
+        T(self.lbl_check,   "확신이 낮은 줄\n클릭·F → 다음 ? 줄 듣기\n숫자키로 정하면 다음 ? 줄로")
 
     def _setup_dnd(self):
         """tkinterdnd2가 있으면 DnD, 없으면 조용히 무시"""

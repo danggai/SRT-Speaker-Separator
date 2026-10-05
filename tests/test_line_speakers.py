@@ -1,4 +1,4 @@
-﻿"""줄 단위 화자 구분: 임베딩 군집·선지정 분류와 결과 적용."""
+"""줄 단위 화자 구분: 임베딩 군집·선지정 분류와 결과 적용."""
 import numpy as np
 
 from harness import ctx, eq, expect, load_sample, test, wait_until
@@ -297,6 +297,46 @@ def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
     eq(app.canvas.itemcget(t + "num", "text"), "? 5", "번호 앞에 ? 표시")
     app._undo()
     eq(app.lbl_check.cget("text"), "?  확인 필요 3줄", "실행 취소하면 표시도 돌아옴")
+
+
+@test
+def f_key_plays_next_check_line_and_number_key_moves_on(app):
+    from types import SimpleNamespace as NS
+    from harness import pump
+    load_sample(app, n=20, tagged_every=0, with_wav=True)
+    for s in app.subtitles:
+        s["speaker"] = ""
+    conf = [0.9] * 20
+    conf[4], conf[11], conf[17] = 0.01, 0.02, 0.03
+    app._apply_line_speakers(["민지"] * 20, True, conf)
+    app._select_row(0)
+    app._review_next_check(NS())
+    pump(0.2)
+    eq(app._selected_row_idx, 4, "다음 ? 줄 선택")
+    t_s, t_e = app._ts_cache[4]
+    expect(app.player.is_playing, "그 줄을 재생")
+    eq(app._review_stop_at, t_e + 0.15, "줄 끝에서 멈춤 예약")
+    app.player.seek_to(t_e + 0.3)
+    app._poll_progress()
+    expect(not app.player.is_playing and app._review_stop_at is None, "줄 끝을 지나면 멈춤")
+    app.speakers[:] = ["민지", "준호"]
+    k, who = 2, "준호"
+    app._on_speaker_key(NS(keysym=str(k)))
+    pump(0.1)
+    eq(app.subtitles[4]["speaker"], who, "숫자키로 화자 지정")
+    eq(app._selected_row_idx, 11, "다음 ? 줄로 이동")
+    expect(app.player.is_playing, "다음 줄도 바로 재생")
+    app._media_play_pause()
+    app._select_row(0)
+    app._on_speaker_key(NS(keysym=str(k)))
+    eq(app._selected_row_idx, 0 if not app._opt("advance_after_assign") else 1, "? 아닌 줄은 기존 동작 그대로")
+    for i in (11, 17):
+        app._set_line_speaker(i, "준호")
+    app._update_count()
+    ctx.msgs.clear()
+    app._select_row(0)
+    app._review_next_check(NS())
+    eq(app._selected_row_idx, 0, "? 줄이 없으면 그대로")
 
 
 @test

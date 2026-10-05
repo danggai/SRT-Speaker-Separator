@@ -290,6 +290,11 @@ class PlaybackMixin:
                 self._pb_redraw()
 
             self._update_playback_highlight(pos)
+            stop = getattr(self, "_review_stop_at", None)
+            if stop is not None and pos >= stop:   # '? 줄 듣기'는 그 줄 끝에서 멈춤
+                self._review_stop_at = None
+                self._media_play_pause()
+                return
             self._seek_job = self.after(16, self._poll_progress)
         else:
             self._last_polled_pos = -1.0
