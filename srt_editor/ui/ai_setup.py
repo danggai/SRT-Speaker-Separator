@@ -62,7 +62,7 @@ class AISetupMixin:
         tk.Label(row, text=("NVIDIA 그래픽카드를 찾았어요. GPU를 고르면 훨씬 빨라요." if gpu else
                             "NVIDIA 그래픽카드를 찾지 못했어요. CPU로 설치하는 걸 권장해요."),
                  bg=BG2, fg=FG_HINT, font=(theme.FONT_FAMILY, 8)).pack(anchor="w")
-        tk.Label(body, text=f"설치 위치: {ai_runtime.ROOT}", bg=BG, fg=FG_HINT,
+        tk.Label(body, text=f"설치 위치: {ai_runtime.ROOT}", bg=BG, fg=FG_HINT, justify="left", wraplength=460,
                  font=(theme.FONT_FAMILY, 8)).pack(anchor="w", pady=(8, 0))
 
         prog = tk.Frame(body, bg=BG)
