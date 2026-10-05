@@ -149,6 +149,7 @@ def _run_suite(a):
         return 0
     harness.setup()
     code = harness.run_all(a.only, a.verbose)
+    harness.cleanup()
     sys.stdout.flush()
     os._exit(code)   # 남은 백그라운드 스레드(오디오·파형)가 종료를 막지 않게
 

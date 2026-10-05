@@ -84,6 +84,26 @@ def home_changes():
     return sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
 
 
+def cleanup():
+    """테스트용 임시 폴더(설정·샘플 파일·캐시)를 지운다. 남아 있으면 실제 앱 최근 목록 등에 보일 수 있음."""
+    import shutil
+    app = getattr(ctx, "app", None)
+    try:
+        app.player.stop()
+        app.destroy()
+    except Exception:
+        pass
+    try:   # 재생기가 잡고 있는 마지막 음성 파일 놓기
+        import pygame
+        pygame.mixer.music.unload()
+        pygame.mixer.quit()
+    except Exception:
+        pass
+    work = getattr(ctx, "work", None)
+    if work:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def setup():
     """실제 설정·백업·모델 캐시를 건드리지 않도록 임시 폴더로 돌린다."""
     import tkinter.filedialog as fd
