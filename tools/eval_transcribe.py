@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--ref", required=True)
     ap.add_argument("--configs", default="accurate")
     ap.add_argument("--win", type=float, default=150.0)
-    ap.add_argument("--starts", default="120,640,1160,1680")
+    ap.add_argument("--starts", default="60,330,600,870")
     ap.add_argument("--out", default="")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
@@ -73,7 +73,7 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     audio = whisperx.load_audio(a.media)
     ref_all = parse_srt(a.ref)
-    starts = [float(s) for s in a.starts.split(",")]
+    starts = [float(s) for s in a.starts.split(",") if float(s) + 10 < len(audio) / SR]   # 음성 밖 구간은 뺌
     results = {}
     for name in a.configs.split(","):
         mode, extra_asr, extra_load = CONFIGS[name]

@@ -11,7 +11,7 @@ from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO
 from ..version import APP_VERSION, fetch_latest_version
 from .options import OPTION_DEFAULTS
 from ..widgets import (CheckBox, DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, flat_button,
-                       rounded_rect_image)
+                       rounded_rect_image, slide)
 
 
 class SettingsMixin:
@@ -638,6 +638,7 @@ class SettingsMixin:
         seg.pack(anchor="w", pady=(10, 0))
 
         custom = tk.Frame(left, bg=BG2)
+        custom._ready = False   # 처음 그릴 때는 애니메이션 없이
         tk.Label(custom, text="% = 화자, & = 대사",
                  bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 9)).pack(anchor="w")
         entry = tk.Entry(custom, textvariable=custom_var, bg=BG3, fg=FG, insertbackground=FG,
@@ -653,12 +654,9 @@ class SettingsMixin:
         preview_lbl.pack(side="left")
 
         def _apply(*_):
-            if mode.get() == "custom":
-                custom.pack(fill="x", pady=(10, 0), before=preview)
-                dp = custom_var.get().strip()
-            else:
-                custom.pack_forget()
-                dp = mode.get()
+            slide(custom, mode.get() == "custom", animate=custom._ready, fill="x", pady=(10, 0), before=preview)
+            custom._ready = True
+            dp = custom_var.get().strip() if mode.get() == "custom" else mode.get()
             if "%" not in dp or "&" not in dp:
                 preview_lbl.configure(text="% 와 & 가 모두 있어야 해요", fg="#FF6B8A")
                 return
@@ -731,14 +729,11 @@ class SettingsMixin:
         flat_button(folder, "폴더 선택", _pick, bg=BG3, hover="#33333C", padx=12,
                     pady=5).pack(side="right")
 
-        def _changed():
+        def _changed(animate=True):
             self._set_opt("export_dir_mode", mode.get())
-            if mode.get() == "fixed":
-                folder.pack(fill="x", pady=(10, 0))
-                path_lbl.configure(text=self._opt("export_dir") or "폴더를 골라 주세요")
-            else:
-                folder.pack_forget()
-        _changed()
+            path_lbl.configure(text=self._opt("export_dir") or "폴더를 골라 주세요")
+            slide(folder, mode.get() == "fixed", animate=animate, fill="x", pady=(10, 0))
+        _changed(animate=False)
 
         _, right = self._settings_row(card, "▣", "srts 폴더에 모아 저장",
                                       "고른 위치 안에 srts 폴더를 만들어 저장")

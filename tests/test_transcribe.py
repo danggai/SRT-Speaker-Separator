@@ -75,6 +75,41 @@ def toolbar_button_asks_before_replacing_and_opens_options(app):
 
 
 @test
+def slide_opens_and_closes_sections_smoothly(app):
+    import tkinter as tk
+    import srt_editor.widgets as W
+    from harness import pump
+    win = tk.Toplevel(app)
+    win.geometry("300x400+10+10")
+    tk.Label(win, text="위").pack()
+    box = tk.Frame(win)
+    for k in range(4):
+        tk.Label(box, text=f"줄 {k}").pack()
+    tk.Label(win, text="아래").pack()
+    pump(0.3)
+    W.ANIMATE = True
+
+    def overlay():
+        return [w for w in win.winfo_children() if isinstance(w, tk.Canvas)]
+    try:
+        W.slide(box, True)
+        expect(box.winfo_manager() == "pack", "실제 칸은 바로 펼친 상태로 배치")
+        ov = overlay()
+        expect(ov, "그림 덮개로 움직임")
+        y1 = ov[0].coords("move")[1]
+        pump(0.08)
+        y2 = ov[0].coords("move")[1] if overlay() else None
+        pump(0.4)
+        expect(y2 is not None and y2 > y1 and not overlay(), f"아래 내용이 내려감 {y1} → {y2}, 끝나면 덮개 없음")
+        W.slide(box, False)
+        expect(box.winfo_manager() == "" and overlay(), "접을 때도 실제 칸은 바로 숨기고 그림으로 움직임")
+        pump(0.4)
+        expect(not overlay())
+    finally:
+        W.ANIMATE = False
+        win.destroy()
+
+@test
 def narrow_window_hides_shortcut_buttons_and_restores_them(app):
     from harness import pump
     load_sample(app, n=4)

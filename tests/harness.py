@@ -145,6 +145,7 @@ def setup():
         setattr(dlg, kind, _rec(kind, default))   # 앱 스타일 팝업 (실제 창을 띄우면 테스트가 멈춤)
 
     import srt_editor.widgets as widgets
+    widgets.ANIMATE = False   # 펼침·접힘 애니메이션을 기다리지 않게 (전용 테스트에서만 켬)
     import srt_editor.ui.diarize as dz
     ask = _rec("ask_choice", True)
     widgets.ask_choice = dz.ask_choice = lambda parent, title, message, primary, secondary: ask(title, message)

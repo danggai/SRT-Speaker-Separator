@@ -10,7 +10,7 @@ from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_im
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, ON_BG
 from ..widgets import (DimOverlay, NumberStepper, PopupMenu, Segmented, ToggleSwitch, _gradient_bar_rows,
-                       _mix, _watch, ask_choice, flat_button, present_dialog)
+                       _mix, _watch, ask_choice, flat_button, present_dialog, slide)
 
 GLOW_MIN_CHECK = 10   # 확인 필요 줄이 이만큼 이상이고
 GLOW_MIN_FIXED = 3    # 그중 이만큼 고쳤으면 '다시 분석' 점등
@@ -79,17 +79,18 @@ class DiarizeMixin:
                 exact = bool(self._diarize_spk_exact_var.get())
             except (tk.TclError, ValueError):
                 return
-            if num <= 0:
+            if num > 0:
+                hint.configure(text=f"정확히 {num}명" if exact else f"최대 {num}명")
+                if not sep.winfo_manager():
+                    sep.pack(fill="x", padx=14, **({"before": row} if row.winfo_manager() else {}))
+            elif sep.winfo_manager():
                 sep.pack_forget()
-                row.pack_forget()
-                return
-            if not row.winfo_ismapped():
-                sep.pack(fill="x", padx=14)
-                row.pack(fill="x", padx=14, pady=12)
-            hint.configure(text=f"정확히 {num}명" if exact else f"최대 {num}명")
+            slide(row, num > 0, animate=state["ready"], fill="x", padx=14, pady=12)
+        state = {"ready": False}   # 처음 그릴 때는 애니메이션 없이
         _watch(row, self._diarize_num_spk, _update)
         _watch(row, self._diarize_spk_exact_var, _update)
         _update()
+        state["ready"] = True
 
     def _build_diarize_tab(self, parent, footer_parent=None, on_close=None):
         """화자 분석 창 내용 (설정창과 같은 카드 스타일). 실행 버튼 행은 footer_parent에 둔다."""

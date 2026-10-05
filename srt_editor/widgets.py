@@ -674,6 +674,94 @@ def _gradient_bar_rows(width, height, fill_w, phase, bg_color):
     return " ".join([row_str] * height)
 
 
+ANIMATE = True          # 펼침·접힘 애니메이션 (테스트에서는 끔)
+SLIDE_MS = 200
+
+
+def _scroll_view(widget):
+    """widget을 감싼 스크롤 화면(Canvas). 없으면 최상위 창."""
+    w = widget.master
+    while w is not None and not isinstance(w, tk.Canvas) and w is not widget.winfo_toplevel():
+        w = w.master
+    return w if w is not None else widget.winfo_toplevel()
+
+
+def slide(widget, show, animate=True, **pack_kw):
+    """선택에 따라 나타나고 사라지는 칸을 스르륵 펼치거나 접는다. pack_kw는 펼칠 때 pack 옵션.
+    실제 칸을 매 프레임 다시 배치하면 느려서, 바뀌기 전·후 화면을 찍어 그림만 움직인 뒤 실제 화면으로 바꾼다."""
+    shown = widget.winfo_manager() == "pack"
+    if show == shown:
+        return
+
+    def apply():
+        if show:
+            widget.pack(**pack_kw)
+        else:
+            widget.pack_forget()
+
+    top = widget.winfo_toplevel()
+    try:
+        ok = animate and ANIMATE and top.winfo_viewable() and (show or widget.winfo_ismapped())
+    except tk.TclError:
+        ok = False
+    if not ok:
+        apply()
+        return
+    from PIL import ImageTk
+    view = _scroll_view(widget)
+    top.update_idletasks()
+    vx, vy = view.winfo_rootx() - top.winfo_rootx(), view.winfo_rooty() - top.winfo_rooty()
+    vw, vh = view.winfo_width(), view.winfo_height()
+    before = _capture_client(top, refresh=False)
+    if before is None or vw <= 1 or vh <= 1:
+        apply()
+        return
+    if not show:
+        y0, H = widget.winfo_rooty() - view.winfo_rooty(), widget.winfo_height()
+    ov = tk.Canvas(top, highlightthickness=0, bd=0, bg=view.cget("bg") if "bg" in view.keys() else BG)
+    ov._b = ImageTk.PhotoImage(before.crop((vx, vy, vx + vw, vy + vh)))
+    ov.create_image(0, 0, anchor="nw", image=ov._b, tags="base")
+    ov.place(in_=view, x=0, y=0, relwidth=1, relheight=1)
+    ov.tk.call("raise", ov._w)
+    ov.update_idletasks()
+    apply()   # 실제 배치는 덮개 아래에서 한 번만
+    top.update_idletasks()
+    if show:
+        y0, H = widget.winfo_rooty() - view.winfo_rooty(), widget.winfo_height()
+    ov.tk.call("lower", ov._w)   # 덮개를 잠깐 내려 바뀐 화면을 찍음 (그리기 전이라 깜빡이지 않음)
+    after = _capture_client(top, refresh=False)
+    ov.tk.call("raise", ov._w)
+    if after is None or H <= 1 or not (0 <= y0 < vh):
+        ov.destroy()
+        return
+    after = after.crop((vx, vy, vx + vw, vy + vh))
+    before = before.crop((vx, vy, vx + vw, vy + vh))
+    if show:   # 바탕은 바뀐 화면, 그 위로 아래쪽 내용이 내려감
+        ov._a = ImageTk.PhotoImage(after)
+        ov._m = ImageTk.PhotoImage(before.crop((0, y0, vw, vh)))
+    else:      # 바탕은 원래 화면, 그 위로 아래쪽 내용이 올라옴
+        ov._a = ImageTk.PhotoImage(before)
+        ov._m = ImageTk.PhotoImage(after.crop((0, y0, vw, vh)))
+    ov.itemconfigure("base", image=ov._a)
+    ov.create_image(0, y0 + (0 if show else H), anchor="nw", image=ov._m, tags="move")
+    top.update_idletasks()   # 덮개 아래 실제 칸 다시 그리기를 먼저 끝내고 시간을 잼 (첫 프레임이 밀리지 않게)
+    import time
+    t0 = time.perf_counter()
+
+    def step():
+        t = min(1.0, (time.perf_counter() - t0) * 1000 / SLIDE_MS)
+        e = 1 - (1 - t) ** 3   # 끝에서 부드럽게 멈춤
+        try:
+            ov.coords("move", 0, y0 + H * (e if show else 1 - e))
+            if t < 1.0:
+                ov.after(12, step)
+            else:
+                ov.destroy()
+        except tk.TclError:
+            pass
+    step()
+
+
 def show_toast(root, text, duration_ms=1600):
     """창 위쪽 가운데에 잠깐 떴다 사라지는 알림."""
     old = getattr(root, "_toast_win", None)
@@ -1288,12 +1376,13 @@ def ask_choice(parent, title, message, primary, secondary):
     return ask_buttons(parent, title, message, [(secondary, False), (primary, True)])
 
 
-def _capture_client(win):
+def _capture_client(win, refresh=True):
     """창 안쪽(클라이언트 영역)을 그대로 찍은 PIL 이미지 (실패하면 None)."""
     try:
         import ctypes
         from PIL import Image
-        win.update_idletasks()
+        if refresh:
+            win.update_idletasks()
         u, g = ctypes.windll.user32, ctypes.windll.gdi32
         hwnd = win.winfo_id()
         w, h = win.winfo_width(), win.winfo_height()

@@ -9,7 +9,7 @@ from ..srt_io import format_srt_time
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
 from ..widgets import (DarkScrollbar, DimOverlay, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
-                       _watch, flat_button, present_dialog)
+                       _watch, flat_button, present_dialog, slide)
 
 
 class TranscribeMixin:
@@ -60,10 +60,7 @@ class TranscribeMixin:
         self._speaker_count_rows(card)
 
         def _on_mode_change():
-            if mode_var.get() == "diarize":
-                diar_holder.pack(fill="x", before=diar_anchor)
-            else:
-                diar_holder.pack_forget()
+            slide(diar_holder, mode_var.get() == "diarize", fill="x", before=diar_anchor)
         _watch(diar_holder, mode_var, _on_mode_change)
 
         # ── 자막 설정 ────────────────────────────────────────
