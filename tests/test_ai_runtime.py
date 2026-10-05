@@ -41,6 +41,71 @@ def run_job_streams_events_and_returns_result():
 
 
 @test
+def first_run_of_unwarmed_install_shows_notice_once():
+    import pathlib
+    R = _rt()
+    orig = R._venv_python
+    R._venv_python = lambda: pathlib.Path(sys.executable)
+    R.ROOT.mkdir(parents=True, exist_ok=True)
+    (R.ROOT / "ready.json").write_text(json.dumps({"device": "cpu"}), encoding="utf-8")
+    try:
+        ev1, ev2 = [], []
+        R.run_job({"type": "echo"}, on_event=ev1.append, python=sys.executable)
+        expect(ev1[0]["msg"].startswith("첫 실행 준비"), f"예열 전 첫 실행 안내: {ev1[:1]}")
+        expect(R.installed_info().get("warm"), "성공하면 예열됨으로 기록")
+        R.run_job({"type": "echo"}, on_event=ev2.append, python=sys.executable)
+        expect(not any("첫 실행" in (e.get("msg") or "") for e in ev2), "두 번째부터는 안내 없음")
+    finally:
+        R._venv_python = orig
+        R.uninstall()
+
+
+@test
+def line_embedding_cache_reuses_unchanged_lines():
+    import numpy as np
+    from harness import fresh_dir
+    from srt_editor import ai_worker as W
+    import line_speakers as LS   # 작업 실행기가 불러 쓰는 같은 모듈
+    d = fresh_dir()
+    media = d / "a.wav"
+    media.write_bytes(b"x")
+    calls = []
+
+    def fake_emb(model, audio, intervals, cancelled=None):
+        calls.append(len(intervals))
+        return np.array([[s, e, 1.0] for s, e in intervals], dtype=np.float32)
+
+    class FakeWX:
+        @staticmethod
+        def load_audio(path):
+            return np.zeros(10)
+
+    class FakePipe:
+        class model:
+            _embedding = None
+    saved = (LS.line_embeddings, W._diar_pipeline, W.status, sys.modules.get("whisperx"))
+    LS.line_embeddings = fake_emb
+    W._diar_pipeline = lambda *a, **k: FakePipe
+    W.status = lambda *a, **k: None
+    sys.modules["whisperx"] = FakeWX
+    try:
+        job = {"media": str(media), "cache_dir": str(d / "cache"), "num_speakers": 2, "exact": True,
+               "intervals": [[0, 1], [1, 2], [2, 3], [3, 4], None]}
+        W._lines_result(job, "cpu")
+        W._lines_result(job, "cpu")
+        eq(calls, [4], "두 번째는 전부 캐시 (구간 없는 줄은 제외)")
+        job["intervals"][1] = [1, 2.5]
+        W._lines_result(job, "cpu")
+        eq(calls, [4, 1], "바뀐 줄만 새로 분석")
+    finally:
+        LS.line_embeddings, W._diar_pipeline, W.status = saved[:3]
+        if saved[3] is None:
+            sys.modules.pop("whisperx", None)
+        else:
+            sys.modules["whisperx"] = saved[3]
+
+
+@test
 def run_job_reports_worker_error_and_missing_runtime():
     R = _rt()
     try:

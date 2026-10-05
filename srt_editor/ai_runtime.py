@@ -167,13 +167,14 @@ def install(device="cuda", progress=None, cancelled=None):
         got = max(0, dir_size(ROOT / "cache") - base)
         progress(f"AI 부품 내려받는 중  {got / 1048576:,.0f} MB / 약 {est / 1048576:,.0f} MB",
                  6 + 84 * min(0.99, got / est))
-    _run_logged([uv, "pip", "install", "--python", _venv_python(), "--link-mode", "copy",
+    _run_logged([uv, "pip", "install", "--python", _venv_python(), "--link-mode", "copy", "--compile-bytecode",
                  "--index-strategy", "unsafe-best-match", "--extra-index-url", TORCH_INDEX[device], *PACKAGES],
                 log, cancelled, on_tick=tick)
 
-    progress("설치 확인 중...", 92)
-    info = run_job({"type": "probe"}, python=str(_venv_python()))
+    progress("첫 실행 준비 중... (몇 분 걸릴 수 있어요)", 92)
+    info = run_job({"type": "probe", "warm": True}, python=str(_venv_python()))
     info["device"] = device
+    info["warm"] = True
     (ROOT / "ready.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
     progress("내려받은 임시 파일 정리 중...", 97)
     shutil.rmtree(ROOT / "cache", ignore_errors=True)   # --link-mode copy라 지워도 설치본은 그대로
@@ -198,14 +199,26 @@ def _worker_dir():
     return dst
 
 
+def _mark_warm(info):
+    try:
+        (ROOT / "ready.json").write_text(json.dumps(dict(info, warm=True), ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def run_job(job, on_event=None, cancelled=None, python=None):
     """AI 작업 실행 → 결과 dict. on_event(dict): 진행 상황. 실패하면 AIError, 부품이 없으면 AIMissing."""
     python = python or ai_python()
     if not python:
         raise AIMissing("AI 부품이 설치돼 있지 않아요.")
     cancelled = cancelled or (lambda: False)
+    info = installed_info()
+    cold = bool(info) and not info.get("warm") and python == str(_venv_python())
+    if cold and on_event:   # 예열 전 설치본: 첫 실행은 백신 검사·로딩으로 느림
+        on_event({"type": "status", "msg": "첫 실행 준비 중... (몇 분 걸릴 수 있어요)", "step": None, "pct": None})
     work = pathlib.Path(tempfile.mkdtemp(prefix="srt_ai_job_"))
     job = dict(job, result=str(work / "result.json"))
+    job.setdefault("cache_dir", str(ROOT / "embcache"))
     (work / "job.json").write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUTF8="1")
     env.pop("PYTHONPATH", None)
@@ -241,7 +254,10 @@ def run_job(job, on_event=None, cancelled=None, python=None):
             raise AIError("취소했어요.")
         res = work / "result.json"
         if p.returncode == 0 and res.exists():
-            return json.loads(res.read_text(encoding="utf-8"))
+            out = json.loads(res.read_text(encoding="utf-8"))
+            if cold:
+                _mark_warm(info)
+            return out
         tail = err_log.read_text(encoding="utf-8", errors="replace")[-800:]
         raise AIError(last_err or f"AI 작업이 비정상 종료됐어요 (코드 {p.returncode}).\n\n{tail}")
     finally:
