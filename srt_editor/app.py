@@ -20,6 +20,7 @@ from .ui.shortcuts import ShortcutsMixin
 from .ui.options import OptionsMixin
 from .ui.video_win import VideoMixin
 from .ui.search import SearchMixin
+from .ui.updater import UpdateMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
@@ -70,6 +71,7 @@ class SRTEditor(
     OptionsMixin,
     VideoMixin,
     SearchMixin,
+    UpdateMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -734,15 +736,9 @@ class SRTEditor(
                 pass
 
     def _show_update_badge(self, latest_ver):
-        import webbrowser
         try:
-            def _on_click(v=latest_ver):
-                ans = messagebox.askyesno("업데이트", f"새 버전 v{v}이 나왔어요 (현재 v{APP_VERSION}).\n다운로드 페이지를 열까요?", parent=self, yes="열기", no="나중에")
-                if ans:
-                    webbrowser.open(GITHUB_TAGS_URL)
-
             btn = self._update_btn
-            btn.configure(command=_on_click)
+            btn.configure(command=lambda v=latest_ver: self._on_update_click(v))
             if not btn.winfo_ismapped():
                 # 우측 버튼 그룹들(설정/내보내기/화자분석)이 이미 side="right"로
                 # 채워진 뒤에 마지막으로 packing되므로, 그 왼쪽(화자 분석 버튼
@@ -753,7 +749,8 @@ class SRTEditor(
             import traceback; traceback.print_exc()
 
     # ── 종료 처리 ─────────────────────────────
-    def _on_close(self):
+    def _on_close(self, before_exit=None):
+        """종료 (저장 확인). 실제로 닫게 되면 before_exit()을 먼저 부른다 (업데이트 후 새 버전 실행 등)."""
         if self._unsaved and self.subtitles:
             ans = messagebox.askyesnocancel("저장 안 됨", "저장하지 않은 변경이 있어요. 저장하고 종료할까요?", parent=self, yes="저장", no="저장 안 함")
             if ans is None:    # 취소
@@ -771,6 +768,8 @@ class SRTEditor(
             self._save_volume()
         self._stop_progress_poll()
         self.player.stop()
+        if before_exit:
+            before_exit()
         self.destroy()
 
     def destroy(self):
@@ -779,6 +778,11 @@ class SRTEditor(
         ime = getattr(self, "_ime_overlay", None)
         if ime is not None:
             ime.unhook_all()
+        try:   # 남은 예약 작업이 앱이 닫힌 뒤 실행되며 오류를 내지 않게
+            for job in self.tk.splitlist(self.tk.call("after", "info")):
+                self.tk.call("after", "cancel", job)
+        except tk.TclError:
+            pass
         super().destroy()
 
 

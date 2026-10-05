@@ -47,9 +47,72 @@ def _log(msg):
         pass
 
 
+_HEADERS = {"User-Agent": "Mozilla/5.0 SRT-Speaker-Separator", "Accept": "application/vnd.github+json"}
+
+
+def release_exe(tag, timeout=10):
+    """릴리즈 tag의 EXE (이름, 내려받기 주소, 크기). 없으면 None."""
+    for t in (tag, f"v{tag}"):
+        try:
+            req = urllib.request.Request(f"{_API}/releases/tags/{t}", headers=_HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                assets = json.loads(resp.read().decode()).get("assets", [])
+        except Exception as e:   # noqa: BLE001
+            _log(f"릴리즈 {t} 조회 실패: {e}")
+            continue
+        for a in assets:
+            if a.get("name", "").lower().endswith(".exe"):
+                return a["name"], a["browser_download_url"], int(a.get("size") or 0)
+    return None
+
+
+def download(url, dest, progress=None, cancelled=None):
+    """url을 dest로 내려받는다 (.part에 받은 뒤 이름 변경). 취소되면 False."""
+    dest = pathlib.Path(dest)
+    part = dest.with_name(dest.name + ".part")
+    req = urllib.request.Request(url, headers={"User-Agent": _HEADERS["User-Agent"]})
+    with urllib.request.urlopen(req, timeout=30) as r, open(part, "wb") as f:
+        total, done = int(r.headers.get("Content-Length") or 0), 0
+        while True:
+            if cancelled and cancelled():
+                break
+            chunk = r.read(256 * 1024)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if progress:
+                progress(done, total)
+    if cancelled and cancelled():
+        part.unlink(missing_ok=True)
+        return False
+    part.replace(dest)
+    return True
+
+
+def launch_after_exit(new_exe, old_exe, pid):
+    """이 프로세스(pid)가 끝나면 새 EXE를 실행하고 이전 EXE를 지우는 스크립트를 띄운다."""
+    import base64
+    import os
+    import subprocess
+    new_exe, old_exe = os.path.abspath(new_exe), os.path.abspath(old_exe)
+
+    def q(p):
+        return "'" + p.replace("'", "''") + "'"
+    script = f"Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; "
+    if os.path.normcase(new_exe) != os.path.normcase(old_exe):   # 한글 경로도 안전하게 (UTF-16 인코딩 명령)
+        script += (f"for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath {q(old_exe)}); $i++) "
+                   f"{{ Remove-Item -LiteralPath {q(old_exe)} -Force -ErrorAction SilentlyContinue; Start-Sleep 1 }}; ")
+    script += f"Start-Process -FilePath {q(new_exe)}"
+    enc = base64.b64encode(script.encode("utf-16-le")).decode()
+    cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", enc]
+    subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+    return script
+
+
 def fetch_latest_version(timeout=6):
     """GitHub에서 가장 높은 버전을 가져온다 (공개된 릴리즈 → 태그 목록 순). 실패하면 None."""
-    headers = {"User-Agent": "Mozilla/5.0 SRT-Speaker-Separator", "Accept": "application/vnd.github+json"}
+    headers = _HEADERS
     endpoints = [
         (f"{_API}/releases/latest", lambda d: [d.get("tag_name", "")]),
         (f"{_API}/git/refs/tags", lambda d: [r["ref"].split("/")[-1] for r in d]),
