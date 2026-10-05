@@ -212,11 +212,8 @@ class SettingsMixin:
             self._transcribe_max_chars = 25
             self._transcribe_language = "ko"
             self._transcribe_period = False
-            self._transcribe_spellcheck = False
-            cfg.update(transcribe_max_chars=25, transcribe_language="ko",
-                       transcribe_period=False, transcribe_spellcheck=False)
-            for name, v in (("_transcribe_max_chars_var", 25), ("_transcribe_period_var", False),
-                            ("_transcribe_spellcheck_var", False)):
+            cfg.update(transcribe_max_chars=25, transcribe_language="ko", transcribe_period=False)
+            for name, v in (("_transcribe_max_chars_var", 25), ("_transcribe_period_var", False)):
                 var = getattr(self, name, None)
                 if var is not None:
                     var.set(v)
@@ -451,7 +448,7 @@ class SettingsMixin:
         """내보내기·불러오기 대상 설정 키."""
         return set(OPTION_DEFAULTS) | {
             "show_key_hints", "speaker_colors", "proper_nouns", "proper_nouns_enabled",
-            "transcribe_max_chars", "transcribe_period", "transcribe_spellcheck",
+            "transcribe_max_chars", "transcribe_period",
             "transcribe_language", "diarize_mode", "diarize_device", "diarize_batch",
             "diarize_sensitivity", "diarize_sens_scale", "diarize_spk_exact", "num_speakers",
             "volume"}
@@ -462,11 +459,9 @@ class SettingsMixin:
         self.__dict__.pop("_opt_cache", None)
         self._transcribe_max_chars = cfg.get("transcribe_max_chars", 25)
         self._transcribe_period = cfg.get("transcribe_period", False)
-        self._transcribe_spellcheck = cfg.get("transcribe_spellcheck", False)
         self._transcribe_language = cfg.get("transcribe_language", "ko")
         for name, v in (("_transcribe_max_chars_var", self._transcribe_max_chars),
-                        ("_transcribe_period_var", self._transcribe_period),
-                        ("_transcribe_spellcheck_var", self._transcribe_spellcheck)):
+                        ("_transcribe_period_var", self._transcribe_period)):
             var = getattr(self, name, None)
             if var is not None:
                 var.set(v)
@@ -595,19 +590,6 @@ class SettingsMixin:
             self._transcribe_period = v
             cfg = _load_config(); cfg["transcribe_period"] = v; _save_config(cfg)
         ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
-
-        # 맞춤법 자동 교정
-        _, right = self._settings_row(card, "✓", "맞춤법 자동 교정",
-                                      "네이버 맞춤법 검사기 (인터넷 필요)")
-        if not hasattr(self, "_transcribe_spellcheck_var"):
-            self._transcribe_spellcheck_var = tk.BooleanVar(
-                value=getattr(self, "_transcribe_spellcheck", False))
-
-        def _save_spellcheck():
-            v = self._transcribe_spellcheck_var.get()
-            self._transcribe_spellcheck = v
-            cfg = _load_config(); cfg["transcribe_spellcheck"] = v; _save_config(cfg)
-        ToggleSwitch(right, self._transcribe_spellcheck_var, _save_spellcheck).pack()
 
         # 고유명사 사전
         self._ensure_proper_nouns_init()

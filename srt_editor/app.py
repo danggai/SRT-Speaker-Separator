@@ -121,7 +121,6 @@ class SRTEditor(
         self._diarize_num_spk_val  = _cfg.get("num_speakers", 0)
         self._transcribe_max_chars  = _cfg.get("transcribe_max_chars", 25)
         self._transcribe_period     = _cfg.get("transcribe_period", False)
-        self._transcribe_spellcheck = _cfg.get("transcribe_spellcheck", False)
         self._transcribe_language   = _cfg.get("transcribe_language", "ko")   # "ko" | "auto"
         self._diarize_mode_init    = _cfg.get("diarize_mode", _DEFAULT_ASR_MODE)
         self._diarize_device_init  = _cfg.get("diarize_device", "auto")

@@ -3,7 +3,7 @@ import os
 import tkinter as tk
 from .. import dialogs as messagebox
 
-from .. import theme
+from .. import theme, transcript_post
 from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
@@ -132,15 +132,6 @@ class TranscribeMixin:
             cfg = _load_config(); cfg["transcribe_period"] = self._transcribe_period; _save_config(cfg)
         _, right = self._settings_row(card, ".", "문장 끝 마침표")
         ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
-
-        if not hasattr(self, "_transcribe_spellcheck_var"):
-            self._transcribe_spellcheck_var = tk.BooleanVar(value=getattr(self, "_transcribe_spellcheck", False))
-
-        def _save_spell():
-            self._transcribe_spellcheck = self._transcribe_spellcheck_var.get()
-            cfg = _load_config(); cfg["transcribe_spellcheck"] = self._transcribe_spellcheck; _save_config(cfg)
-        _, right = self._settings_row(card, "✔", "맞춤법 검사", "네이버 맞춤법 검사기 사용 (인터넷 필요)")
-        ToggleSwitch(right, self._transcribe_spellcheck_var, _save_spell).pack()
 
         def _start():
             hf_tok = hf_tok_var.get().strip()
@@ -276,172 +267,9 @@ class TranscribeMixin:
                     return
                 segments = res["segments"]
 
-                # 설정값 읽기 (먼저 읽어야 이후 로직에서 참조 가능)
-                _max_chars   = getattr(self, "_transcribe_max_chars", 25)
-                _add_period  = getattr(self, "_transcribe_period", False)
-                _spellcheck  = getattr(self, "_transcribe_spellcheck", False)
-
-                # 맞춤법 검사기 초기화 (활성화 시)
-                _spell_checker = None
-                if _spellcheck:
-                    try:
-                        import subprocess as _sp
-                        if getattr(__import__("sys"), "frozen", False):
-                            raise ImportError("빌드된 앱에서는 설치할 수 없음")
-                        _sp.check_call(
-                            [__import__("sys").executable, "-m", "pip",
-                             "install", "py-hanspell", "-q"],
-                            stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-                        from hanspell import spell_checker as _sc
-                        _spell_checker = _sc
-                    except Exception:
-                        pass
-
-                if _pstate.get("cancelled"):
-                    return
-
-                # segments → SRT 텍스트 생성
-                if _spellcheck and _spell_checker:
-                    _set("맞춤법 검사 중...", 90)
-                _set("자막 변환 중...", 95)
-
-
-                # 한국어 종결어미(대략적인 문장/절 경계 판단용).
-                # 정확한 형태소 분석은 아니지만, 흔한 종결 패턴을 폭넓게
-                # 커버해 "글자 수만 꽉 채우고 뚝 끊기"보다 자연스러운
-                # 위치에서 줄을 나누기 위한 실용적 휴리스틱.
-                _KOR_SENTENCE_ENDERS = (
-                    "습니다", "입니다", "합니다", "됩니다", "였습니다", "했습니다",
-                    "였다", "했다", "이었다",
-                    "이에요", "예요", "이네요", "네요", "군요", "구나", "잖아요", "잖아",
-                    "거든요", "거예요", "을까요", "ㄹ까요", "나요", "가요", "까요",
-                    "아요", "어요", "해요", "돼요", "됐어요", "했어요", "이었어요", "였어요",
-                    "습니까", "합니까", "인가요", "인데요", "는데요", "던데요",
-                    "다", "죠", "네", "까", "자", "라", "니",
-                )
-
-                def _clause_break_score(word):
-                    """word(어절)가 문장/절 경계로 적합한지 대략 판단.
-                    2=강함(문장부호로 끝남) / 1=약함(종결어미로 끝남) / 0=경계 아님."""
-                    if not word:
-                        return 0
-                    if word[-1] in ".!?…":
-                        return 2
-                    core = word.rstrip("\"'”’」』)]")
-                    if core and core[-1] in ".!?…":
-                        return 2
-                    for end in _KOR_SENTENCE_ENDERS:
-                        if core.endswith(end):
-                            return 1
-                    return 0
-
-                def _split_by_chars(text, max_chars):
-                    """글자 수 제한 + 문장부호/종결어미 등 의미 단위 경계를 함께
-                    고려해 자막 줄을 나눈다. max_chars에 도달하기 직전이라도,
-                    그 안에 자연스러운 문장/절 경계(마침표·종결어미 등)가 있으면
-                    거기서 먼저 끊어 어색하게 중간에서 잘리는 것을 줄인다."""
-                    if len(text) <= max_chars:
-                        return [text]
-                    words = text.split()
-                    if not words:
-                        return [text]
-
-                    MIN_RATIO = 0.45   # 이 비율 이상 채워졌을 때만 조기 종결 허용
-                    lines = []
-                    start = 0
-                    n = len(words)
-                    while start < n:
-                        cur_len   = 0
-                        end       = -1   # 여기까지는 확실히 max_chars 안에 들어옴
-                        last_good = -1   # 문장 경계로 적합한 마지막 word index
-                        i = start
-                        while i < n:
-                            w = words[i]
-                            add_len = len(w) + (1 if i > start else 0)
-                            if cur_len + add_len > max_chars:
-                                break
-                            cur_len += add_len
-                            end = i
-                            if (_clause_break_score(w) > 0
-                                    and cur_len >= max_chars * MIN_RATIO):
-                                last_good = i
-                            i += 1
-
-                        if end < start:
-                            # 단어 하나가 max_chars보다 긴 경우: 강제 분할
-                            w = words[start]
-                            for ci in range(0, len(w), max_chars):
-                                lines.append(w[ci:ci+max_chars])
-                            start += 1
-                            continue
-
-                        cut = end
-                        # 아직 더 이어질 단어가 남아있고, 그 전에 자연스러운
-                        # 경계가 있었다면 거기서 끊는다.
-                        if last_good >= 0 and last_good < end and (end + 1 < n):
-                            cut = last_good
-
-                        lines.append(" ".join(words[start:cut+1]))
-                        start = cut + 1
-
-                    return lines if lines else [text]
-
-                def _split_seg_with_words(seg, max_chars, spk):
-                    """whisperx word-level 타임스탬프 활용 정밀 분리.
-                    words 필드 없으면 균등 시간 분배 fallback."""
-                    t_s  = seg.get("start", 0)
-                    t_e  = seg.get("end", t_s + 1)
-                    text = seg.get("text", "").strip()
-                    word_list = seg.get("words", [])  # whisperx 단어별 타임스탬프
-
-                    lines = _split_by_chars(text, max_chars)
-                    result = []
-
-                    if len(lines) == 1:
-                        result.append({"start": t_s, "end": t_e,
-                                        "text": lines[0], "speaker": spk})
-                        return result
-
-                    if word_list:
-                        # word-level 타임스탬프로 정밀 분리
-                        wi = 0
-                        for line in lines:
-                            line_words = line.split()
-                            seg_ws = t_s
-                            seg_we = t_e
-                            matched = []
-                            for lw in line_words:
-                                while wi < len(word_list):
-                                    wobj = word_list[wi]
-                                    wi += 1
-                                    matched.append(wobj)
-                                    break
-                            # 정렬 실패 단어(숫자 등)는 타임스탬프가 없으므로 건너뛴다
-                            timed = [m for m in matched if "start" in m and "end" in m]
-                            if timed:
-                                seg_ws = timed[0]["start"]
-                                seg_we = timed[-1]["end"]
-                            result.append({"start": seg_ws, "end": seg_we,
-                                            "text": line, "speaker": spk})
-                    else:
-                        # fallback: 글자 수 비례로 시간 분배
-                        dur = t_e - t_s
-                        total_chars = sum(len(l) for l in lines) or 1
-                        cursor = t_s
-                        for line in lines:
-                            ratio = len(line) / total_chars
-                            sub_e = cursor + dur * ratio
-                            result.append({"start": cursor, "end": sub_e,
-                                            "text": line, "speaker": spk})
-                            cursor = sub_e
-
-                    return result
-
-                # 글자 수 기준으로 segments 재분할
-                split_segs = []
-                for seg in segments:
-                    spk = seg.get("speaker", "")
-                    split_segs.extend(_split_seg_with_words(seg, _max_chars, spk))
+                self.after(0, lambda: _set("자막 줄 나누는 중...", 72 if with_diarize else 92))
+                split_segs = transcript_post.build_lines(
+                    segments, getattr(self, "_transcribe_max_chars", 25), getattr(self, "_transcribe_period", False))
 
                 _auto = None
                 if with_diarize and split_segs:
@@ -461,35 +289,8 @@ class TranscribeMixin:
 
                 srt_lines = []
                 for i, seg in enumerate(split_segs, 1):
-                    t_s  = seg["start"]
-                    t_e  = seg["end"]
-                    text = seg["text"]
-                    spk  = seg["speaker"]
-                    # 맞춤법 검사
-                    if _spell_checker and text:
-                        try:
-                            _res = _spell_checker.check(text)
-                            text = _res.checked
-                        except Exception:
-                            pass
-                    # 마침표 처리
-                    if text:
-                        if _add_period:
-                            # 활성: 온점/느낌표/물음표 없으면 온점 추가
-                            if text[-1] not in "。.!?!?":
-                                text += "."
-                        else:
-                            # 비활성: Whisper가 자동으로 붙인 온점만 제거
-                            # (물음표·느낌표는 의미가 있으므로 유지)
-                            if text[-1] in ".。":
-                                text = text[:-1].rstrip()
-                    srt_lines.append(str(i))
-                    srt_lines.append(f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}")
-                    if spk:
-                        srt_lines.append(f"[{spk}] {text}")
-                    else:
-                        srt_lines.append(text)
-                    srt_lines.append("")
+                    srt_lines += [str(i), f"{format_srt_time(seg['start'])} --> {format_srt_time(seg['end'])}",
+                                  f"[{seg['speaker']}] {seg['text']}" if seg["speaker"] else seg["text"], ""]
 
                 srt_content = "\n".join(srt_lines)
 
@@ -512,6 +313,10 @@ class TranscribeMixin:
                     try: prog.destroy()
                     except Exception: pass
                     self._load_srt(tmp_path)
+                    try:   # 불러왔으니 임시 파일은 지움
+                        _os.remove(tmp_path)
+                    except OSError:
+                        pass
                     if _auto is not None and len(_auto) == len(self.subtitles):
                         self._mark_auto_speakers(range(len(self.subtitles)), _auto)
                     # 저장 경로를 원본 미디어 파일과 같은 이름/위치로 미리 지정
