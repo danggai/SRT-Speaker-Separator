@@ -294,7 +294,9 @@ def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
     app._scroll_to_row(4)
     pump(0.1)
     t = app._slot_widgets[slot_of(app, 4)]["tag"]
-    eq(app.canvas.itemcget(t + "num", "text"), "? 5", "번호 앞에 ? 표시")
+    eq(app.canvas.itemcget(t + "chk", "text"), "?", "번호 칸에 ? 표시")
+    eq(app.canvas.itemcget(t + "card", "fill"), app._CARD_CHECK_BG, "연한 노란 배경")
+    expect(app._get_col_positions()["num"][1] == app._col_w["num"] + app._CHECK_NUM_EXTRA, "번호 칸이 넓어짐")
     app._undo()
     eq(app.lbl_check.cget("text"), "?  확인 필요 3줄", "실행 취소하면 표시도 돌아옴")
 

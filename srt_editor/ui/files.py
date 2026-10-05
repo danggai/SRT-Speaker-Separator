@@ -409,6 +409,10 @@ class FileMixin:
                 lbl.pack(side="right", padx=(0, 12), pady=8, after=self.lbl_count)
         elif lbl.winfo_ismapped():
             lbl.pack_forget()
+        extra = self._CHECK_NUM_EXTRA if n else 0
+        if extra != self.__dict__.get("_num_extra", 0):   # ? 표시 자리만큼 번호 칸을 넓히거나 되돌림
+            self._num_extra = extra
+            self._relayout()
         self._update_diarize_button()
 
     def _goto_next_check(self):

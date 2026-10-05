@@ -43,6 +43,9 @@ class SubtitleTableMixin:
     _CARD_BG       = BG2
     _CARD_SEL_BG   = ROW_HL
     _CARD_PLAY_BORDER = "#2F5A2F"
+    _CARD_CHECK_BG = "#24221B"       # 확인 필요 줄: 아주 연한 노란 배경
+    _CARD_CHECK_BORDER = "#5C5128"
+    _CHECK_NUM_EXTRA = 12            # ? 줄이 있으면 번호 칸을 이만큼 넓힘
     _TS_EDIT_W = 118  # 시간 편집 입력칸 하나의 너비
     _VSCROLL_BUF = 3  # 뷰포트 위아래로 미리 만들어둘 여분 행 수
 
@@ -204,6 +207,8 @@ class SubtitleTableMixin:
             c.create_line(0, 0, 0, 0, fill=BORDER, tags=(t, f"{t}div{k}"), state="hidden")
         c.create_text(0, 0, text="", anchor="e", fill="#6A6A76", font=(theme.FONT_FAMILY, 8),
                       tags=(t, t + "num"), state="hidden")   # 줄 번호 (번호 칸 오른쪽 정렬)
+        c.create_text(0, 0, text="", anchor="w", fill=_CHECK_FG, font=(theme.FONT_FAMILY, 9, "bold"),
+                      tags=(t, t + "chk"), state="hidden")   # 확인 필요 표시 (번호 칸 왼쪽)
         c.create_line(0, 0, 0, 0, width=3, capstyle="round", fill="",
                       tags=(t, t + "bar"), state="hidden")   # 화자 색 띠
         c.create_text(0, 0, text="", anchor="w", fill="#B9A6EC",
@@ -730,6 +735,8 @@ class SubtitleTableMixin:
             return self._CARD_SEL_BG, ACCENT, 2
         if di in getattr(self, "_playing_rows", set()):
             return self.ROW_PLAYING, self._CARD_PLAY_BORDER, 1
+        if 0 <= di < len(self.subtitles) and self.subtitles[di].get("_check"):
+            return self._CARD_CHECK_BG, self._CARD_CHECK_BORDER, 1
         return self._CARD_BG, BORDER, 1
 
     @staticmethod
@@ -777,9 +784,11 @@ class SubtitleTableMixin:
         bg, outline, width = self._slot_colors(di)
         c.itemconfigure(t + "card", fill=bg, outline=outline, width=width)
         if sub.get("_check"):   # 화자 분석이 확신하지 못한 줄
-            c.itemconfigure(t + "num", text=f"? {di + 1}", fill=_CHECK_FG, font=(theme.FONT_FAMILY, 8, "bold"))
+            c.itemconfigure(t + "num", text=str(di + 1), fill=_CHECK_FG, font=(theme.FONT_FAMILY, 8, "bold"))
+            c.itemconfigure(t + "chk", text="?")
         else:
             c.itemconfigure(t + "num", text=str(di + 1), fill="#6A6A76", font=(theme.FONT_FAMILY, 8))
+            c.itemconfigure(t + "chk", text="")
         spk = sub.get("speaker", "")
         c.itemconfigure(t + "bar", fill=self._speaker_color(spk) if spk else "")
 
@@ -945,6 +954,7 @@ class SubtitleTableMixin:
                 x = pos[cid][0]
                 c.coords(f"{t}div{k}", x, y0 + 1, x, y1 - 1)
             c.coords(t + "num", tx - 5, cy + 1)
+            c.coords(t + "chk", x0 + 11, cy)
             c.coords(t + "tlbl", tx + 11, cy)
             c.coords(t + "txt", cx + 8, cy)
             c.coords(wi["content_win"], cx + 6, y0 + 5)
@@ -1026,8 +1036,11 @@ class SubtitleTableMixin:
 
         pos = {}
         x = self._CARD_X
+        extra = self.__dict__.get("_num_extra", 0)
+        content_w = max(60, content_w - extra)
         for cid in ["num", "time"]:
-            pos[cid] = (x, self._col_w[cid]); x += self._col_w[cid]
+            w = self._col_w[cid] + (extra if cid == "num" else 0)
+            pos[cid] = (x, w); x += w
         pos["content"] = (x, content_w);     x += content_w
         pos["speaker"] = (x, self._col_w["speaker"]); x += self._col_w["speaker"]
         return pos
