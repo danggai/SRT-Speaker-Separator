@@ -27,6 +27,7 @@ from .ime import ImeCompositionOverlay
 from .app_icon import apply_icon, set_app_id
 from .media import MediaPlayer
 from .speech import _DEFAULT_ASR_MODE
+from .transcript_post import DEFAULT_MAX_CHARS
 from .theme import (
     ACCENT,
     BG,
@@ -119,7 +120,7 @@ class SRTEditor(
         _cfg = _load_config()
         self._hf_token             = _cfg.get("hf_token", "")
         self._diarize_num_spk_val  = _cfg.get("num_speakers", 0)
-        self._transcribe_max_chars  = _cfg.get("transcribe_max_chars", 25)
+        self._transcribe_max_chars  = _cfg.get("transcribe_max_chars", DEFAULT_MAX_CHARS)
         self._transcribe_period     = _cfg.get("transcribe_period", False)
         self._transcribe_language   = _cfg.get("transcribe_language", "ko")   # "ko" | "auto"
         self._diarize_mode_init    = _cfg.get("diarize_mode", _DEFAULT_ASR_MODE)

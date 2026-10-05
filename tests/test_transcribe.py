@@ -29,6 +29,23 @@ def split_uses_word_times_and_interpolates_missing_ones():
 
 
 @test
+def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
+    T = _tp()
+    seg = {"start": 0.0, "end": 4.0, "text": "아 그냥 딱 봤는데! 이쁘다 진짜",
+           "words": [{"word": "아", "start": 0.0, "end": 0.2}, {"word": "그냥", "start": 0.6, "end": 0.9},
+                     {"word": "딱", "start": 1.0, "end": 1.1}, {"word": "봤는데!", "start": 1.2, "end": 1.7},
+                     {"word": "이쁘다", "start": 1.8, "end": 2.3}, {"word": "진짜", "start": 2.9, "end": 3.3}]}
+    lines = T.build_lines([seg], 20)
+    eq([l["text"] for l in lines], ["아 그냥 딱 봤는데!", "이쁘다 진짜"],
+       "20자 안이어도 문장부호에서 나누고, 4자 미만 조각('아', '이쁘다')은 쉼이 있어도 붙여 둠")
+    eq(lines[1]["start"], 1.8)
+    seg2 = dict(seg, words=[dict(w) for w in seg["words"]])
+    seg2["words"][4]["word"] = "정말이쁘다"
+    eq([l["text"] for l in T.build_lines([seg2], 20)], ["아 그냥 딱 봤는데!", "정말이쁘다", "진짜"],
+       "4자 이상이면 0.25초 넘는 쉼에서 나눔")
+
+
+@test
 def hallucinations_and_repeats_are_removed():
     T = _tp()
     segs = [{"start": 0, "end": 2, "text": "안녕하세요 여러분"},

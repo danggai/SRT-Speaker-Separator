@@ -66,7 +66,7 @@ class TranscribeMixin:
         # ── 자막 설정 ────────────────────────────────────────
         card = self._settings_card(inner, "자막 설정")
         if not hasattr(self, "_transcribe_max_chars_var"):
-            self._transcribe_max_chars_var = tk.IntVar(value=getattr(self, "_transcribe_max_chars", 25))
+            self._transcribe_max_chars_var = tk.IntVar(value=getattr(self, "_transcribe_max_chars", transcript_post.DEFAULT_MAX_CHARS))
         _CS_MIN, _CS_MAX = 10, 50
         left, right = self._settings_row(card, "가", "문장 당 글자 수", "한 자막에 들어갈 최대 글자 수")
         cs_text = tk.StringVar(value=str(self._transcribe_max_chars_var.get()))
@@ -273,7 +273,7 @@ class TranscribeMixin:
 
                 self.after(0, lambda: _set("자막 줄 나누는 중...", 72 if with_diarize else 92))
                 split_segs = transcript_post.build_lines(
-                    segments, getattr(self, "_transcribe_max_chars", 25), getattr(self, "_transcribe_period", False))
+                    segments, getattr(self, "_transcribe_max_chars", transcript_post.DEFAULT_MAX_CHARS), getattr(self, "_transcribe_period", False))
 
                 _auto = None
                 if with_diarize and split_segs:

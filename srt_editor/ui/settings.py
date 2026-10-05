@@ -10,6 +10,7 @@ from ..srt_io import display_to_regex
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, _apply_dark_titlebar
 from ..version import APP_VERSION, fetch_latest_version
 from .options import OPTION_DEFAULTS
+from ..transcript_post import DEFAULT_MAX_CHARS
 from ..widgets import (CheckBox, DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, flat_button,
                        rounded_rect_image, slide)
 
@@ -209,11 +210,11 @@ class SettingsMixin:
             self._apply_key_hints(False)
             cfg["show_key_hints"] = False
         elif section == "transcribe":
-            self._transcribe_max_chars = 25
+            self._transcribe_max_chars = DEFAULT_MAX_CHARS
             self._transcribe_language = "ko"
             self._transcribe_period = False
-            cfg.update(transcribe_max_chars=25, transcribe_language="ko", transcribe_period=False)
-            for name, v in (("_transcribe_max_chars_var", 25), ("_transcribe_period_var", False)):
+            cfg.update(transcribe_max_chars=DEFAULT_MAX_CHARS, transcribe_language="ko", transcribe_period=False)
+            for name, v in (("_transcribe_max_chars_var", DEFAULT_MAX_CHARS), ("_transcribe_period_var", False)):
                 var = getattr(self, name, None)
                 if var is not None:
                     var.set(v)
@@ -457,7 +458,7 @@ class SettingsMixin:
         """설정 파일 값을 앱 상태에 다시 반영."""
         cfg = _load_config()
         self.__dict__.pop("_opt_cache", None)
-        self._transcribe_max_chars = cfg.get("transcribe_max_chars", 25)
+        self._transcribe_max_chars = cfg.get("transcribe_max_chars", DEFAULT_MAX_CHARS)
         self._transcribe_period = cfg.get("transcribe_period", False)
         self._transcribe_language = cfg.get("transcribe_language", "ko")
         for name, v in (("_transcribe_max_chars_var", self._transcribe_max_chars),
@@ -528,7 +529,7 @@ class SettingsMixin:
                                          None)
         if not hasattr(self, "_transcribe_max_chars_var"):
             self._transcribe_max_chars_var = tk.IntVar(
-                value=getattr(self, "_transcribe_max_chars", 25))
+                value=getattr(self, "_transcribe_max_chars", DEFAULT_MAX_CHARS))
         _CHARS_MIN, _CHARS_MAX = 10, 50
         tk.Label(right, text="자", bg=BG2, fg=FG_DIM,
                  font=(theme.FONT_FAMILY, 9)).pack(side="right", padx=(4, 0))

@@ -2,7 +2,10 @@
 import re
 
 MIN_DUR = 0.3       # 이보다 짧은 줄은 늘림 (초)
+DEFAULT_MAX_CHARS = 20   # 줄당 글자 수 기본값 (직접 만든 자막: 중앙값 10자, 90%가 19자 이하)
 MIN_RATIO = 0.45    # 줄이 이만큼 찼을 때만 문장 경계에서 일찍 끊음
+PAUSE_SPLIT = 0.25   # 단어 사이 쉼이 이 이상이면 글자 수와 상관없이 줄을 나눔 (초)
+MIN_PIECE_CHARS = 4  # 이보다 짧은 조각은 쉼이 있어도 앞뒤와 붙여 둠
 
 # 한국어 종결어미 (문장·절 경계를 대략 판단)
 _KOR_SENTENCE_ENDERS = (
@@ -116,6 +119,38 @@ def split_segment(seg, max_chars):
     return out
 
 
+def split_at_pauses(seg, pause=None, min_chars=None):
+    """단어 사이 쉼이 길거나 문장부호로 끝나는 곳에서 segment를 먼저 나눈다 (글자 수가 적어도)."""
+    pause = PAUSE_SPLIT if pause is None else pause
+    min_chars = MIN_PIECE_CHARS if min_chars is None else min_chars
+    words = seg.get("words") or []
+    if len(words) < 2:
+        return [seg]
+    pieces, cur = [], []
+    for k, w in enumerate(words):
+        cur.append(w)
+        nxt = words[k + 1] if k + 1 < len(words) else None
+        if nxt is None:
+            break
+        chars = sum(len((x.get("word") or "").strip()) for x in cur)
+        gap = (nxt["start"] - w["end"]) if "start" in nxt and "end" in w else 0.0
+        ends = (w.get("word") or "").rstrip("\"'”’)]").endswith(("?", "!", ".", "…", "~"))
+        if chars >= min_chars and (gap >= pause or ends):
+            pieces.append(cur)
+            cur = []
+    pieces.append(cur)
+    if len(pieces) == 1:
+        return [seg]
+    out = []
+    for p in pieces:
+        timed = [w for w in p if "start" in w and "end" in w]
+        out.append({"start": timed[0]["start"] if timed else seg.get("start", 0.0),
+                    "end": timed[-1]["end"] if timed else seg.get("end", 0.0),
+                    "text": " ".join((w.get("word") or "").strip() for w in p),
+                    "words": p, "speaker": seg.get("speaker", "")})
+    return out
+
+
 def finish_text(text, add_period):
     text = text.strip()
     if not text:
@@ -151,14 +186,15 @@ def fix_timing(lines, min_dur=MIN_DUR):
     return lines
 
 
-def build_lines(segments, max_chars=25, add_period=False):
+def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False):
     """whisperx segments → 자막 줄 목록 [{start, end, text, speaker}]."""
     lines = []
     for seg in segments:
         if is_hallucination(seg.get("text") or ""):
             continue
-        for l in split_segment(seg, max_chars):
-            l["text"] = finish_text(l["text"], add_period)
-            if l["text"] and not is_hallucination(l["text"]):
-                lines.append(l)
+        for piece in split_at_pauses(seg):
+            for l in split_segment(piece, max_chars):
+                l["text"] = finish_text(l["text"], add_period)
+                if l["text"] and not is_hallucination(l["text"]):
+                    lines.append(l)
     return fix_timing(drop_repeats(lines))
