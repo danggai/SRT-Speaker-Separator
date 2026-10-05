@@ -96,6 +96,7 @@ class DiarizeMixin:
         if footer_parent is None:
             footer_parent = parent
         self._diarize_host = parent.winfo_toplevel()   # 분석 중 이 창을 흐리게 덮음
+        self._diarize_close = on_close   # 분석이 끝나면 이 창을 닫음
         self._settings_title(parent, "화자 자동 분석",
                              "화자마다 3~5줄을 먼저 지정하면 더 정확해요.")
 
@@ -214,7 +215,7 @@ class DiarizeMixin:
                 self._hf_token_var = tk.StringVar(self, value=self._hf_token)
         except tk.TclError:
             self._hf_token_var = tk.StringVar(self, value=self._hf_token)
-        self._diarize_host = None
+        self._diarize_host = self._diarize_close = None
         self._run_diarize_whisperx(only_check=True)
 
     def _update_diarize_button(self):
@@ -632,11 +633,18 @@ class DiarizeMixin:
                 def _apply():
                     if _prog_state.get("cancelled"):
                         return
+                    _prog_state["running"] = False
                     try:
-                        _set_status("완료!", "done")
-                        prog_win.after(300, prog_win.destroy)
+                        prog_win.destroy()
                     except Exception:
                         pass
+                    close = getattr(self, "_diarize_close", None)
+                    if close and host is not self:   # 분석 창은 닫고 결과 안내만 남김
+                        try:
+                            if host.winfo_exists():
+                                close()
+                        except tk.TclError:
+                            pass
                     if res.get("mode") == "seeded":
                         self._apply_line_speakers(res["names"], True, res["conf"], only=_only)
                     else:

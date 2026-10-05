@@ -300,6 +300,29 @@ def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
 
 
 @test
+def diarize_dialog_closes_when_analysis_finishes(app):
+    import srt_editor.ui.diarize as dz
+    from harness import pump, toplevels
+    load_sample(app, n=24, tagged_every=1, with_wav=True)
+    app._open_diarize_dialog()
+    pump(0.3)
+    app._hf_token_var.set("hf_test")
+    n = len(app.subtitles)
+    app._run_ai_job = lambda job, on_event=None, cancelled=None: \
+        {"mode": "seeded", "names": ["민지"] * n, "conf": [0.9] * n}
+    orig = dz.ai_runtime.ai_python
+    dz.ai_runtime.ai_python = lambda: "py"
+    ctx.msgs.clear()
+    try:
+        app._run_diarize_whisperx()
+        wait_until(lambda: any(k == "showinfo" for k, *_ in ctx.msgs), 5)
+    finally:
+        dz.ai_runtime.ai_python = orig
+    pump(0.2)
+    expect(not [w for w in toplevels() if w.title() == "화자 자동 분석"], "분석 창은 닫힘")
+
+
+@test
 def f_key_plays_next_check_line_and_number_key_moves_on(app):
     from types import SimpleNamespace as NS
     from harness import pump
