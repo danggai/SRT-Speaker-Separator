@@ -1,7 +1,7 @@
 """자막 교정: 문맥상 잘못 인식된 것 같은 표기를 찾아 줄별로 제안하고, 확인한 것만 적용."""
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import correction, theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
@@ -16,14 +16,14 @@ class CorrectionMixin:
 
     def _open_correction_dialog(self):
         if not self.subtitles:
-            messagebox.showwarning("자막 교정", "자막을 먼저 불러오세요.", parent=self)
+            messagebox.showwarning("자막 교정", "자막을 먼저 열어 주세요.", parent=self)
             return
         self._blur_all_entries()   # 입력 중이던 내용부터 확정
         self._ensure_proper_nouns_init()
         texts = [s.get("text", "") for s in self.subtitles]
         fixes = correction.suggest(texts, proper_nouns=self._proper_nouns)
         if not fixes:
-            messagebox.showinfo("자막 교정", "문맥상 고칠 만한 표기를 찾지 못했어요.", parent=self)
+            messagebox.showinfo("자막 교정", "고칠 표기를 찾지 못했어요.", parent=self)
             return
 
         win = tk.Toplevel(self)
@@ -196,8 +196,7 @@ class CorrectionMixin:
             if not chosen:
                 return
             changed = self._apply_corrections(chosen)
-            messagebox.showinfo("자막 교정", f"{changed}개 자막을 고쳤어요.\n(실행 취소: Ctrl+Z)",
-                                parent=self)
+            messagebox.showinfo("자막 교정", f"{changed}줄을 고쳤어요. (Ctrl+Z로 되돌리기)", parent=self)
 
         def _close():
             state["cancel"] = True

@@ -90,9 +90,11 @@ def setup():
             ans = ctx.answers.get(kind, default)
             return ans() if callable(ans) else ans
         return fn
+    import srt_editor.dialogs as dlg
     for kind, default in (("showinfo", "ok"), ("showwarning", "ok"), ("showerror", "ok"),
                           ("askyesno", True), ("askokcancel", True), ("askyesnocancel", True)):
         setattr(mb, kind, _rec(kind, default))
+        setattr(dlg, kind, _rec(kind, default))   # 앱 스타일 팝업 (실제 창을 띄우면 테스트가 멈춤)
 
     import srt_editor.widgets as widgets
     import srt_editor.ui.diarize as dz

@@ -1,6 +1,6 @@
 """화자 사이드바, 화자 색상, 화자 추가/이름 변경/삭제."""
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 from tkinter import simpledialog
 from tkinter import ttk
 
@@ -655,7 +655,7 @@ class SpeakerMixin:
         if new_name == old_name:
             return   # 바뀐 게 없으면 실행 취소 기록도 남기지 않음
         if new_name in self.speakers:
-            messagebox.showwarning("중복", f"'{new_name}' 화자가 이미 있습니다.", parent=self)
+            messagebox.showwarning("화자 이름", f"'{new_name}' 화자가 이미 있어요.", parent=self)
             return
         self._push_undo()
         idx = self.speakers.index(old_name)
@@ -676,10 +676,7 @@ class SpeakerMixin:
         self._pb_redraw()
 
     def delete_speaker(self, name):
-        if not messagebox.askyesno(
-                "화자 삭제",
-                f"'{name}' 화자를 삭제하시겠습니까?\n해당 화자가 지정된 자막은 '없음'으로 초기화됩니다.",
-                parent=self):
+        if not messagebox.askyesno("화자 삭제", f"'{name}' 화자를 지울까요?\n이 화자로 지정된 줄은 비워져요.", parent=self, yes="삭제", no="취소"):
             return
         self._push_undo()
         self.speakers.remove(name)

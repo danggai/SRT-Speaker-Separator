@@ -1,7 +1,7 @@
 """SRTEditor 메인 창과 실행 진입점. 기능별 메서드는 ui/ 믹스인에 나뉘어 있다."""
 import re
 import tkinter as tk
-from tkinter import messagebox
+from . import dialogs as messagebox
 from tkinter import ttk
 
 from .ui.ai_setup import AISetupMixin
@@ -717,14 +717,7 @@ class SRTEditor(
         import webbrowser
         try:
             def _on_click(v=latest_ver):
-                ans = messagebox.askyesno(
-                    "업데이트 알림",
-                    f"새로운 버전이 있습니다!\n\n"
-                    f"현재 버전: v{APP_VERSION}\n"
-                    f"최신 버전: v{v}\n\n"
-                    "GitHub 릴리즈 페이지로 이동할까요?",
-                    parent=self
-                )
+                ans = messagebox.askyesno("업데이트", f"새 버전 v{v}이 나왔어요 (현재 v{APP_VERSION}).\n다운로드 페이지를 열까요?", parent=self, yes="열기", no="나중에")
                 if ans:
                     webbrowser.open(GITHUB_TAGS_URL)
 
@@ -742,10 +735,7 @@ class SRTEditor(
     # ── 종료 처리 ─────────────────────────────
     def _on_close(self):
         if self._unsaved and self.subtitles:
-            ans = messagebox.askyesnocancel(
-                "저장되지 않은 변경사항",
-                "저장되지 않은 변경사항이 있습니다.\n저장하고 종료하시겠습니까?",
-                parent=self)
+            ans = messagebox.askyesnocancel("저장 안 됨", "저장하지 않은 변경이 있어요. 저장하고 종료할까요?", parent=self, yes="저장", no="저장 안 함")
             if ans is None:    # 취소
                 return
             if ans:            # 예 → 저장 후 종료 (저장 실패·취소면 종료하지 않음)

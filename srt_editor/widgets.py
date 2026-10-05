@@ -1214,19 +1214,36 @@ def present_dialog(win, parent, grab=True):
         win.grab_set()
 
 
-def ask_choice(parent, title, message, primary, secondary):
-    """앱 스타일 버튼 두 개 질문 창. primary → True, secondary → False, 닫으면 None.
-    message 안의 **글자**는 강조색·굵게."""
+_KIND_ICON = {"info": ("i", ACCENT), "question": ("?", ACCENT), "warning": ("!", "#E8C547"),
+              "error": ("×", "#E06C75")}
+
+
+def ask_buttons(parent, title, message, buttons, kind=None, default=None):
+    """앱 스타일 팝업. buttons: [(글자, 반환값)] — 마지막이 오른쪽 강조 버튼(Enter).
+    닫거나 Esc면 default. message 안의 **글자**는 강조색·굵게."""
+    parent = parent or tk._default_root
     win = tk.Toplevel(parent)
     win.withdraw()
-    win.title(title)
+    win.title(title or "")
     win.configure(bg=BG)
     win.resizable(False, False)
     win.transient(parent)
-    res = {"v": None}
-    body = tk.Frame(win, bg=BG)
-    body.pack(anchor="w", padx=24, pady=(22, 18))
-    for line in message.split("\n"):
+    res = {"v": default}
+    top = tk.Frame(win, bg=BG)
+    top.pack(fill="x", padx=24, pady=(22, 18))
+    if kind in _KIND_ICON:
+        glyph, color = _KIND_ICON[kind]
+        ic = tk.Canvas(top, width=26, height=26, bg=BG, highlightthickness=0)
+        ic.pack(side="left", anchor="n", padx=(0, 12))
+        ic.create_image(13, 13, image=_circle_image(26, color))
+        ic.create_text(13, 13, text=glyph, fill="#16161A", font=(theme.FONT_FAMILY, 11, "bold"))
+    body = tk.Frame(top, bg=BG)
+    body.pack(side="left", anchor="w")
+    for line in str(message).split("\n"):
+        if "**" not in line:
+            tk.Label(body, text=line, bg=BG, fg=FG, justify="left", anchor="w", wraplength=460, padx=0, bd=0,
+                     font=(theme.FONT_FAMILY, 10)).pack(anchor="w")
+            continue
         row_ = tk.Frame(body, bg=BG)
         row_.pack(anchor="w")
         for k, part in enumerate(line.split("**")):
@@ -1236,22 +1253,32 @@ def ask_choice(parent, title, message, primary, secondary):
                          font=(theme.FONT_FAMILY, 10, "bold" if hl else "normal")).pack(side="left")
     row = tk.Frame(win, bg=BG)
     row.pack(fill="x", padx=20, pady=(0, 16))
+    tk.Frame(win, bg=BG, width=340, height=1).pack()   # 최소 폭
 
     def pick(v):
         res["v"] = v
         win.destroy()
-    flat_button(row, primary, lambda: pick(True), bg=ACCENT, fg="white", hover="#AE96E2",
-                font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=7).pack(side="right")
-    flat_button(row, secondary, lambda: pick(False), bg=BG3, hover="#33333C",
-                font=(theme.FONT_FAMILY, 10), padx=16, pady=7).pack(side="right", padx=(0, 8))
-    win.bind("<Return>", lambda e: pick(True))
+    for i, (label, value) in enumerate(reversed(buttons)):
+        if i == 0:
+            flat_button(row, label, lambda v=value: pick(v), bg=ACCENT, fg="white", hover="#AE96E2",
+                        font=(theme.FONT_FAMILY, 10, "bold"), padx=18, pady=7).pack(side="right")
+        else:
+            flat_button(row, label, lambda v=value: pick(v), bg=BG3, hover="#33333C",
+                        font=(theme.FONT_FAMILY, 10), padx=16, pady=7).pack(side="right", padx=(0, 8))
+    win.bind("<Return>", lambda e: pick(buttons[-1][1]))
     win.bind("<Escape>", lambda e: win.destroy())
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
     win.update_idletasks()
-    win.geometry(f"{max(360, win.winfo_reqwidth())}x{win.winfo_reqheight()}")
+    win.geometry(f"{max(340, win.winfo_reqwidth())}x{win.winfo_reqheight()}")
     present_dialog(win, parent)
     win.focus_force()
     parent.wait_window(win)
     return res["v"]
+
+
+def ask_choice(parent, title, message, primary, secondary):
+    """버튼 두 개 질문. primary(오른쪽 강조) → True, secondary → False, 닫으면 None."""
+    return ask_buttons(parent, title, message, [(secondary, False), (primary, True)])
 
 
 def _capture_client(win):

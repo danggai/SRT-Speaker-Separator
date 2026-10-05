@@ -27,7 +27,7 @@ def correction_dialog_applies_selected_fix_with_undo(app):
     pump(0.3)
     eq(app.subtitles[4]["text"], "루파가 먼저 갔어요", "조사까지 맞춰 고침")
     eq([s["text"] for s in app.subtitles[:7] if "루팍" in s["text"]], [], "다른 줄은 그대로")
-    expect(any("1개 자막을 고쳤어요" in (m[2] or "") for m in ctx.msgs), "완료 안내")
+    expect(any("1줄을 고쳤어요" in (m[2] or "") for m in ctx.msgs), "완료 안내")
     app._undo()
     eq(app.subtitles[4]["text"], "루팍이 먼저 갔어요", "실행 취소")
 
@@ -57,3 +57,33 @@ def correction_audio_check_uses_ai_job_and_hides_wrong(app):
     finally:
         ai_runtime.ai_python = orig
         del app._run_ai_job
+
+
+@test
+def app_dialogs_return_values_per_button_and_escape(app):
+    import importlib
+    import srt_editor.dialogs as D
+    saved = {k: getattr(D, k) for k in ("showinfo", "askyesno", "askyesnocancel")}
+    real = importlib.reload(D)
+    from harness import flat, toplevels
+
+    def run(fn, click=None, key=None, **kw):
+        def act():
+            win = [w for w in toplevels() if w.title() == "질문"][0]
+            if click:
+                flat(win, click).event_generate("<ButtonRelease-1>", x=2, y=2)
+            else:
+                win.event_generate(key)
+        app.after(300, act)
+        return fn("질문", "내용", parent=app, **kw)
+    try:
+        eq(run(real.askyesnocancel, "저장", yes="저장", no="저장 안 함"), True)
+        eq(run(real.askyesnocancel, "저장 안 함", yes="저장", no="저장 안 함"), False)
+        eq(run(real.askyesnocancel, "취소"), None)
+        eq(run(real.askyesnocancel, key="<Escape>"), None, "Esc는 취소")
+        eq(run(real.askyesno, key="<Return>"), True, "Enter는 강조 버튼")
+        eq(run(real.askyesno, key="<Escape>"), False)
+        eq(run(real.showinfo, "확인"), "ok")
+    finally:
+        for k, v in saved.items():
+            setattr(D, k, v)

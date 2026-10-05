@@ -2,7 +2,7 @@
 import os
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import theme
 from ..config import _load_config, _save_config
@@ -45,10 +45,7 @@ class VideoMixin:
             return
         self._av_asking = True
         try:
-            ok = messagebox.askyesno(
-                "영상 부품 받기",
-                "영상의 소리·파형과 화면을 보려면 영상 부품(약 26MB)을 한 번 받아야 해요.\n"
-                "지금 받을까요?", parent=self)
+            ok = messagebox.askyesno("영상 부품", "영상을 보려면 영상 부품(약 26MB)을 받아야 해요.", parent=self, yes="받기", no="취소")
         finally:
             self._av_asking = False
         if ok:

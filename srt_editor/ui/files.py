@@ -5,7 +5,7 @@ import tempfile
 import threading
 from collections import defaultdict
 from tkinter import filedialog
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import srt_io
 from ..config import _load_config, _save_config
@@ -40,11 +40,7 @@ class FileMixin:
     def _close_to_home(self):
         """현재 파일을 닫고 초기 상태(홈)로 돌아감. 미저장 시 확인."""
         if self._unsaved:
-            ans = messagebox.askyesnocancel(
-                "저장 확인",
-                "저장하지 않은 변경사항이 있습니다.\n저장 후 닫을까요?",
-                parent=self
-            )
+            ans = messagebox.askyesnocancel("저장 안 됨", "저장하지 않은 변경이 있어요. 저장하고 닫을까요?", parent=self, yes="저장", no="저장 안 함")
             if ans is None:   # 취소
                 return
             if not ans:       # 아니오 → 변경을 버리므로 백업도 지움
@@ -180,7 +176,7 @@ class FileMixin:
         try:
             self.subtitles = parse_srt(path)
         except Exception as e:
-            messagebox.showerror("오류", f"파일을 읽는 중 오류가 발생했습니다:\n{e}", parent=self)
+            messagebox.showerror("열기 실패", f"파일을 읽지 못했어요.\n{e}", parent=self)
             return
 
         self.filepath  = path
@@ -267,11 +263,7 @@ class FileMixin:
 
     def _load_media(self, path):
         if not self.player._init_pygame():
-            messagebox.showwarning(
-                "미디어 재생 불가",
-                "pygame 초기화에 실패했습니다.\n"
-                "pip install pygame 후 다시 시도하세요.",
-                parent=self)
+            messagebox.showwarning("미디어 재생", "소리 재생 부품을 불러오지 못했어요.", parent=self)
             return
 
         self.player.stop()
@@ -340,13 +332,13 @@ class FileMixin:
             show_toast(self, f"저장했습니다  ·  {os.path.basename(path)}")
             return True
         except Exception as e:
-            messagebox.showerror("저장 오류", str(e), parent=self)
+            messagebox.showerror("저장 실패", str(e), parent=self)
             return False
 
     def save_file(self):
         """저장 — 경로 있으면 바로 덮어쓰기, 없으면 처음 한 번만 경로 묻기."""
         if not self.subtitles:
-            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
+            messagebox.showwarning("저장", "저장할 자막이 없어요.", parent=self)
             return
         if self.save_path:
             # 경로 확정 → 바로 덮어쓰기
@@ -358,7 +350,7 @@ class FileMixin:
     def save_file_as(self):
         """다른 이름으로 저장 — 항상 파일 선택 창 표시."""
         if not self.subtitles:
-            messagebox.showwarning("저장", "저장할 자막이 없습니다.", parent=self)
+            messagebox.showwarning("저장", "저장할 자막이 없어요.", parent=self)
             return
 
         # 기본 디렉터리/파일명 결정
@@ -387,10 +379,7 @@ class FileMixin:
 
         # 파일 존재 시 간단한 확인만
         if os.path.exists(path):
-            if not messagebox.askyesno(
-                    "덮어쓰기 확인",
-                    f"'{os.path.basename(path)}'이(가) 이미 존재합니다.\n덮어쓰시겠습니까?",
-                    parent=self):
+            if not messagebox.askyesno("덮어쓰기", f"'{os.path.basename(path)}' 파일이 이미 있어요. 덮어쓸까요?", parent=self, yes="덮어쓰기", no="취소"):
                 return
 
         self._do_write_srt(path)
@@ -449,7 +438,7 @@ class FileMixin:
     # ── 내보내기 ──────────────────────────────
     def export(self):
         if not self.subtitles:
-            messagebox.showwarning("내보내기", "자막이 없습니다.", parent=self)
+            messagebox.showwarning("내보내기", "내보낼 자막이 없어요.", parent=self)
             return
         src = getattr(self, "save_path", None) or self.filepath
         init_dir = os.path.dirname(os.path.abspath(src)) if src else ""
@@ -499,9 +488,6 @@ class FileMixin:
             saved.append(f"{base}_untagged.srt  ({len(untagged_subs)}개)")
 
         if saved:
-            messagebox.showinfo(
-                "내보내기 완료",
-                "저장된 파일:\n\n" + "\n".join(saved) + f"\n\n📁 {out_dir}",
-                parent=self)
+            messagebox.showinfo("내보내기 완료", f"{len(saved)}개 파일을 저장했어요.\n{out_dir}", parent=self)
         else:
-            messagebox.showwarning("내보내기", "저장할 자막이 없습니다.", parent=self)
+            messagebox.showwarning("내보내기", "내보낼 자막이 없어요.", parent=self)

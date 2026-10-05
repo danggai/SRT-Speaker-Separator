@@ -2,7 +2,7 @@
 import json
 import re
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import srt_io, theme
 from ..config import _load_config, _save_config
@@ -103,8 +103,7 @@ class SettingsMixin:
                  font=(theme.FONT_FAMILY, 15, "bold")).pack(side="left")
         if section:
             def _reset():
-                if not messagebox.askyesno("기본값", f"{title} 설정을 기본값으로 되돌릴까요?",
-                                           parent=parent.winfo_toplevel()):
+                if not messagebox.askyesno("기본값", f"{title} 설정을 기본값으로 되돌릴까요?", parent=parent.winfo_toplevel(), yes="되돌리기", no="취소"):
                     return
                 self._reset_settings_section(section)
                 rebuild = getattr(parent, "_rebuild", None)
@@ -711,9 +710,7 @@ class SettingsMixin:
             size_lbl.configure(text=f"{n}개  ·  {self._backup_size() / 1024:.1f} KB" if n else "없음")
 
         def _delete():
-            if self._backup_files() and messagebox.askyesno(
-                    "백업 삭제", "백업 파일을 모두 지울까요?",
-                    parent=parent.winfo_toplevel()):
+            if self._backup_files() and messagebox.askyesno("백업 삭제", "백업 파일을 모두 지울까요?", parent=parent.winfo_toplevel(), yes="삭제", no="취소"):
                 self._delete_all_backups()
             _refresh_size()
         flat_button(right, "백업 삭제", _delete, bg="#5A2A2E", fg="#FFD8D8", hover="#6E3438",
@@ -881,17 +878,13 @@ class SettingsMixin:
                                        parent=parent.winfo_toplevel())
                 return
             names = "\n".join(f"  • {pathlib.Path(str(p)).name}" for _, p in targets)
-            if not messagebox.askyesno("모델 삭제",
-                    f"선택한 {len(targets)}개 모델을 삭제합니다.\n\n{names}\n\n계속하시겠습니까?",
-                    parent=parent.winfo_toplevel()):
+            if not messagebox.askyesno("모델 삭제", f"모델 {len(targets)}개를 지울까요?\n\n{names}", parent=parent.winfo_toplevel(), yes="삭제", no="취소"):
                 return
             _remove(targets)
 
         def _delete_all():
             targets = [(kind, path) for kind, path, _, _ in _scan_models()]
-            if not targets or not messagebox.askyesno(
-                    "모델 전체 삭제", f"모델 {len(targets)}개를 모두 지울까요?",
-                    parent=parent.winfo_toplevel()):
+            if not targets or not messagebox.askyesno("모델 전체 삭제", f"모델 {len(targets)}개를 모두 지울까요?", parent=parent.winfo_toplevel(), yes="삭제", no="취소"):
                 return
             _remove(targets)
 

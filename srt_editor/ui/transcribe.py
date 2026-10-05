@@ -1,7 +1,7 @@
 """자막 자동 생성(음성 인식)과 고유명사 사전."""
 import os
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import theme
 from ..config import _add_recent_token, _load_config, _save_config
@@ -145,8 +145,7 @@ class TranscribeMixin:
         def _start():
             hf_tok = hf_tok_var.get().strip()
             if mode_var.get() == "diarize" and not hf_tok:
-                messagebox.showwarning("토큰 필요",
-                    "화자 분리에는 HuggingFace 토큰이 필요합니다.", parent=win)
+                messagebox.showwarning("자막 생성", "HuggingFace 토큰을 입력해 주세요.", parent=win)
                 return
             _cfg = _load_config()
             if hf_tok:
@@ -666,7 +665,7 @@ class TranscribeMixin:
         def _delete_all(*_):
             if not self._proper_nouns:
                 return
-            if not messagebox.askyesno("전부 삭제", "등록된 고유명사를 모두 삭제할까요?", parent=win):
+            if not messagebox.askyesno("고유명사 삭제", "등록된 고유명사를 모두 지울까요?", parent=win, yes="삭제", no="취소"):
                 return
             self._proper_nouns.clear()
             self._save_proper_nouns()

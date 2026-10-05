@@ -3,7 +3,7 @@ import hashlib
 import os
 import pathlib
 import time
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from ..config import _load_config, _save_config
 
@@ -107,10 +107,7 @@ class OptionsMixin:
         latest = files[0]
         when = time.strftime("%m월 %d일 %H:%M", time.localtime(latest.stat().st_mtime))
         name = latest.stem.split("__")[0]
-        if not messagebox.askyesno(
-                "작업 복구",
-                f"저장하지 않고 끝난 작업이 있어요.\n\n{name}  ({when})\n\n복구할까요?",
-                parent=self):
+        if not messagebox.askyesno("작업 복구", f"저장하지 않고 끝난 작업이 있어요.\n{name} ({when})", parent=self, yes="복구", no="안 함"):
             return
         from ..srt_io import read_srt_meta
         original = read_srt_meta(str(latest)).get("backup_of", "")

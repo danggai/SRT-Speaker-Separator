@@ -1,7 +1,7 @@
 """AI 부품(whisperx·torch) 설치 창과 설정 카드, AI 작업 실행 도우미."""
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import ai_runtime, theme
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT
@@ -90,7 +90,7 @@ class AISetupMixin:
 
         def _cancel():
             if state["running"]:
-                if messagebox.askyesno("설치 중단", "설치를 중단할까요?", parent=win):
+                if messagebox.askyesno("설치 중단", "설치를 중단할까요?", parent=win, yes="중단", no="계속"):
                     state["cancel"] = True
             else:
                 win.destroy()
@@ -175,8 +175,7 @@ class AISetupMixin:
                             bg=ACCENT, fg="white", hover="#AE96E2", padx=14, pady=6).pack(side="left")
 
         def _remove():
-            if messagebox.askyesno("AI 부품 삭제", "AI 부품을 지울까요?",
-                                   parent=parent.winfo_toplevel()):
+            if messagebox.askyesno("AI 부품 삭제", "AI 부품을 지울까요?", parent=parent.winfo_toplevel(), yes="삭제", no="취소"):
                 ai_runtime.uninstall()
                 _refresh()
         _refresh()

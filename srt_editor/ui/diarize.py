@@ -1,7 +1,7 @@
 """화자 분석(화자 분리 후 기존 자막에 화자 매핑)과 관련 설정."""
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from .. import dialogs as messagebox
 
 from .. import ai_runtime, line_speakers, theme
 from ..config import _add_recent_token, _load_config, _save_config
@@ -193,7 +193,7 @@ class DiarizeMixin:
     def _open_diarize_dialog(self):
         """툴바 버튼 → 화자 자동 분석 창."""
         if not self.media_path:
-            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 불러오세요.", parent=self)
+            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 열어 주세요.", parent=self)
             return
         win = tk.Toplevel(self)
         win.withdraw()
@@ -283,19 +283,16 @@ class DiarizeMixin:
     def _run_diarize_whisperx(self):
         """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
         if not self.media_path:
-            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 불러오세요.", parent=self)
+            messagebox.showwarning("화자 분석", "미디어 파일을 먼저 열어 주세요.", parent=self)
             return
         if not self.subtitles:
-            messagebox.showwarning("화자 분석", "SRT 자막을 먼저 불러오세요.", parent=self)
+            messagebox.showwarning("화자 분석", "자막을 먼저 열어 주세요.", parent=self)
             return
 
         token   = getattr(self, "_hf_token_var", None)
         hf_tok  = token.get().strip() if token else ""
         if not hf_tok:
-            messagebox.showwarning("화자 분석",
-                "HuggingFace 토큰을 입력하세요.\n"
-                "https://huggingface.co/settings/tokens 에서 발급받을 수 있습니다.",
-                parent=self)
+            messagebox.showwarning("화자 분석", "HuggingFace 토큰을 입력해 주세요.", parent=self)
             return
 
         if not ai_runtime.ai_python():
