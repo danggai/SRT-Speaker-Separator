@@ -72,7 +72,7 @@ def has_nvidia_gpu():
     except (OSError, subprocess.SubprocessError):
         return False
     import re
-    m = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out)
+    m = re.search(r"CUDA (?:UMD )?Version:\s*(\d+)\.(\d+)", out)   # 최신 드라이버는 "CUDA UMD Version"
     return bool(m) and int(m.group(1)) >= 12
 
 

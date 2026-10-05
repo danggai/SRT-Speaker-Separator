@@ -87,3 +87,20 @@ def app_dialogs_return_values_per_button_and_escape(app):
     finally:
         for k, v in saved.items():
             setattr(D, k, v)
+
+
+@test
+def recent_token_menu_stays_open_in_modal_dialog(app):
+    from srt_editor.widgets import PopupMenu
+    from harness import flat
+    load_sample(app, with_wav=True)
+    app._recent_tokens = ["hf_aaaaaaaaaaaaaaaa1111", "hf_bbbbbbbbbbbbbbbb2222"]
+    app._open_diarize_dialog()
+    pump(0.5)
+    win = [w for w in toplevels() if w.title() == "화자 자동 분석"][0]
+    expect(win.grab_current() is not None, "분석 창은 모달")
+    press(flat(win, "최근 사용"))
+    pump(0.6)
+    m = PopupMenu._active
+    expect(m is not None and m._win is not None and m._win.winfo_exists(), "메뉴가 바로 닫히면 안 돼요")
+    m._destroy()

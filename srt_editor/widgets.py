@@ -469,7 +469,14 @@ class PopupMenu:
             if prev is not None and prev is not self:
                 prev._destroy()
             PopupMenu._active = self
-        win = tk.Toplevel(self._root)
+        owner = self._root
+        try:   # 모달 창이 입력을 잡고 있으면 그 창 소속으로 띄워야 포커스를 받음
+            grab = self._root.grab_current()
+            if grab is not None:
+                owner = grab.winfo_toplevel()
+        except tk.TclError:
+            pass
+        win = tk.Toplevel(owner)
         win.attributes("-alpha", 0.0)   # 제자리로 옮기기 전까지 투명
         win.overrideredirect(True)
         win.attributes("-topmost", True)
