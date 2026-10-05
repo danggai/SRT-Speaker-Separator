@@ -1,4 +1,5 @@
 """화자 분석(화자 분리 후 기존 자막에 화자 매핑)과 관련 설정."""
+import math
 import threading
 import tkinter as tk
 from .. import dialogs as messagebox
@@ -7,9 +8,15 @@ from .. import ai_runtime, line_speakers, theme
 from ..config import _add_recent_token, _load_config, _save_config
 from ..speech import _apply_diarize_sensitivity as _apply_diarize_sensitivity_impl
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
-from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO
+from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, FONT_MONO, ON_BG
 from ..widgets import (DimOverlay, NumberStepper, PopupMenu, Segmented, ToggleSwitch, _gradient_bar_rows,
-                       _watch, ask_choice, flat_button, present_dialog)
+                       _mix, _watch, ask_choice, flat_button, present_dialog)
+
+GLOW_MIN_CHECK = 10   # 확인 필요 줄이 이만큼 이상이고
+GLOW_MIN_FIXED = 3    # 그중 이만큼 고쳤으면 '다시 분석' 점등
+GLOW_DIM, GLOW_BRIGHT = ON_BG, "#4A3D78"
+GLOW_FRAMES, GLOW_STEP_MS = 20, 110   # 약 2.2초 주기
+CHECK_CUT_DEFAULT = 0.3   # 확신도를 모를 때(다시 연 파일) ? 유지 기준
 
 
 class DiarizeMixin:
@@ -190,6 +197,60 @@ class DiarizeMixin:
             flat_button(btn_row, "닫기", on_close, bg=BG3, hover="#33333C",
                         font=(theme.FONT_FAMILY, 10), padx=18, pady=8).pack(side="right", padx=(0, 8))
 
+    def _has_auto_lines(self):
+        return any(s.get("_auto") for s in self.subtitles)
+
+    def _on_diarize_button(self):
+        """분석한 적 있으면 고친 줄을 기준으로 바로 다시 분석, 아니면 분석 창."""
+        seeds = line_speakers.seed_speakers(
+            ["" if s.get("_auto") else s.get("speaker", "") for s in self.subtitles])
+        has_check = any(s.get("_check") for s in self.subtitles)
+        if not (seeds and has_check and self.media_path and getattr(self, "_hf_token", "")):
+            self._open_diarize_dialog()   # 기준 줄이 모자라면 군집이 화자를 새로 만들므로 창에서 고르게
+            return
+        var = getattr(self, "_hf_token_var", None)
+        try:
+            if var is None or not var.get().strip():
+                self._hf_token_var = tk.StringVar(self, value=self._hf_token)
+        except tk.TclError:
+            self._hf_token_var = tk.StringVar(self, value=self._hf_token)
+        self._diarize_host = None
+        self._run_diarize_whisperx(only_check=True)
+
+    def _update_diarize_button(self):
+        btn = getattr(self, "_tb_btns", {}).get("화자 분석")
+        if btn is None:
+            return
+        again = any(s.get("_check") for s in self.subtitles)
+        if again != getattr(self, "_diarize_btn_again", False):
+            self._diarize_btn_again = again
+            if again:
+                btn.set_label("?", "? 줄만 분석", "확인 필요(?) 줄만 다시 분석\n나머지 줄은 그대로 · 우클릭: 분석 설정",
+                              icon_fg="#E8C547")
+            else:
+                btn.set_label("🎙", "화자 분석", "화자 자동 분석")
+        # 확인 필요 줄이 많고 그중 몇 줄을 고쳤으면 다시 분석하라고 은은하게 점등
+        was = [s for s in self.subtitles if s.get("_was_check")]
+        fixed = sum(1 for s in was if not s.get("_auto"))   # 직접 고친 ? 줄
+        glow = again and len(was) >= GLOW_MIN_CHECK and fixed >= GLOW_MIN_FIXED
+        if glow != getattr(self, "_diarize_glow", False):
+            self._diarize_glow = glow
+            if glow:
+                self._diarize_pulse(0)
+            else:
+                btn.set_glow(None)
+
+    def _diarize_pulse(self, step):
+        btn = self._tb_btns.get("화자 분석")
+        if not getattr(self, "_diarize_glow", False) or btn is None:
+            return
+        t = 0.5 - 0.5 * math.cos(2 * math.pi * step / GLOW_FRAMES)
+        try:
+            btn.set_glow(_mix(GLOW_DIM, GLOW_BRIGHT, round(t * 8) / 8))   # 9단계로 묶어 둥근 배경 이미지 재사용
+            self._diarize_pulse_after = self.after(GLOW_STEP_MS, lambda: self._diarize_pulse(step + 1))
+        except tk.TclError:
+            pass
+
     def _open_diarize_dialog(self):
         """툴바 버튼 → 화자 자동 분석 창."""
         if not self.media_path:
@@ -280,8 +341,9 @@ class DiarizeMixin:
         """화자 분리 민감도를 파이프라인에 반영 (speech._apply_diarize_sensitivity)."""
         _apply_diarize_sensitivity_impl(diarize_model, sensitivity)
 
-    def _run_diarize_whisperx(self):
-        """WhisperX로 화자 분리 실행 (백그라운드 스레드)."""
+    def _run_diarize_whisperx(self, only_check=False):
+        """WhisperX로 화자 분리 실행 (백그라운드 스레드). only_check면 '확인 필요' 줄만 다시 정함."""
+        _only = {i for i, s in enumerate(self.subtitles) if s.get("_check")} if only_check else None
         if not self.media_path:
             messagebox.showwarning("화자 분석", "미디어 파일을 먼저 열어 주세요.", parent=self)
             return
@@ -576,7 +638,7 @@ class DiarizeMixin:
                     except Exception:
                         pass
                     if res.get("mode") == "seeded":
-                        self._apply_line_speakers(res["names"], True, res["conf"])
+                        self._apply_line_speakers(res["names"], True, res["conf"], only=_only)
                     else:
                         self._apply_line_speakers(res["labels"], False, res["conf"])
                 self.after(0, _apply)
@@ -604,16 +666,42 @@ class DiarizeMixin:
                                          [bool(s.get("_auto")) for s in self.subtitles])
         for sub, m in zip(self.subtitles, mask):
             if m:
-                sub["_check"] = True
+                sub["_check"] = sub["_was_check"] = True
             else:
                 sub.pop("_check", None)
+                sub.pop("_was_check", None)
         self._update_check_count()
 
-    def _apply_line_speakers(self, result, seeded, conf=None):
+    def _recheck_lines(self, result, conf, only):
+        """'? 재분석': 확인 필요 줄만 새 결과로 바꾸고, 여전히 애매한 줄만 ? 유지."""
+        old = [self.subtitles[i]["_conf"] for i in only if "_conf" in self.subtitles[i]]
+        cut = max(old) if old else CHECK_CUT_DEFAULT   # 기존 ? 줄 중 가장 높던 확신도 이하면 그대로 ?
+        changed = 0
+        for i in only:
+            sub = self.subtitles[i]
+            if not sub.get("_check") or not result[i]:   # 그 사이 직접 고친 줄은 건드리지 않음
+                continue
+            changed += sub.get("speaker") != result[i]
+            sub["speaker"] = result[i]
+            sub["_conf"] = float(conf[i])
+            if conf[i] > cut:
+                sub.pop("_check", None)
+        for sub in self.subtitles:   # 이번에 반영한 고친 줄·풀린 줄은 다음 점등 계산에서 뺌
+            if not sub.get("_check"):
+                sub.pop("_was_check", None)
+        left = sum(1 for s in self.subtitles if s.get("_check"))
+        self._update_check_count()
+        return f"? {len(only)}줄 중 {changed}줄의 화자를 바꿨어요." + (f"\n아직 애매한 줄 {left}줄" if left else "")
+
+    def _apply_line_speakers(self, result, seeded, conf=None, only=None):
         """줄 단위 화자 구분 결과 적용. seeded면 이름 목록(직접 지정한 줄 외 모두 채움), 아니면 군집 번호(새 화자 추가)."""
         conf = conf if conf is not None else [1.0] * len(self.subtitles)
         self._push_undo()
         done = []
+        if seeded and only is not None:
+            msg = self._recheck_lines(result, conf, only)
+            self._after_line_speakers(msg)
+            return
         if seeded:
             for i, (sub, name) in enumerate(zip(self.subtitles, result)):
                 if name and (not sub.get("speaker") or sub.get("_auto")):
@@ -638,6 +726,9 @@ class DiarizeMixin:
         msg = head
         if n_check:
             msg += f"\n확인 필요 {n_check}줄 (번호 앞 ?)"
+        self._after_line_speakers(msg)
+
+    def _after_line_speakers(self, msg):
         self._unsaved = True
         self._auto_resize_speaker_col()
         self._fill_slots(self._vscroll_top)

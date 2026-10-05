@@ -206,6 +206,9 @@ def reset_app():
             w.destroy()
     pump(0.05)
     write_config({})
+    for name in [k for k, v in app.__dict__.items()   # 앞 테스트가 갈아 끼운 메서드 되돌림
+                 if callable(v) and callable(getattr(type(app), k, None))]:
+        del app.__dict__[name]
     app.__dict__["_opt_cache"] = {}
     app._global_speaker_colors = {}
     app._unsaved = False

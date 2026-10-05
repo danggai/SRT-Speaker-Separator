@@ -409,6 +409,7 @@ class FileMixin:
                 lbl.pack(side="right", padx=(0, 12), pady=8, after=self.lbl_count)
         elif lbl.winfo_ismapped():
             lbl.pack_forget()
+        self._update_diarize_button()
 
     def _goto_next_check(self):
         self._goto_next_line(lambda s: s.get("_check"))

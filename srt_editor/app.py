@@ -362,11 +362,13 @@ class SRTEditor(
             cv.create_rectangle(0, 0, 0, 0, fill=_BADGE_BG, outline="", state="hidden",
                                 tags="hintbg")
             cv.create_text(0, 0, text="", fill=_BADGE_FG, anchor="ne", font=_hfont, tags="hint")
-            state = {"on": False, "lit": False, "hover": False}
+            state = {"on": False, "lit": False, "hover": False, "glow": None}
 
             def _paint():
                 on, hv = state["on"], state["hover"]
-                if on:
+                if state["glow"] and not hv:   # 은은한 점등 (배경색을 바꿔 가며 깜빡임)
+                    fill, outline, lfg = state["glow"], ON_BORDER, ON_FG
+                elif on:
                     fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), ON_BORDER, ON_FG
                 elif state["lit"]:   # 점등 (예: 저장할 변경이 있을 때)
                     fill, outline, lfg = (ON_BG_HOVER if hv else ON_BG), None, ON_FG
@@ -406,16 +408,33 @@ class SRTEditor(
                 state["lit"] = lit
                 _paint()
 
+            def _set_glow(fill):
+                if fill != state["glow"]:
+                    state["glow"] = fill
+                    _paint()
+
+            def _set_label(new_icon, new_label, new_tip, icon_fg=None):
+                nonlocal w
+                w = max(_ifont.measure(new_icon) + 24, _lfont.measure(new_label) + 16)
+                cv.configure(width=w)
+                cv.itemconfigure("icon", text=new_icon, fill=icon_fg or (fg_hover if bg == TB_BG else fg))
+                cv.itemconfigure("label", text=new_label)
+                tt._text = new_tip
+                _layout()
+                _paint()
+
             cv.relayout = _layout
             cv.set_on = _set_on
             cv.set_lit = _set_lit
+            cv.set_label = _set_label
+            cv.set_glow = _set_glow
             _layout()
             _paint()
             run = _defocus(cmd)
             cv.bind("<Enter>", lambda e: (state.update(hover=True), _paint()))
             cv.bind("<Leave>", lambda e: (state.update(hover=False), _paint()))
             cv.bind("<Button-1>", lambda e: run())
-            Tooltip(cv, tip, delay=500)
+            tt = Tooltip(cv, tip, delay=500)
             self._tb_btns[label] = cv
             self._tb_icons[label] = cv
             return cv
@@ -434,7 +453,8 @@ class SRTEditor(
         _tool("✂", "잘라내기", lambda: self._on_cut(None), "선택한 자막 잘라내기  [Ctrl+X]")
         _tool("📋", "붙여넣기", lambda: self._on_paste(None), "붙여넣기  [Ctrl+V]")
         _sep()
-        _tool("🎙", "화자 분석", self._open_diarize_dialog, "화자 자동 분석")
+        _tool("🎙", "화자 분석", self._on_diarize_button, "화자 자동 분석")
+        self._tb_btns["화자 분석"].bind("<Button-3>", lambda e: self._open_diarize_dialog())
         _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
         _tool("🎬", "영상", self._toggle_video, "영상 창 열기/닫기  [V]")
         _sep()

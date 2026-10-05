@@ -1,7 +1,7 @@
-"""줄 단위 화자 구분: 임베딩 군집·선지정 분류와 결과 적용."""
+﻿"""줄 단위 화자 구분: 임베딩 군집·선지정 분류와 결과 적용."""
 import numpy as np
 
-from harness import eq, expect, load_sample, test
+from harness import ctx, eq, expect, load_sample, test, wait_until
 
 
 def _fake(n_per=30, k=4, dim=32, noise=0.35, seed=0):
@@ -196,6 +196,75 @@ def rerun_reassigns_auto_lines_but_keeps_user_lines(app):
     for i, s in enumerate(app.subtitles):
         if i not in user:
             eq(s["speaker"], "준호", "자동으로 정한 줄은 다시 분석 결과로 바뀜")
+
+
+def _analyzed_with_checks(app, n=120):
+    load_sample(app, n=n, tagged_every=1, with_wav=True)
+    for i, s in enumerate(app.subtitles):
+        if i % 4 > 1:
+            s["speaker"] = ""
+    conf = [0.95 - (i % 9) * 0.1 for i in range(n)]
+    app._apply_line_speakers(["민지"] * n, True, conf)
+    return [i for i, s in enumerate(app.subtitles) if s.get("_check")]
+
+
+@test
+def diarize_button_turns_into_check_only_and_glows_after_fixes(app):
+    from harness import pump
+    btn = app._tb_btns["화자 분석"]
+    eq(btn.itemcget("label", "text"), "화자 분석")
+    checks = _analyzed_with_checks(app)
+    pump(0.2)
+    expect(len(checks) >= 10, f"? 줄 {len(checks)}")
+    eq(btn.itemcget("label", "text"), "? 줄만 분석", "? 줄이 있으면 버튼이 바뀜")
+    expect(not getattr(app, "_diarize_glow", False), "고친 줄이 없으면 점등 안 함")
+    for i in checks[:3]:
+        app._set_line_speaker(i, "준호")
+    app._update_count()
+    expect(app._diarize_glow, "? 줄을 3개 고치면 점등")
+    for i in checks[3:]:
+        app._set_line_speaker(i, "준호")
+    app._update_count()
+    eq(btn.itemcget("label", "text"), "화자 분석", "? 줄이 없어지면 원래대로")
+    expect(not app._diarize_glow)
+
+
+@test
+def check_only_rerun_changes_only_check_lines_and_keeps_unsure_ones(app):
+    import srt_editor.ui.diarize as dz
+    checks = _analyzed_with_checks(app)
+    for i in checks[:3]:
+        app._set_line_speaker(i, "준호")
+    rest = checks[3:]
+    before = [s["speaker"] for s in app.subtitles]
+    jobs = []
+
+    def fake_job(job, on_event=None, cancelled=None):
+        jobs.append(job)
+        conf = [0.99] * len(app.subtitles)
+        conf[rest[0]] = 0.0   # 여전히 애매한 줄
+        return {"mode": "seeded", "names": ["하늘"] * len(app.subtitles), "conf": conf}
+    app._run_ai_job = fake_job
+    app._hf_token = "hf_test"
+    orig = dz.ai_runtime.ai_python
+    dz.ai_runtime.ai_python = lambda: "py"
+    ctx.msgs.clear()
+    try:
+        app._on_diarize_button()
+        wait_until(lambda: any(k == "showinfo" for k, *_ in ctx.msgs), 5)
+    finally:
+        dz.ai_runtime.ai_python = orig
+        del app._run_ai_job
+    expect(jobs, f"AI 작업이 실행돼야 해요: {ctx.msgs}")
+    expect(all(str(i) in jobs[0]["seeds"] for i in checks[:3]), "고친 ? 줄도 기준으로 전달")
+    for i, s in enumerate(app.subtitles):
+        if i in rest:
+            eq(s["speaker"], "하늘", "? 줄은 새 결과로")
+        else:
+            eq(s["speaker"], before[i], "? 아닌 줄은 그대로")
+    eq([i for i, s in enumerate(app.subtitles) if s.get("_check")], [rest[0]], "여전히 애매한 줄만 ? 유지")
+    app._undo()
+    eq([s["speaker"] for s in app.subtitles], before, "실행 취소")
 
 
 @test
