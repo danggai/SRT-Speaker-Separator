@@ -8,14 +8,27 @@ from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
-from ..widgets import (DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
+from ..widgets import (DarkScrollbar, DimOverlay, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
                        _watch, flat_button, present_dialog)
 
 
 class TranscribeMixin:
     """자막 자동 생성(음성 인식)과 고유명사 사전."""
 
-    def _ask_auto_transcribe(self, media_path):
+    def _open_auto_transcribe(self):
+        """툴바 '자동 자막': 열린 미디어로 자막을 새로 만든다 (있던 자막은 바뀜)."""
+        if not self.media_path:
+            messagebox.showwarning("자동 자막", "미디어 파일을 먼저 열어 주세요.", parent=self)
+            return
+        if self.subtitles:
+            msg = "지금 자막을 새로 만든 자막으로 바꿔요."
+            if self._unsaved:
+                msg += "\n**저장 안 한 변경은 사라져요.**"
+            if not messagebox.askyesno("자동 자막", msg, parent=self, yes="새로 만들기", no="취소"):
+                return
+        self._ask_auto_transcribe(self.media_path, replacing=bool(self.subtitles))
+
+    def _ask_auto_transcribe(self, media_path, replacing=False):
         """자막 자동 생성 여부 및 방식 선택 창 (설정창과 같은 카드 스타일)."""
         win = tk.Toplevel(self)
         win.withdraw()
@@ -26,8 +39,8 @@ class TranscribeMixin:
         win.transient(self)
         outer, inner, footer = self._make_scrollable(win, with_footer=True)
         outer.pack(fill="both", expand=True)
-        self._settings_title(inner, "자막 자동 생성",
-                             f"{os.path.basename(media_path)}\n같은 이름의 SRT 파일이 없어요. 자동으로 만들까요?")
+        self._settings_title(inner, "자막 자동 생성", f"{os.path.basename(media_path)}\n" + (
+            "음성을 인식해 자막을 새로 만들어요." if replacing else "같은 이름의 SRT 파일이 없어요. 자동으로 만들까요?"))
 
         mode_var = tk.StringVar(value="text")
         card = self._settings_card(inner, "생성 방식")
@@ -168,41 +181,32 @@ class TranscribeMixin:
         """Whisper로 자막 자동 생성 후 임시 로드 (파일 저장 안 함)."""
         import threading
 
-        # ── 진행 창 ──────────────────────────────────────────────
-        prog = tk.Toplevel(self)
-        _apply_dark_titlebar(prog)
-        prog.title("자막 자동 생성 중...")
-        prog.configure(bg=BG)
-        prog.geometry("440x240")
-        prog.resizable(False, False)
-        prog.transient(self)
-        prog.grab_set()
+        import time as _time
 
-        tk.Label(prog, text="🎙  자막 자동 생성 중...",
-                 bg=BG, fg=FG, font=(theme.FONT_FAMILY, 11, "bold")).pack(pady=(18, 2))
-        _status = tk.Label(prog, text="초기화 중...",
-                           bg=BG, fg=FG, font=(theme.FONT_FAMILY, 9, "bold"))
+        # ── 진행 카드: 메인 창을 흐리게 덮고 가운데에 표시 ─────────
+        prog = DimOverlay(self)
+        card = prog.card
+        tk.Label(card, text="자막 자동 생성 중", bg=BG2, fg=FG,
+                 font=(theme.FONT_FAMILY, 11, "bold")).pack(padx=40, pady=(18, 2))
+        _status = tk.Label(card, text="AI 부품 시작 중...", bg=BG2, fg=FG, font=(theme.FONT_FAMILY, 9, "bold"))
         _status.pack()
-        _sub = tk.Label(prog, text="", bg=BG, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
+        _sub = tk.Label(card, text="", bg=BG2, fg=FG_DIM, font=(theme.FONT_FAMILY, 8))
         _sub.pack(pady=(1, 0))
 
-        BAR_W, BAR_H = 380, 16
-        _bar_cv = tk.Canvas(prog, width=BAR_W, height=BAR_H,
+        BAR_W, BAR_H = 380, 20
+        _bar_cv = tk.Canvas(card, width=BAR_W, height=BAR_H,
                             bg=BG3, highlightthickness=1, highlightbackground=BORDER)
-        _bar_cv.pack(pady=(10, 4))
+        _bar_cv.pack(padx=32, pady=(10, 4))
         _bar_img = tk.PhotoImage(width=BAR_W, height=BAR_H)
         _bar_cv.create_image(0, 0, anchor="nw", image=_bar_img)
         _pct_id = _bar_cv.create_text(BAR_W//2, BAR_H//2, text="0%",
-                                       fill=FG_DIM, font=(theme.FONT_FAMILY, 7, "bold"))
+                                       fill=FG_DIM, font=(theme.FONT_FAMILY, 8, "bold"))
 
-        _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True, "cancelled": False}
+        _pstate = {"target": 0.0, "cur": 0.0, "phase": 0.0, "run": True, "cancelled": False,
+                   "t0": _time.time(), "tick": 0}
 
         def _cancel(*_):
-            """중단 버튼 또는 창 닫기(X) — 음성인식을 취소한다.
-            실행 중인 whisper 연산 자체를 즉시 강제 종료할 수는 없지만
-            (라이브러리가 중간에 끊는 기능을 제공하지 않음), 취소 플래그를
-            세워 결과가 나와도 화면에 반영하지 않고, 진행 창을 바로 닫아
-            사용자가 더 기다리지 않도록 한다."""
+            """중단: AI 작업 프로세스를 끝내고 카드를 닫는다."""
             if _pstate.get("cancelled"):
                 return
             _pstate["cancelled"] = True
@@ -210,13 +214,8 @@ class TranscribeMixin:
             try: prog.destroy()
             except Exception: pass
 
-        prog.protocol("WM_DELETE_WINDOW", _cancel)
-
-        tk.Button(prog, text="중단", bg="#3A2A2A", fg="#E08080",
-                  relief="flat", bd=0, cursor="hand2",
-                  font=(theme.FONT_FAMILY, 9), padx=14, pady=4,
-                  activebackground="#4A3232",
-                  command=_cancel).pack(pady=(8, 4))
+        flat_button(card, "중단", _cancel, bg="#3A2A2A", fg="#E08080", hover="#4A3232",
+                    padx=16, pady=5).pack(pady=(12, 16))
 
         def _draw():
             if not _pstate["run"]: return
@@ -229,6 +228,10 @@ class TranscribeMixin:
                 _pstate["phase"] += 0.18
                 diff = _pstate["target"] - cur
                 _pstate["cur"] += diff*0.07 if abs(diff)>0.05 else diff
+                el = int(_time.time() - _pstate["t0"])
+                dots = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+                _sub.configure(text=f"{dots[_pstate['tick'] // 3 % len(dots)]}  경과 {el // 60}:{el % 60:02d}")
+                _pstate["tick"] += 1
                 prog.after(30, _draw)
             except Exception: pass
         prog.after(30, _draw)

@@ -60,6 +60,38 @@ def period_option_adds_or_strips_whisper_period():
 
 
 @test
+def toolbar_button_asks_before_replacing_and_opens_options(app):
+    from harness import toplevels, pump
+    load_sample(app, n=4, with_wav=True)
+    ctx.answers["askyesno"] = False
+    app._open_auto_transcribe()
+    pump(0.2)
+    eq([m[1] for m in ctx.msgs], ["자동 자막"], "있던 자막을 바꾸기 전에 물어봄")
+    expect(not [w for w in toplevels() if w.title() == "자막 자동 생성"], "취소하면 창 안 뜸")
+    ctx.answers["askyesno"] = True
+    app._open_auto_transcribe()
+    pump(0.3)
+    expect([w for w in toplevels() if w.title() == "자막 자동 생성"], "확인하면 생성 창")
+
+
+@test
+def narrow_window_hides_shortcut_buttons_and_restores_them(app):
+    from harness import pump
+    load_sample(app, n=4)
+    names = lambda: [w.itemcget("label", "text") for w in app._tb_frame.pack_slaves() if hasattr(w, "set_on")]
+    app.geometry("1280x800"); pump(0.5)
+    expect("잘라내기" in names() and "다른 이름으로" in names(), names())
+    app.geometry("900x700"); pump(0.5)
+    expect(app._toolbar_need() <= app._tb_frame.winfo_width(), "좁아도 툴바가 넘치지 않음")
+    expect("잘라내기" not in names() and "설정" in names() and "내보내기" in names(), names())
+    app.geometry("1280x800"); pump(0.5)
+    expect("잘라내기" in names() and "다른 이름으로" in names(), f"넓히면 되살아남: {names()}")
+    order = names()
+    expect(order.index("붙여넣기") < order.index("자동 자막") and order.index("저장") < order.index("다른 이름으로")
+           < order.index("실행 취소"), f"원래 자리로: {order}")
+
+
+@test
 def auto_transcribe_loads_lines_and_removes_temp_file(app):
     import tempfile
     p = load_sample(app, n=4, with_wav=True)

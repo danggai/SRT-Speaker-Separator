@@ -444,19 +444,25 @@ class SRTEditor(
             return cv
 
         def _sep(side="left"):
-            tk.Frame(top, bg="#34343C", width=1).pack(side=side, fill="y", padx=6, pady=12)
+            f = tk.Frame(top, bg="#34343C", width=1)
+            f.pack(side=side, fill="y", padx=6, pady=12)
+            return f
 
         tk.Frame(top, bg=TB_BG, width=6).pack(side="left")
         _tool("📂", "열기", self.open_file, "자막 또는 음성/영상 열기  [Ctrl+O]")
         _tool("💾", "저장", self.save_file, "저장  [Ctrl+S]")
-        _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
+        save_as = _tool("🗂", "다른 이름으로", self.save_file_as, "다른 이름으로 저장  [Ctrl+Shift+S]")
         _sep()
         _tool("↩", "실행 취소", self._undo, "실행 취소  [Ctrl+Z]")
         _tool("↪", "다시 실행", self._redo, "다시 실행  [Ctrl+Y]")
+        sep_cut = _sep()
+        cut = _tool("✂", "잘라내기", lambda: self._on_cut(None), "선택한 자막 잘라내기  [Ctrl+X]")
+        paste = _tool("📋", "붙여넣기", lambda: self._on_paste(None), "붙여넣기  [Ctrl+V]")
+        # 창이 좁으면 단축키가 있는 버튼부터 숨김 (앞 묶음부터)
+        self._tb_collapse = [[sep_cut, cut, paste], [save_as]]
+        self._tb_hidden = []
         _sep()
-        _tool("✂", "잘라내기", lambda: self._on_cut(None), "선택한 자막 잘라내기  [Ctrl+X]")
-        _tool("📋", "붙여넣기", lambda: self._on_paste(None), "붙여넣기  [Ctrl+V]")
-        _sep()
+        _tool("🎤", "자동 자막", self._open_auto_transcribe, "음성을 인식해 자막 새로 만들기")
         _tool("🎙", "화자 분석", self._on_diarize_button, "화자 자동 분석")
         self._tb_btns["화자 분석"].bind("<Button-3>", lambda e: self._open_diarize_dialog())
         _tool("✏", "자막 교정", self._open_correction_dialog, "잘못 인식된 표기 찾아서 고치기")
@@ -484,6 +490,9 @@ class SRTEditor(
         self.lbl_check = tk.Label(top, text="", bg=TB_BG, fg="#E8C547", cursor="hand2",
                                   font=(theme.FONT_FAMILY, 9))
         self.lbl_check.bind("<Button-1>", lambda e: self._review_next_check())
+        self._tb_frame = top
+        self._tb_order = top.pack_slaves()
+        top.bind("<Configure>", lambda e: self._fit_toolbar(), add=True)
 
         # 업데이트 배지 — 처음엔 숨겨둠, 신버전 감지 시 pack으로 표시
         self._update_btn = tk.Button(
@@ -581,6 +590,41 @@ class SRTEditor(
                      "실행 취소": "Ctrl+Z", "다시 실행": "Ctrl+Y",
                      "잘라내기": "Ctrl+X", "붙여넣기": "Ctrl+V", "영상": "V",
                      "내보내기": "Ctrl+E", "설정": "Ctrl+,", "홈으로": "Ctrl+W"}
+
+    def _toolbar_need(self):
+        """툴바에 놓인 것들이 차지하는 폭."""
+        total = 0
+        for w in self._tb_frame.pack_slaves():
+            px = w.pack_info().get("padx", 0)
+            px = sum(map(int, px)) if isinstance(px, tuple) else int(px) * 2
+            total += w.winfo_reqwidth() + px
+        return total
+
+    def _fit_toolbar(self):
+        """창 폭에 맞춰 덜 쓰는 툴바 버튼을 숨기거나 되살린다."""
+        top = getattr(self, "_tb_frame", None)
+        if top is None:
+            return
+        avail = top.winfo_width()
+        if avail <= 1:
+            return
+        while self._toolbar_need() > avail and len(self._tb_hidden) < len(self._tb_collapse):
+            group = self._tb_collapse[len(self._tb_hidden)]
+            self._tb_hidden.append([(w, w.pack_info()) for w in group])
+            for w in group:
+                w.pack_forget()
+        while self._tb_hidden:
+            group = self._tb_hidden[-1]
+            extra = sum(w.winfo_reqwidth() + 14 for w, _ in group)
+            if self._toolbar_need() + extra > avail:
+                break
+            self._tb_hidden.pop()
+            for w, info in group:
+                packed = set(top.pack_slaves())
+                order = self._tb_order[self._tb_order.index(w) + 1:]
+                nxt = next((o for o in order if o in packed), None)
+                info = {k: v for k, v in info.items() if k != "in"}
+                w.pack(**info, **({"before": nxt} if nxt is not None else {}))
 
     def _toggle_key_hints(self):
         on = not getattr(self, "_key_hints_on", False)

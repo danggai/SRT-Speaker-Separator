@@ -302,7 +302,7 @@ def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
 
 
 @test
-def diarize_dialog_closes_when_analysis_finishes(app):
+def diarize_dialog_closes_when_analysis_starts(app):
     import srt_editor.ui.diarize as dz
     from harness import pump, toplevels
     load_sample(app, n=24, tagged_every=1, with_wav=True)
@@ -310,13 +310,22 @@ def diarize_dialog_closes_when_analysis_finishes(app):
     pump(0.3)
     app._hf_token_var.set("hf_test")
     n = len(app.subtitles)
-    app._run_ai_job = lambda job, on_event=None, cancelled=None: \
-        {"mode": "seeded", "names": ["민지"] * n, "conf": [0.9] * n}
+    import threading
+    go = threading.Event()
+
+    def job(job, on_event=None, cancelled=None):
+        go.wait(5)
+        return {"mode": "seeded", "names": ["민지"] * n, "conf": [0.9] * n}
+    app._run_ai_job = job
     orig = dz.ai_runtime.ai_python
     dz.ai_runtime.ai_python = lambda: "py"
     ctx.msgs.clear()
     try:
         app._run_diarize_whisperx()
+        pump(0.3)
+        expect(not [w for w in toplevels() if w.title() == "화자 자동 분석"], "시작하면 분석 창은 닫힘")
+        expect(app.grab_current() is not None, "메인 창 진행 카드가 입력을 막음")
+        go.set()
         wait_until(lambda: any(k == "showinfo" for k, *_ in ctx.msgs), 5)
     finally:
         dz.ai_runtime.ai_python = orig

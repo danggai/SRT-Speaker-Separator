@@ -95,8 +95,7 @@ class DiarizeMixin:
         """화자 분석 창 내용 (설정창과 같은 카드 스타일). 실행 버튼 행은 footer_parent에 둔다."""
         if footer_parent is None:
             footer_parent = parent
-        self._diarize_host = parent.winfo_toplevel()   # 분석 중 이 창을 흐리게 덮음
-        self._diarize_close = on_close   # 분석이 끝나면 이 창을 닫음
+        self._diarize_close = on_close   # 분석을 시작하면 이 창을 닫고 메인 창에 진행 카드
         self._settings_title(parent, "화자 자동 분석",
                              "화자마다 3~5줄을 먼저 지정하면 더 정확해요.")
 
@@ -215,7 +214,7 @@ class DiarizeMixin:
                 self._hf_token_var = tk.StringVar(self, value=self._hf_token)
         except tk.TclError:
             self._hf_token_var = tk.StringVar(self, value=self._hf_token)
-        self._diarize_host = self._diarize_close = None
+        self._diarize_close = None
         self._run_diarize_whisperx(only_check=True)
 
     def _update_diarize_button(self):
@@ -379,14 +378,18 @@ class DiarizeMixin:
         self._recent_tokens  = _cfg.get("recent_tokens", [])
         _save_config(_cfg)
 
-        # 진행 표시: 분석 창(없으면 메인 창)을 흐리게 덮고 가운데 카드에 표시
+        # 진행 표시: 분석 창은 닫고, 메인 창을 흐리게 덮은 카드(모달)에 표시
         import time as _time
-        host = getattr(self, "_diarize_host", None)
-        try:
-            host = host if host is not None and host.winfo_exists() else self
-        except tk.TclError:
-            host = self
-        prog_win = DimOverlay(host)
+        _num_spk, _exact = self._get_diarize_spk_settings()   # 창을 닫기 전에 읽음
+        _sens = self._get_diarize_sensitivity()
+        close = getattr(self, "_diarize_close", None)
+        self._diarize_close = None
+        if close:
+            try:
+                close()
+            except tk.TclError:
+                pass
+        prog_win = DimOverlay(self)
         card = prog_win.card
 
         tk.Label(card, text="화자 분석 중", bg=BG2, fg=FG,
@@ -589,9 +592,7 @@ class DiarizeMixin:
             ["" if s.get("_auto") else s.get("speaker", "") for s in self.subtitles])
         _line_intervals = [[t_s, t_e] if t_s is not None and t_e is not None else None
                            for t_s, t_e in getattr(self, "_ts_cache", [])]
-        _num_spk, _exact = self._get_diarize_spk_settings()
-        _sens = self._get_diarize_sensitivity()   # Tk 변수는 메인 스레드에서 읽음
-        _gpu =bool((ai_runtime.installed_info() or {}).get("cuda"))
+        _gpu = bool((ai_runtime.installed_info() or {}).get("cuda"))
         _prog_state["stage_estimates"] = {"import": 8.0, "audio": 3.0, "model": 10.0,
                                           "diarize": len(_line_intervals) * (0.03 if _gpu else 0.08), "map": 2.0}
 
@@ -639,13 +640,6 @@ class DiarizeMixin:
                         prog_win.destroy()
                     except Exception:
                         pass
-                    close = getattr(self, "_diarize_close", None)
-                    if close and host is not self:   # 분석 창은 닫고 결과 안내만 남김
-                        try:
-                            if host.winfo_exists():
-                                close()
-                        except tk.TclError:
-                            pass
                     if res.get("mode") == "seeded":
                         self._apply_line_speakers(res["names"], True, res["conf"], only=_only)
                     else:
