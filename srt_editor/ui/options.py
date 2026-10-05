@@ -12,6 +12,7 @@ OPTION_DEFAULTS = {
     "startup_open_last": False,   # 시작할 때 마지막 파일 열기
     "update_check": True,         # 새 버전 알림
     "advance_after_assign": False,  # 숫자 키로 화자 지정 후 다음 줄로
+    "advance_to_check": True,     # ? 줄을 지정하면 다음 ? 줄로
     "seek_step": 5,               # ←/→ 이동 간격 (초)
     "seek_step_shift": 30,        # Shift+←/→ 이동 간격 (초)
     "new_sub_len": 5.0,           # 새 자막 기본 길이 (초)

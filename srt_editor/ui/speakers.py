@@ -542,14 +542,14 @@ class SpeakerMixin:
         sel = getattr(self, "_selected_rows", set())
         cur = getattr(self, "_selected_row_idx", None)
         reviewing = len(sel) <= 1 and cur is not None and cur < len(self.subtitles) \
-            and self.subtitles[cur].get("_check")
+            and self.subtitles[cur].get("_check") and self._opt("advance_to_check")
         if self._assign_speaker_to_selection(val, advance=not reviewing):
-            if reviewing:   # ? 줄을 정했으면 다음 ? 줄로 가서 바로 들려줌
-                self._review_next_check()
+            if reviewing:   # ? 줄을 정했으면 다음 ? 줄로 (재생 중일 때만 이어서 재생)
+                self._review_next_check(play=self.player.is_playing)
             return "break"
 
-    def _review_next_check(self, event=None):
-        """F: 다음 확인 필요(?) 줄로 가서 그 줄만 재생."""
+    def _review_next_check(self, event=None, play=True):
+        """F: 다음 확인 필요(?) 줄로 가서 그 줄만 재생. play=False면 이동만."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         if not any(s.get("_check") for s in self.subtitles):
@@ -559,7 +559,7 @@ class SpeakerMixin:
         self._goto_next_check()
         idx = getattr(self, "_selected_row_idx", None)
         cache = getattr(self, "_ts_cache", [])
-        if self.media_path and idx is not None and idx < len(cache) and cache[idx][0] is not None:
+        if play and self.media_path and idx is not None and idx < len(cache) and cache[idx][0] is not None:
             t_s, t_e = cache[idx]
             self._do_seek(t_s, update_selection=False)
             self._review_stop_at = t_e + 0.15

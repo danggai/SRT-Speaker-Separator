@@ -194,7 +194,7 @@ class SettingsMixin:
 
     _SECTION_OPTS = {
         "general": ("startup_open_last", "update_check"),
-        "edit": ("advance_after_assign", "seek_step", "seek_step_shift", "click_seek",
+        "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "click_seek",
                  "new_sub_len", "lock_timeline"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
@@ -502,6 +502,9 @@ class SettingsMixin:
         _, right = self._settings_row(card, "↓", "지정 후 다음 줄로",
                                       "숫자 키로 지정하면 아래 줄 선택")
         self._opt_toggle(right, "advance_after_assign")
+        _, right = self._settings_row(card, "?", "? 줄 지정 후 다음 ? 줄로",
+                                      "재생 중이면 이어서 재생")
+        self._opt_toggle(right, "advance_to_check")
 
         card = self._settings_card(parent, "재생 · 이동")
         _, right = self._settings_row(card, "↔", "←/→ 이동 간격", None)
