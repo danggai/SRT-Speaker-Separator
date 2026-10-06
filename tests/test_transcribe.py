@@ -69,6 +69,16 @@ def timing_fix_removes_overlap_and_stretches_tiny_lines():
 
 
 @test
+def short_gaps_between_lines_are_filled():
+    T = _tp()
+    lines = T.build_lines([{"start": 0.0, "end": 1.0, "text": "첫 번째 줄이에요"},
+                           {"start": 1.4, "end": 2.0, "text": "두 번째 줄이에요"},
+                           {"start": 4.0, "end": 5.0, "text": "한참 뒤 줄이에요"}])
+    eq([(l["start"], l["end"]) for l in lines], [(0.0, 1.4), (1.4, 2.0), (4.0, 5.0)],
+       "1초 미만 빈틈은 앞 줄을 늘려 메우고, 긴 쉼은 그대로")
+
+
+@test
 def period_option_adds_or_strips_whisper_period():
     T = _tp()
     eq(T.finish_text("안녕하세요.", False), "안녕하세요")

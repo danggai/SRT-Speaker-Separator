@@ -5,6 +5,7 @@ MIN_DUR = 0.3       # 이보다 짧은 줄은 늘림 (초)
 DEFAULT_MAX_CHARS = 20   # 줄당 글자 수 기본값 (직접 만든 자막: 중앙값 10자, 90%가 19자 이하)
 MIN_RATIO = 0.45    # 줄이 이만큼 찼을 때만 문장 경계에서 일찍 끊음
 PAUSE_SPLIT = 0.25   # 단어 사이 쉼이 이 이상이면 글자 수와 상관없이 줄을 나눔 (초)
+FILL_GAP = 1.0      # 줄 사이 빈틈이 이보다 짧으면 앞 줄을 늘려 메움 (초)
 MIN_PIECE_CHARS = 4  # 이보다 짧은 조각은 쉼이 있어도 앞뒤와 붙여 둠
 
 # 한국어 종결어미 (문장·절 경계를 대략 판단)
@@ -186,6 +187,15 @@ def fix_timing(lines, min_dur=MIN_DUR):
     return lines
 
 
+def fill_gaps(lines, max_gap=None):
+    """다음 줄과 사이가 max_gap초보다 짧으면 앞 줄 끝을 다음 줄 시작까지 늘린다 (자막이 깜빡이지 않게)."""
+    max_gap = FILL_GAP if max_gap is None else max_gap
+    for a, b in zip(lines, lines[1:]):
+        if 0 < b["start"] - a["end"] < max_gap:
+            a["end"] = b["start"]
+    return lines
+
+
 def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False):
     """whisperx segments → 자막 줄 목록 [{start, end, text, speaker}]."""
     lines = []
@@ -197,4 +207,4 @@ def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False):
                 l["text"] = finish_text(l["text"], add_period)
                 if l["text"] and not is_hallucination(l["text"]):
                     lines.append(l)
-    return fix_timing(drop_repeats(lines))
+    return fill_gaps(fix_timing(drop_repeats(lines)))
