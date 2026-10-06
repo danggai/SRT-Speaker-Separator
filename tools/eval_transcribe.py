@@ -1,7 +1,7 @@
 """자동 자막 품질 평가: 정답 SRT가 있는 미디어의 몇 구간을 설정별로 인식해 비교한다.
 
 AI 부품 파이썬(whisperx·torch)으로 실행:
-  <AI python> tools/eval_transcribe.py --media 원본.mp3 --ref 정답.srt [--configs accurate,best] [--win 150]
+  <AI python> tools/eval_transcribe.py --media 원본.mp3 --ref 정답.srt [--configs "accurate;best;m=모델"] [--win 150]
 
 지표 (구간 합산):
   CER      글자 오류율 (한글·영문·숫자만 비교)
@@ -34,6 +34,9 @@ CONFIGS = {
     "accurate+hint": ("accurate", {"hotwords": " ".join(PROPER), "initial_prompt": ", ".join(PROPER)}, {}),
     "accurate+chunk15": ("accurate", {}, {"chunk_size": 15}),
     "best+chunk15": ("best", {}, {"chunk_size": 15}),
+    "best+beam10": ("best", {"beam_size": 10}, {}),
+    "best+patience2": ("best", {"patience": 2.0}, {}),
+    "best+prev": ("best", {"condition_on_previous_text": True}, {}),
 }
 
 
@@ -75,10 +78,15 @@ def main():
     ref_all = parse_srt(a.ref)
     starts = [float(s) for s in a.starts.split(",") if float(s) + 10 < len(audio) / SR]   # 음성 밖 구간은 뺌
     results = {}
-    for name in a.configs.split(","):
-        mode, extra_asr, extra_load = CONFIGS[name]
+    for name in a.configs.split(";"):
+        if name.startswith("m="):   # 다른 모델: m=<허깅페이스 이름 또는 변환한 폴더>, 설정은 '최고 정확'과 같게
+            mode, extra_asr, extra_load = "best", {}, {}
+            wmodel = name[2:]
+            _, beam, onset, offset = speech._ASR_MODES[mode]
+        else:
+            mode, extra_asr, extra_load = CONFIGS[name]
+            wmodel, beam, onset, offset = speech._ASR_MODES[mode]
         t0 = time.time()
-        wmodel, beam, onset, offset = speech._ASR_MODES[mode]
         model = whisperx.load_model(wmodel, device, compute_type="float16" if device == "cuda" else "int8",
                                     language="ko", asr_options={"beam_size": beam, **extra_asr},
                                     vad_options={"vad_onset": onset, "vad_offset": offset})
@@ -111,7 +119,8 @@ def main():
             row[k] = {"CER": round(100 * d / max(1, c), 2), "헛줄": sum(p["ghost"] for p in parts),
                       "빠진줄": sum(p["miss"] for p in parts), "줄": sum(p["lines"] for p in parts),
                       "정답줄": sum(p["ref_lines"] for p in parts),
-                      "시작차": round(diffs[len(diffs) // 2], 2) if diffs else None}
+                      "시작차": round(diffs[len(diffs) // 2], 2) if diffs else None,
+                      "구간별": [round(100 * p["dist"] / max(1, p["chars"]), 1) for p in parts]}
         row["초"] = round(el)
         results[name] = row
         print(name, json.dumps(row, ensure_ascii=False))
