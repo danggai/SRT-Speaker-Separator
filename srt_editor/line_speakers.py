@@ -6,6 +6,7 @@ MIN_CROP_SEC = 1.0    # 이보다 짧은 줄은 가운데 기준으로 늘려서
 SEED_MIN_LINES = 3    # 기준 화자로 쓰려면 이 줄 수 이상 지정돼 있어야 함
 SEED_MIN_SPEAKERS = 2
 UNSURE_FRAC = 0.2     # 자동 지정 줄 중 확신도 하위 이 비율을 '확인 필요'로 표시
+CENTER_MIN = 20       # 이 줄 수 이상이면 군집 전에 평균을 뺌 (적으면 평균이 한 화자 쪽으로 치우침)
 
 
 def _norm(z):
@@ -86,6 +87,8 @@ def cluster_lines(x, k, k_max=10):
     z = _norm(x[ok])
     if len(z) == 0:
         return labels, conf
+    if len(z) >= CENTER_MIN:   # 영상 전체 평균을 빼 녹음 환경 공통 성분을 지움 (화자 수를 더 많이 세던 문제가 줄어듦)
+        z = _norm(z - z.mean(0))
     if int(k) <= 0:
         k = estimate_speakers(z, k_max=max(2, int(k_max))) if len(z) >= 6 else 1
     k = max(1, min(int(k), len(z)))
