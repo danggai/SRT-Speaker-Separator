@@ -122,7 +122,7 @@ class TranscribeMixin:
         def _mode_hint_upd():
             mode_hint.configure(text="CPU에서는 '균형' 권장 ('정확'·'최고 정확'은 매우 느릴 수 있어요)"
                                 if self._diarize_device_var.get() == "cpu"
-                                else "GPU에서는 '정확' 권장 ('최고 정확'은 짧은 추임새까지 잡아요)")
+                                else "GPU에서는 '최고 정확' 권장 (짧은 추임새까지 잡아요)")
         _watch(mode_hint, self._diarize_device_var, _mode_hint_upd)
         _mode_hint_upd()
 

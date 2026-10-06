@@ -94,7 +94,7 @@ def main():
                                 for w in sg.get("words", [])]) for sg in res["segments"]]
             ref = [r for r in ref_all if r["start"] >= s0 and r["end"] <= s1]
             raw = [{"start": sg["start"], "end": sg["end"], "text": sg["text"].strip()} for sg in segs]
-            post = transcript_post.build_lines(segs, 25)
+            post = transcript_post.build_lines(segs)
             tot["raw"].append(score(ref, raw))
             tot["post"].append(score(ref, post))
         del model, align_model

@@ -40,7 +40,7 @@ _ASR_MODES = {
     # VAD 감도를 높여 짧은 추임새까지 인식
     "best":     ("large-v3",       5, 0.350, 0.250),
 }
-_DEFAULT_ASR_MODE = "accurate"
+_DEFAULT_ASR_MODE = "best"   # 평가: '정확'과 오류율·속도는 같고 놓친 줄은 더 적음
 _CPU_RECOMMENDED_ASR_MODE = "balanced"
 _DIARIZE_BATCH_MAP = [2, 4, 8, 16, 32]
 
