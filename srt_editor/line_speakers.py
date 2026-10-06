@@ -150,9 +150,12 @@ def assign_from_seeds(x, seeds, rounds=5, frac=0.3, c=100):
         for i in [i for i in np.argsort(-p.max(1)) if ok[i] and i not in cur][:per]:
             cur[i] = int(pred[i])
     clf = fit()
-    pred = clf.classes_[clf.predict_proba(z).argmax(1)]
+    p = clf.predict_proba(z)
+    pred = clf.classes_[p.argmax(1)]
+    # 확신도: 1위와 2위 화자 확률 차이 (군집 중심 거리보다 틀린 줄을 더 잘 짚음 — 실제 영상 4개로 확인)
+    ps = np.sort(p, 1)
     conf = np.zeros(len(z))
-    conf[ok] = _centroid_conf(z[ok], pred[ok])
+    conf[ok] = (ps[:, -1] - (ps[:, -2] if ps.shape[1] > 1 else 0.0))[ok]
     return [names[int(q)] if ok[i] else "" for i, q in enumerate(pred)], conf
 
 
