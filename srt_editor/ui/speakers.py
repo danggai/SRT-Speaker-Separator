@@ -558,13 +558,8 @@ class SpeakerMixin:
             return "break"
         self._goto_next_check()
         idx = getattr(self, "_selected_row_idx", None)
-        cache = getattr(self, "_ts_cache", [])
-        if play and self.media_path and idx is not None and idx < len(cache) and cache[idx][0] is not None:
-            t_s, t_e = cache[idx]
-            self._do_seek(t_s, update_selection=False)
-            self._review_stop_at = t_e + 0.15
-            if not self.player.is_playing:
-                self._media_play_pause()
+        if play and idx is not None:
+            self._play_line(idx)
         return "break"
 
     def _assign_speaker_to_selection(self, val, advance=False):

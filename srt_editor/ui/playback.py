@@ -208,6 +208,17 @@ class PlaybackMixin:
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
 
+    def _play_line(self, idx):
+        """자막 한 줄만 처음부터 재생하고 그 줄 끝에서 멈춤."""
+        cache = getattr(self, "_ts_cache", [])
+        if not self.media_path or not (0 <= idx < len(cache)) or cache[idx][0] is None:
+            return
+        t_s, t_e = cache[idx]
+        self._do_seek(t_s, update_selection=False)
+        self._review_stop_at = t_e + 0.15
+        if not self.player.is_playing:
+            self._media_play_pause()
+
     def _media_stop(self):
         self.player.stop()
         self.btn_play.configure(text="▶")

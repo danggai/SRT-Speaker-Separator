@@ -277,11 +277,18 @@ class SubtitleTableMixin:
             ent.bind("<FocusIn>",    lambda e, s=slot_idx: self._slot_focus_in(s))
 
         def _txt_focus_out(e, s=slot_idx):
+            if not self._slot_widgets[s].get("_txt_editing"):   # Tab 등으로 이미 저장·종료한 칸
+                return
             self._slot_save_text(s)
             self._txt_edit_end(s)
 
         txt_e.bind("<FocusOut>", _txt_focus_out)
         txt_e.bind("<Return>",   lambda e: (self.focus_set(), "break")[1])   # 확정 → FocusOut에서 저장
+        # 교정 흐름: 편집 중에 소리 다시 듣기, 저장하고 다음·이전 줄 편집으로
+        txt_e.bind("<Control-space>", lambda e, s=slot_idx: self._txt_replay(s))
+        txt_e.bind("<Tab>",           lambda e, s=slot_idx: self._txt_jump(s, 1))
+        txt_e.bind("<Control-Return>", lambda e, s=slot_idx: self._txt_jump(s, 1))
+        txt_e.bind("<Shift-Tab>",     lambda e, s=slot_idx: self._txt_jump(s, -1))
         txt_e.bind("<Shift-Return>", lambda e: self._txt_insert_br(e.widget))
         txt_e.bind("<FocusIn>",  lambda e, s=slot_idx: self._slot_focus_in(s))
 
@@ -411,6 +418,37 @@ class SubtitleTableMixin:
         if ent.selection_present():
             ent.delete("sel.first", "sel.last")
         ent.insert("insert", _BR)
+        return "break"
+
+    def _txt_editing_idx(self, slot_idx):
+        di = self._slot_widgets[slot_idx].get("_edit_di")
+        return di if di is not None and di >= 0 else self._slot_data_idx(slot_idx)
+
+    def _txt_replay(self, slot_idx):
+        """편집 중 Ctrl+Space: 편집은 그대로 두고 이 줄 소리만 다시 들려줌."""
+        di = self._txt_editing_idx(slot_idx)
+        if 0 <= di < len(self.subtitles):
+            self._play_line(di)
+        return "break"
+
+    def _txt_jump(self, slot_idx, delta):
+        """편집 중 Tab·Ctrl+Enter(다음), Shift+Tab(이전): 저장하고 옆 줄 편집으로 넘어가 그 줄을 재생."""
+        di = self._txt_editing_idx(slot_idx)
+        self._slot_save_text(slot_idx)
+        self._txt_edit_end(slot_idx)
+        nxt = di + delta
+        if not (0 <= di < len(self.subtitles)) or not (0 <= nxt < len(self.subtitles)):
+            self.focus_set()
+            return "break"
+        self._select_row(nxt, seek=False)
+        self._scroll_to_row(nxt)
+        slot = self._find_slot(nxt)
+        if slot < 0:
+            self.focus_set()
+            return "break"
+        self._txt_edit_start(slot)
+        self._slot_widgets[slot]["content"].icursor("end")
+        self._play_line(nxt)
         return "break"
 
     def _txt_edit_end(self, slot_idx):

@@ -386,6 +386,40 @@ def f_key_plays_next_check_line_and_number_key_moves_on(app):
 
 
 @test
+def text_edit_tab_saves_moves_to_next_line_and_plays(app):
+    from types import SimpleNamespace as NS
+    from harness import pump, slot_of
+    load_sample(app, n=12, with_wav=True)
+    app._select_row(2)
+    app._edit_selected_text()
+    pump(0.1)
+    s = slot_of(app, 2)
+    ent = app._slot_widgets[s]["content"]
+    ent.delete(0, "end"); ent.insert(0, "고친 문장")
+    app._txt_jump(s, 1)
+    pump(0.2)
+    eq(app.subtitles[2]["text"], "고친 문장", "Tab: 지금 줄 저장")
+    eq(app._selected_row_idx, 3, "다음 줄로 이동")
+    s3 = slot_of(app, 3)
+    expect(app.focus_get() is app._slot_widgets[s3]["content"], "다음 줄 편집 칸에 커서")
+    expect(app.player.is_playing and app._review_stop_at == app._ts_cache[3][1] + 0.15, "다음 줄만 재생")
+    app._media_play_pause()
+    app._slot_widgets[s3]["content"].insert("end", "!")
+    app._txt_jump(s3, -1)
+    pump(0.2)
+    expect(app.subtitles[3]["text"].endswith("!"), "Shift+Tab도 저장")
+    eq(app._selected_row_idx, 2, "이전 줄로")
+    s2 = slot_of(app, 2)
+    app._txt_replay(s2)
+    expect(app.player.is_playing and app.focus_get() is app._slot_widgets[s2]["content"], "Ctrl+Space: 편집은 그대로, 소리만 다시")
+    app._media_play_pause()
+    app.focus_set(); pump(0.2)
+    eq(app.subtitles[2]["text"], "고친 문장", "늦게 온 포커스 해제가 다른 줄에 덮어쓰지 않음")
+    app._undo()
+    expect(not app.subtitles[3]["text"].endswith("!"), "실행 취소")
+
+
+@test
 def auto_and_check_flags_survive_save_and_reopen(app):
     p = load_sample(app, n=10, tagged_every=0)
     for s in app.subtitles:
