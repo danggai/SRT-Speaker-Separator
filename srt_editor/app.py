@@ -195,6 +195,10 @@ class SRTEditor(
                  lambda e: self._on_shift_key_change(e, pressed=False))
         self.bind("<Control-f>", self._open_search)
         self.bind("<Control-F>", self._open_search)
+        self.bind("<bracketleft>", lambda e: self._speed_step(-1, e))
+        self.bind("<bracketright>", lambda e: self._speed_step(1, e))
+        self.bind("<Control-h>", self._open_replace)
+        self.bind("<Control-H>", self._open_replace)
         self.bind("<Control-m>", self.merge_selected)
         self.bind("<Control-M>", self.merge_selected)
         self.bind("<Home>",      self._on_home_key)
@@ -825,6 +829,12 @@ class SRTEditor(
         ime = getattr(self, "_ime_overlay", None)
         if ime is not None:
             ime.unhook_all()
+        try:   # 배속용으로 만든 소리 파일 정리
+            from . import stretch
+            self.player.release()
+            stretch.clear()
+        except Exception:
+            pass
         try:   # 남은 예약 작업이 앱이 닫힌 뒤 실행되며 오류를 내지 않게
             for job in self.tk.splitlist(self.tk.call("after", "info")):
                 self.tk.call("after", "cancel", job)

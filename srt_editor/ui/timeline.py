@@ -152,6 +152,11 @@ class TimelineMixin:
 
         vol_frame = tk.Frame(ctrl, bg=MEDIA_BG)
         vol_frame.pack(side="right", padx=(0, 8))
+        # 재생 배속 (볼륨 왼쪽)
+        self._speed_btn = flat_button(ctrl, "1배속", self._open_speed_menu, bg=MEDIA_BG,
+                                      font=(theme.FONT_FAMILY, 9), padx=8, pady=2)
+        self._speed_btn.pack(side="right", padx=(0, 10))
+        Tooltip(self._speed_btn, "재생 속도 (음 높이 그대로)\n[ 느리게 · ] 빠르게", delay=400)
 
         self._vol_icon = IconButton(vol_frame, "vol2", fg=FG_DIM, size=24)
         self._vol_icon.pack(side="left", padx=(0, 4))

@@ -3,7 +3,7 @@ import tkinter as tk
 
 from .. import theme
 from ..theme import ACCENT, BG2, BG3, BORDER, FG, FG_DIM
-from ..widgets import Tooltip, flat_button
+from ..widgets import Tooltip, flat_button, show_toast
 
 
 class SearchMixin:
@@ -35,19 +35,86 @@ class SearchMixin:
         close.pack(side="right", padx=8)
         Tooltip(close, "닫기  [Esc]", delay=400)
 
+        # 바꾸기 (Ctrl+H)
+        tk.Label(bar, text="→", bg=BG2, fg=FG_DIM,
+                 font=(theme.FONT_FAMILY, 10)).pack(side="left", padx=(14, 4))
+        self._replace_var = tk.StringVar()
+        rep = tk.Entry(bar, textvariable=self._replace_var, bg=BG3, fg=FG, insertbackground=FG,
+                       relief="flat", highlightthickness=1, highlightbackground=BORDER,
+                       highlightcolor=ACCENT, font=(theme.FONT_FAMILY, 10), width=20)
+        rep.pack(side="left", ipady=3, pady=6)
+        self._replace_entry = rep
+        for text, cmd, tip in (("바꾸기", self._replace_one, "이 줄만 바꾸고 다음으로  [Enter]"),
+                               ("모두 바꾸기", self._replace_all, "일치하는 곳 모두  [Ctrl+Enter]")):
+            b = flat_button(bar, text, cmd, bg=BG3, hover="#33333C", padx=10, pady=2)
+            b.pack(side="left", padx=(6, 0))
+            Tooltip(b, tip, delay=400)
+
         self._search_var.trace_add("write", lambda *_: self._search_update())
         ent.bind("<Return>", lambda e: (self._search_step(1), "break")[1])
         ent.bind("<KP_Enter>", lambda e: (self._search_step(1), "break")[1])
         ent.bind("<Shift-Return>", lambda e: (self._search_step(-1), "break")[1])
-        ent.bind("<Escape>", lambda e: (self._close_search(), "break")[1])
+        rep.bind("<Return>", lambda e: (self._replace_one(), "break")[1])
+        rep.bind("<Control-Return>", lambda e: (self._replace_all(), "break")[1])
+        for w in (ent, rep):
+            w.bind("<Escape>", lambda e: (self._close_search(), "break")[1])
 
-    def _open_search(self, event=None):
+    def _open_search(self, event=None, replace=False):
         if not self._search_bar.winfo_ismapped():
             self._search_bar.pack(fill="x", before=self._search_before)
-        self._search_entry.focus_set()
-        self._search_entry.select_range(0, "end")
+        ent = self._replace_entry if replace and self._search_var.get() else self._search_entry
+        ent.focus_set()
+        ent.select_range(0, "end")
         self._search_update()
         return "break"
+
+    def _open_replace(self, event=None):
+        return self._open_search(replace=True)
+
+    def _replace_pattern(self):
+        import re
+        q = self._search_var.get().strip()
+        return re.compile(re.escape(q), re.IGNORECASE) if q else None
+
+    def _after_replace(self, changed_rows):
+        self._unsaved = True
+        for i in changed_rows:
+            self._redraw_slot_for(i)
+        self._search_update()
+
+    def _replace_one(self):
+        """지금 찾은 줄의 일치하는 말을 바꾸고 다음 일치로."""
+        rx = self._replace_pattern()
+        if rx is None or not self._search_hits or self._search_pos < 0:
+            return
+        idx = self._search_hits[self._search_pos]
+        sub = self.subtitles[idx]
+        new = rx.sub(lambda m: self._replace_var.get(), sub.get("text", ""))
+        if new != sub.get("text", ""):
+            self._push_undo()
+            sub["text"] = new
+            self._after_replace([idx])
+        else:
+            self._search_step(1)
+
+    def _replace_all(self):
+        """일치하는 곳을 모두 바꾼다 (실행 취소 한 번에 되돌림)."""
+        rx = self._replace_pattern()
+        if rx is None:
+            return
+        rep = self._replace_var.get()
+        changed, count = [], 0
+        for i, s in enumerate(self.subtitles):
+            new, n = rx.subn(lambda m: rep, s.get("text", ""))
+            if n:
+                if not changed:
+                    self._push_undo()
+                s["text"] = new
+                changed.append(i)
+                count += n
+        if changed:
+            self._after_replace(changed)
+        show_toast(self, f"{count}곳을 바꿨어요" if count else "바꿀 곳이 없어요")
 
     def _close_search(self):
         self._search_bar.pack_forget()

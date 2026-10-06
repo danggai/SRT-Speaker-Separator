@@ -1,6 +1,9 @@
 """재생 제어, 키보드 이동, 재생 위치 하이라이트."""
+import threading
 import tkinter as tk
 from tkinter import ttk
+
+from ..widgets import PopupMenu, show_toast
 
 from ..srt_io import format_srt_time, parse_srt_time
 
@@ -207,6 +210,79 @@ class PlaybackMixin:
             self.player.play()
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()
+
+    # ── 재생 배속 ────────────────────────────
+    def _update_speed_btn(self, text=None):
+        btn = getattr(self, "_speed_btn", None)
+        if btn is not None:
+            btn.configure(text=text or f"{getattr(self, '_speed_choice', 1.0):g}배속")
+
+    def _set_play_speed(self, speed):
+        """배속 바꾸기. 처음 고른 배속은 소리를 만드는 몇 초 동안 지금 속도로 계속 재생."""
+        from .. import stretch
+        self._speed_choice = speed
+        self._speed_token = token = getattr(self, "_speed_token", 0) + 1
+        self._update_speed_btn()
+        src = self.player._filepath
+        if speed == 1.0 or not src or not self.media_path:
+            self.player.set_speed(1.0)
+            return
+        path = stretch.cache_path(src, speed)
+        if path.exists():
+            self.player.set_speed(speed, path)
+            return
+        self._update_speed_btn("준비 중…")
+
+        def work():
+            try:
+                p, err = stretch.render(src, speed), None
+            except Exception as e:   # noqa: BLE001
+                p, err = None, e
+            self.after(0, lambda: done(p, err))
+
+        def done(p, err):
+            if token != self._speed_token or self.player._filepath != src:
+                return
+            if err or p is None:
+                show_toast(self, "배속을 준비하지 못했어요")
+                self._speed_choice = 1.0
+                self.player.set_speed(1.0)
+            else:
+                self.player.set_speed(speed, p)
+            self._update_speed_btn()
+        threading.Thread(target=work, daemon=True).start()
+
+    def _speed_step(self, d, event=None):
+        """[ / ]: 한 단계 느리게·빠르게."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        from ..stretch import SPEEDS
+        cur = getattr(self, "_speed_choice", 1.0)
+        i = min(range(len(SPEEDS)), key=lambda k: abs(SPEEDS[k] - cur))
+        nxt = SPEEDS[max(0, min(len(SPEEDS) - 1, i + d))]
+        if nxt != cur:
+            self._set_play_speed(nxt)
+            show_toast(self, f"{nxt:g}배속")
+        return "break"
+
+    def _open_speed_menu(self):
+        from ..stretch import SPEEDS
+        menu = PopupMenu(self)
+        cur = getattr(self, "_speed_choice", 1.0)
+        for s in reversed(SPEEDS):
+            menu.add_command(label=("✓ " if s == cur else "    ") + f"{s:g}배속", command=lambda s=s: self._set_play_speed(s))
+        btn = self._speed_btn
+        menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() - 30 * len(SPEEDS) - 8)
+
+    def _reset_play_speed(self):
+        """새 미디어를 열면 1배속으로 (다른 파일의 배속 소리는 지움)."""
+        from .. import stretch
+        self._speed_choice = 1.0
+        self._speed_token = getattr(self, "_speed_token", 0) + 1
+        self.player.release()
+        self.player.set_speed(1.0)
+        self._update_speed_btn()
+        threading.Thread(target=stretch.clear, args=(self.player._filepath,), daemon=True).start()
 
     def _play_line(self, idx):
         """자막 한 줄만 처음부터 재생하고 그 줄 끝에서 멈춤."""

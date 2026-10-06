@@ -55,6 +55,8 @@ class MediaPlayer:
         self._volume     = 100   # 0~100
         self._pg         = None  # pygame 모듈 (lazy init)
         self._watch_thread = None
+        self._speed      = 1.0   # 재생 배속 (위치·길이는 항상 원본 시간 기준)
+        self._speed_path = None  # 배속용으로 만든 소리 (1배면 원본)
 
     def _init_pygame(self):
         if self._pg is not None:
@@ -96,6 +98,7 @@ class MediaPlayer:
     def load(self, path):
         self.stop()
         self._filepath = path
+        self._speed, self._speed_path = 1.0, None
         self._position = 0.0
         if not self._init_pygame():
             self._duration = 0.0
@@ -146,7 +149,7 @@ class MediaPlayer:
         if was_playing:
             # 재생 중엔 set_pos로 즉시 이동 (파일 재로드 없음)
             try:
-                self._pg.mixer.music.set_pos(new_pos)
+                self._pg.mixer.music.set_pos(new_pos / self._speed)
                 self._start_wall = time.time()
                 self._start_pos  = new_pos
                 self._position   = new_pos
@@ -165,7 +168,7 @@ class MediaPlayer:
     @property
     def position(self):
         if self._playing and not self._paused:
-            elapsed = time.time() - self._start_wall
+            elapsed = (time.time() - self._start_wall) * self._speed
             return min(self._start_pos + elapsed, self._duration)
         return self._position
 
@@ -173,16 +176,31 @@ class MediaPlayer:
     def duration(self):
         return self._duration
 
+    @property
+    def speed(self):
+        return self._speed
+
+    def set_speed(self, speed, path=None):
+        """배속 바꾸기. path: 그 배속으로 만든 소리 (1배면 None). 재생 중이면 같은 위치에서 이어 재생."""
+        pos = self.position
+        was_playing = self.is_playing
+        self._stop_music()
+        self._speed = float(speed)
+        self._speed_path = path if speed != 1.0 else None
+        self._position = pos
+        if was_playing:
+            self._start_play(pos)
+
     # ── 내부 ──────────────────────────────────
     def _start_play(self, start_sec):
         if not self._init_pygame():
             return
         try:
-            self._pg.mixer.music.load(self._filepath)
+            self._pg.mixer.music.load(str(self._speed_path or self._filepath))
             # set_volume: 0.0~1.0
             self._pg.mixer.music.set_volume(self._volume / 100.0)
             # start_sec 위치부터 재생
-            self._pg.mixer.music.play(start=start_sec)
+            self._pg.mixer.music.play(start=start_sec / self._speed)
             self._playing    = True
             self._paused     = False
             self._start_wall = time.time()
@@ -248,6 +266,15 @@ class MediaPlayer:
         try:
             if self._pg and self._pg.mixer.get_init():
                 self._pg.mixer.music.stop()
+        except Exception:
+            pass
+
+    def release(self):
+        """재생기가 붙잡고 있는 파일을 놓는다 (배속 소리 파일을 지울 수 있게)."""
+        self._stop_music()
+        try:
+            if self._pg and self._pg.mixer.get_init():
+                self._pg.mixer.music.unload()
         except Exception:
             pass
 

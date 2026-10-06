@@ -87,6 +87,62 @@ def period_option_adds_or_strips_whisper_period():
 
 
 @test
+def find_and_replace_one_and_all_with_single_undo(app):
+    from harness import pump
+    load_sample(app, n=6)
+    texts = ["마모의 방송", "오늘 마모가 왔어요", "평범한 줄", "MAMO 마모", "끝", "마모"]
+    for s, t in zip(app.subtitles, texts):
+        s["text"] = t
+    app._fill_slots(app._vscroll_top)
+    app._open_replace()
+    app._search_var.set("마모")
+    app._replace_var.set("마무")
+    pump(0.1)
+    app._select_row(0); app._search_update()
+    app._replace_one()
+    eq(app.subtitles[0]["text"], "마무의 방송", "바꾸기: 지금 줄만")
+    eq(app.subtitles[1]["text"], "오늘 마모가 왔어요")
+    eq(app._selected_row_idx, 1, "다음 일치로 이동")
+    app._replace_all()
+    eq([s["text"] for s in app.subtitles], ["마무의 방송", "오늘 마무가 왔어요", "평범한 줄", "MAMO 마무", "끝", "마무"])
+    app._undo()
+    eq([s["text"] for s in app.subtitles][:2], ["마무의 방송", "오늘 마모가 왔어요"], "모두 바꾸기는 실행 취소 한 번에")
+    app._search_var.set("mamo"); app._replace_var.set("Mamu"); app._replace_all()
+    eq(app.subtitles[3]["text"], "Mamu 마모", "대소문자 구분 없이 찾음")
+
+
+@test
+def playback_speed_renders_audio_and_keeps_media_time(app):
+    import time
+    from harness import pump, wait_until
+    from srt_editor import stretch
+    load_sample(app, n=6, with_wav=True)
+    src = app.player._filepath
+    app._set_play_speed(2.0)
+    wait_until(lambda: app.player.speed == 2.0, 15, lambda: app._speed_btn.itemcget("label", "text"))
+    eq(app._speed_btn.itemcget("label", "text"), "2배속")
+    expect(stretch.cache_path(src, 2.0).exists(), "배속 소리를 만들어 둠")
+    app._do_seek(4.0)
+    app._media_play_pause()
+    time.sleep(0.5)
+    pos = app.player.position
+    app._media_play_pause()
+    expect(4.8 <= pos <= 5.6, f"2배속: 0.5초에 원본 시간으로 약 1초 진행 ({pos:.2f})")
+    app._speed_step(-1)
+    wait_until(lambda: app.player.speed == 1.5, 15)
+    expect(abs(app.player.position - pos) < 0.01, "배속을 바꿔도 위치 유지")
+    app._set_play_speed(4.0)
+    wait_until(lambda: app.player.speed == 4.0, 15)
+    app._set_play_speed(1.0)
+    eq((app.player.speed, app.player._speed_path), (1.0, None), "1배속은 원본 그대로")
+    load_sample(app, n=4, with_wav=True)
+    pump(0.3)
+    eq(app._speed_btn.itemcget("label", "text"), "1배속", "새 미디어는 1배속부터")
+    pump(0.3)
+    expect(not stretch.cache_path(src, 2.0).exists() or app.player._filepath == src, "다른 파일의 배속 소리는 지움")
+
+
+@test
 def toolbar_button_asks_before_replacing_and_opens_options(app):
     from harness import toplevels, pump
     load_sample(app, n=4, with_wav=True)

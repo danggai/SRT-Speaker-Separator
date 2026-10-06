@@ -130,6 +130,7 @@ class VideoMixin:
             was_playing = self.player.is_playing
             self.player.stop()
             self.player._filepath = audio
+            self._set_play_speed(getattr(self, "_speed_choice", 1.0))   # 배속 소리도 뽑은 소리로 다시
             if was_playing:
                 self.btn_play.configure(text="▶")
             self._extract_waveform(path, src=audio)

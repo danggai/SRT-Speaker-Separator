@@ -270,6 +270,7 @@ class FileMixin:
         self.player._filepath = path
         self.player._position = 0.0
         self.player._duration = 0.0
+        self._reset_play_speed()
         self.media_path = path
 
         name = os.path.basename(path)
