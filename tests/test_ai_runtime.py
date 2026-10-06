@@ -82,27 +82,36 @@ def line_embedding_cache_reuses_unchanged_lines():
 
     class FakePipe:
         class model:
-            _embedding = None
-    saved = (LS.line_embeddings, W._diar_pipeline, W.status, sys.modules.get("whisperx"))
+            _embedding = object()
+    saved = (LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings,
+             sys.modules.get("whisperx"))
     LS.line_embeddings = fake_emb
     W._diar_pipeline = lambda *a, **k: FakePipe
     W.status = lambda *a, **k: None
+    W._campplus = lambda device: (lambda wav: None)   # 두 번째 목소리 모델 흉내
+    dims = []
+    LS.combine_embeddings = lambda xs: (dims.append([x.shape[1] for x in xs]), saved[4](xs))[1]
     sys.modules["whisperx"] = FakeWX
     try:
         job = {"media": str(media), "cache_dir": str(d / "cache"), "num_speakers": 2, "exact": True,
                "intervals": [[0, 1], [1, 2], [2, 3], [3, 4], None]}
         W._lines_result(job, "cpu")
+        eq(dims[-1], [3, 3], "두 모델 특징을 섞음")
         W._lines_result(job, "cpu")
-        eq(calls, [4], "두 번째는 전부 캐시 (구간 없는 줄은 제외)")
+        eq(calls, [4, 4], "두 번째는 두 모델 모두 캐시 (구간 없는 줄은 제외)")
         job["intervals"][1] = [1, 2.5]
         W._lines_result(job, "cpu")
-        eq(calls, [4, 1], "바뀐 줄만 새로 분석")
+        eq(calls, [4, 4, 1, 1], "바뀐 줄만 새로 분석")
+        W._campplus = lambda device: None   # 두 번째 모델 부품이 없으면
+        job["cache_dir"] = str(d / "cache2")
+        W._lines_result(job, "cpu")
+        eq(dims[-1], [3], "첫 모델만으로 분석")
     finally:
-        LS.line_embeddings, W._diar_pipeline, W.status = saved[:3]
-        if saved[3] is None:
+        LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings = saved[:5]
+        if saved[5] is None:
             sys.modules.pop("whisperx", None)
         else:
-            sys.modules["whisperx"] = saved[3]
+            sys.modules["whisperx"] = saved[5]
 
 
 @test

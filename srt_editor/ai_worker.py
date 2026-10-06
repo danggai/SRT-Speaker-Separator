@@ -60,14 +60,14 @@ def _diar_pipeline(job, device, step, lo, hi):
 EMB_CACHE_KEEP = 20   # 영상 수 (줄당 약 1KB)
 
 
-def _emb_cache_path(job):
+def _emb_cache_path(job, model=""):
     import hashlib
     d = job.get("cache_dir")
     if not d:
         return None
     st = os.stat(job["media"])
     key = f"{os.path.abspath(job['media'])}|{st.st_size}|{st.st_mtime_ns}"
-    return os.path.join(d, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".npz")
+    return os.path.join(d, hashlib.sha1(key.encode("utf-8")).hexdigest() + (f"_{model}" if model else "") + ".npz")
 
 
 def _emb_cache_load(path):
@@ -95,29 +95,57 @@ def _emb_cache_save(path, cache):
         pass
 
 
+def _campplus(device):
+    """두 번째 목소리 모델 CAM++ (FunASR). 부품이 없으면 None → WeSpeaker만 씀."""
+    try:
+        from funasr import AutoModel
+    except Exception:
+        return None
+    m = AutoModel(model="funasr/campplus", hub="hf", device="cuda:0" if device == "cuda" else "cpu",
+                  disable_update=True, disable_pbar=True, disable_log=True)
+
+    def emb(wav):
+        out = m.generate(input=wav[0, 0].numpy(), disable_pbar=True)[0]["spk_embedding"]
+        return out.cpu().numpy().reshape(1, -1)
+    return emb
+
+
 def _lines_result(job, device):
-    """자막 줄마다 목소리를 뽑아 선지정 기준 분류 또는 군집. 이미 뽑은 줄은 캐시에서 재사용."""
+    """자막 줄마다 목소리를 뽑아 선지정 기준 분류 또는 군집. 이미 뽑은 줄은 모델별 캐시에서 재사용.
+    WeSpeaker와 CAM++ 두 모델의 특징을 섞으면 여러 명이 나오는 영상에서 더 잘 구분된다."""
     import numpy as np
     import line_speakers
     intervals = [tuple(v) if v else (None, None) for v in job["intervals"]]
     keys = [(round(s * 1000), round(e * 1000)) if s is not None and e is not None else None for s, e in intervals]
-    path = _emb_cache_path(job)
-    cache = _emb_cache_load(path) if path else {}
-    miss = [i for i, k in enumerate(keys) if k is not None and k not in cache]
-    if miss:
-        import whisperx
-        status("음성 불러오는 중...", "audio", 8)
-        audio = whisperx.load_audio(job["media"])
-        pipe = _diar_pipeline(job, device, "model", 12, 25)
-        status(f"자막 {len(miss)}줄의 목소리 분석 중...", "diarize", 30)
-        sub = line_speakers.line_embeddings(pipe.model._embedding, audio, [intervals[i] for i in miss])
-        for i, row in zip(miss, sub):
-            if not np.isnan(row).any():
-                cache[keys[i]] = row
-        if path:
-            _emb_cache_save(path, cache)
-    dim = next((len(v) for v in cache.values()), 1)
-    emb = np.vstack([cache[k] if k in cache else np.full(dim, np.nan) for k in keys]) if keys else np.zeros((0, dim))
+    audio = None
+    feats = []
+    for model, load, lo in (("", lambda: _diar_pipeline(job, device, "model", 12, 25).model._embedding, 30),
+                            ("campplus", lambda: _campplus(device), 62)):
+        path = _emb_cache_path(job, model)
+        cache = _emb_cache_load(path) if path else {}
+        miss = [i for i, k in enumerate(keys) if k is not None and k not in cache]
+        if miss:
+            if audio is None:
+                import whisperx
+                status("음성 불러오는 중...", "audio", 8)
+                audio = whisperx.load_audio(job["media"])
+            try:
+                fn = load()
+            except Exception:
+                fn = None
+            if fn is None:   # 두 번째 모델을 못 쓰면 첫 모델만
+                continue
+            status(f"자막 {len(miss)}줄의 목소리 분석 중...", "diarize", lo)
+            sub = line_speakers.line_embeddings(fn, audio, [intervals[i] for i in miss])
+            for i, row in zip(miss, sub):
+                if not np.isnan(row).any():
+                    cache[keys[i]] = row
+            if path:
+                _emb_cache_save(path, cache)
+        dim = next((len(v) for v in cache.values()), 1)
+        feats.append(np.vstack([cache[k] if k in cache else np.full(dim, np.nan) for k in keys])
+                     if keys else np.zeros((0, dim)))
+    emb = line_speakers.combine_embeddings(feats)
     status("화자 구분 중...", "map", 95)
     seeds = {int(k): v for k, v in (job.get("seeds") or {}).items()}
     if seeds:

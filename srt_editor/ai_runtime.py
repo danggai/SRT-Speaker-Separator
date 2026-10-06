@@ -21,6 +21,7 @@ UV_URL = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-
 PYTHON_VERSION = "3.12"
 TORCH_INDEX = {"cuda": "https://download.pytorch.org/whl/cu126", "cpu": "https://download.pytorch.org/whl/cpu"}
 PACKAGES = ["whisperx==3.8.6", "torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0", "scikit-learn"]
+EXTRAS = ["funasr"]   # 나중에 더한 부품 (화자 구분 두 번째 목소리 모델 CAM++). 예전 설치본엔 따로 채움
 EST_MB = {"cuda": 7000, "cpu": 3700}   # 설치 중 쌓이는 양 (실측, 진행률·용량 안내용)
 WORKER_FILES = ["ai_worker.py", "speech.py", "line_speakers.py", "model_download.py", "correction_audio.py"]
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -168,18 +169,49 @@ def install(device="cuda", progress=None, cancelled=None):
         progress(f"AI 부품 내려받는 중  {got / 1048576:,.0f} MB / 약 {est / 1048576:,.0f} MB",
                  6 + 84 * min(0.99, got / est))
     _run_logged([uv, "pip", "install", "--python", _venv_python(), "--link-mode", "copy", "--compile-bytecode",
-                 "--index-strategy", "unsafe-best-match", "--extra-index-url", TORCH_INDEX[device], *PACKAGES],
+                 "--index-strategy", "unsafe-best-match", "--extra-index-url", TORCH_INDEX[device], *PACKAGES, *EXTRAS],
                 log, cancelled, on_tick=tick)
 
     progress("첫 실행 준비 중... (몇 분 걸릴 수 있어요)", 92)
     info = run_job({"type": "probe", "warm": True}, python=str(_venv_python()))
     info["device"] = device
     info["warm"] = True
+    info["extras"] = list(EXTRAS)
     (ROOT / "ready.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
     progress("내려받은 임시 파일 정리 중...", 97)
     shutil.rmtree(ROOT / "cache", ignore_errors=True)   # --link-mode copy라 지워도 설치본은 그대로
     progress("설치 완료", 100)
     return info
+
+
+def missing_extras():
+    """설치한 AI 부품에 아직 없는 추가 부품 목록 (설치본이 없거나 개발 환경이면 빈 목록)."""
+    info = installed_info()
+    if not info or not (ROOT / "bin" / "uv.exe").exists():
+        return []
+    return [p for p in EXTRAS if p not in info.get("extras", [])]
+
+
+def install_extras(progress=None, cancelled=None):
+    """예전 설치본에 추가 부품만 채운다. 실패하면 AIError (분석은 기존 부품으로 계속할 수 있음)."""
+    need = missing_extras()
+    if not need:
+        return
+    progress = progress or (lambda msg, pct: None)
+    progress("화자 구분 부품 추가 중... (처음 한 번)", None)
+    log = ROOT / "install.log"
+    _run_logged([ROOT / "bin" / "uv.exe", "pip", "install", "--python", _venv_python(), "--link-mode", "copy",
+                 "--compile-bytecode", *need], log, cancelled or (lambda: False))
+    shutil.rmtree(ROOT / "cache", ignore_errors=True)
+    info = installed_info() or {}
+    _mark(dict(info, extras=sorted(set(info.get("extras", [])) | set(need))))
+
+
+def _mark(info):
+    try:
+        (ROOT / "ready.json").write_text(json.dumps(info, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
 
 
 # ── 작업 실행 ─────────────────────────────────────

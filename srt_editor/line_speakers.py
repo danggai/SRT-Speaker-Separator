@@ -41,6 +41,26 @@ def _valid(x):
     return ~np.isnan(x).any(axis=1)
 
 
+def combine_embeddings(xs):
+    """여러 목소리 모델의 줄 특징을 합친다. 모델마다 평균을 빼고 길이를 맞춘 뒤 이어 붙임 (한 모델이면 그대로)."""
+    xs = [x for x in xs if x is not None and len(x) and x.shape[1] > 1]
+    if not xs:
+        return np.full((0, 1), np.nan)
+    if len(xs) == 1:
+        return xs[0]
+    ok = np.all([_valid(x) for x in xs], axis=0)
+    parts = []
+    for x in xs:
+        z = np.zeros_like(x, dtype=float)
+        if ok.any():
+            v = _norm(x[ok])
+            z[ok] = _norm(v - v.mean(0))
+        parts.append(z)
+    out = _norm(np.hstack(parts))
+    out[~ok] = np.nan
+    return out
+
+
 def _cluster(z, k):
     from sklearn.cluster import KMeans, SpectralClustering
     if len(z) >= 2 * k:
