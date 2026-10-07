@@ -48,7 +48,7 @@ def _blobs_size(repo_id):
         from huggingface_hub.constants import HF_HUB_CACHE
         from huggingface_hub.file_download import repo_folder_name
         blobs = os.path.join(HF_HUB_CACHE, repo_folder_name(repo_id=repo_id, repo_type="model"), "blobs")
-        return sum(e.stat().st_size for e in os.scandir(blobs) if e.is_file())
+        return sum(os.stat(e.path).st_size for e in os.scandir(blobs) if e.is_file())   # 쓰는 중인 파일은 목록 크기가 늦게 바뀌어 직접 읽음
     except OSError:
         return 0
 

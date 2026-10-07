@@ -12,6 +12,7 @@ import sys
 import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")   # xet 방식은 끝날 때 한 번에 써서 진행도가 멈춰 보임
 SR = 16000
 
 
