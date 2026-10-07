@@ -75,23 +75,17 @@ def line_embedding_cache_reuses_unchanged_lines():
         calls.append(len(intervals))
         return np.array([[s, e, 1.0] for s, e in intervals], dtype=np.float32)
 
-    class FakeWX:
-        @staticmethod
-        def load_audio(path):
-            return np.zeros(10)
-
     class FakePipe:
         class model:
             _embedding = object()
-    saved = (LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings,
-             sys.modules.get("whisperx"))
+    saved = (LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings, W._load_audio)
     LS.line_embeddings = fake_emb
     W._diar_pipeline = lambda *a, **k: FakePipe
     W.status = lambda *a, **k: None
     W._campplus = lambda device: (lambda wav: None)   # 두 번째 목소리 모델 흉내
     dims = []
     LS.combine_embeddings = lambda xs: (dims.append([x.shape[1] for x in xs]), saved[4](xs))[1]
-    sys.modules["whisperx"] = FakeWX
+    W._load_audio = lambda path, lo, hi: np.zeros(10)
     try:
         job = {"media": str(media), "cache_dir": str(d / "cache"), "num_speakers": 2, "exact": True,
                "intervals": [[0, 1], [1, 2], [2, 3], [3, 4], None]}
@@ -107,11 +101,7 @@ def line_embedding_cache_reuses_unchanged_lines():
         W._lines_result(job, "cpu")
         eq(dims[-1], [3], "첫 모델만으로 분석")
     finally:
-        LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings = saved[:5]
-        if saved[5] is None:
-            sys.modules.pop("whisperx", None)
-        else:
-            sys.modules["whisperx"] = saved[5]
+        LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings, W._load_audio = saved
 
 
 @test

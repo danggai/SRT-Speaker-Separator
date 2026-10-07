@@ -127,9 +127,7 @@ def _lines_result(job, device):
         miss = [i for i, k in enumerate(keys) if k is not None and k not in cache]
         if miss:
             if audio is None:
-                import whisperx
-                status("음성 불러오는 중...", "audio", 8)
-                audio = whisperx.load_audio(job["media"])
+                audio = _load_audio(job["media"], 3, 12)
             try:
                 fn = load()
             except Exception:
@@ -166,13 +164,69 @@ def job_diarize(job):
     device = _device(job.get("device", "auto"))
     if job.get("intervals"):
         return _lines_result(job, device)
-    status("음성 불러오는 중...", "audio", 8)
-    audio = whisperx.load_audio(job["media"])
+    audio = _load_audio(job["media"], 3, 12)
     pipe = _diar_pipeline(job, device, "model", 12, 25)
     status("화자 분리 중...", "diarize", 30)
     df = speech._diarize_exclusive(pipe, audio, job.get("num_speakers", 0), job.get("exact", False))
     return {"mode": "turns", "turns": [[float(r.start), float(r.end), r.speaker]
                                        for r in df.itertuples(index=False)]}
+
+
+def _load_audio(path, lo, hi):
+    """whisperx.load_audio와 같은 결과 (16kHz 모노 float32). 긴 파일도 진행률을 알림."""
+    import re
+    import subprocess
+    import threading
+    import numpy as np
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-threads", "0", "-i", path, "-f", "s16le", "-ac", "1",
+           "-acodec", "pcm_s16le", "-ar", str(SR), "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    dur, err = [0.0], []
+
+    def read_err():
+        for line in iter(p.stderr.readline, b""):
+            err.append(line)
+            m = not dur[0] and re.search(rb"Duration: (\d+):(\d+):(\d+\.?\d*)", line)
+            if m:
+                dur[0] = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
+    t = threading.Thread(target=read_err, daemon=True)
+    t.start()
+    progress = _stage_progress("음성 불러오는 중", "audio", lo, hi)
+    status("음성 불러오는 중...", "audio", lo)
+    buf = bytearray()
+    while True:
+        b = p.stdout.read(SR * 2 * 60)   # 1분 분량씩
+        if not b:
+            break
+        buf += b
+        if dur[0]:
+            progress(min(99.0, 100 * len(buf) / (SR * 2 * dur[0])))
+    p.wait()
+    t.join(2)
+    if p.returncode:
+        raise RuntimeError("음성을 불러오지 못했어요: " + b"".join(err[-5:]).decode("utf-8", "replace").strip())
+    audio = np.frombuffer(buf, np.int16).astype(np.float32)
+    audio /= 32768.0
+    return audio
+
+
+def _stage_progress(label, step, lo, hi):
+    """whisperx 진행 콜백(0~100) → '라벨  37% · 약 12분 남음' 상태 줄 (1초에 한 번까지)."""
+    import time
+    t0, last = time.time(), [0.0]
+
+    def cb(p):
+        now = time.time()
+        if now - last[0] < 1 and p < 100:
+            return
+        last[0] = now
+        msg = f"{label}  {p:.0f}%"
+        if 3 <= p < 100 and now - t0 > 10:
+            left = (now - t0) * (100 - p) / p
+            msg += f" · 약 {max(1, round(left / 60))}분 남음"
+        status(msg, step, lo + (hi - lo) * p / 100)
+    return cb
 
 
 def job_transcribe(job):
@@ -186,15 +240,15 @@ def job_transcribe(job):
     _fetch(model_download.whisper_repo(wname), "음성 인식 모델", model_download.WHISPER_PATTERNS, 3, 14, "model")
     status(f"Whisper 모델 불러오는 중... ({device})", "model", 14)
     model, wname = speech._load_asr_model(whisperx, mode, device, language=lang, asr_hint=job.get("asr_hint") or None)
-    status("음성 불러오는 중...", "audio", 15)
-    audio = whisperx.load_audio(job["media"])
+    audio = _load_audio(job["media"], 15, 20)
     status(f"음성 인식 중... ({device} / {wname})", "asr", 20)
     if device == "cuda":
         bidx = max(0, min(int(job.get("batch", 3)), len(speech._DIARIZE_BATCH_MAP) - 1))
         batch_size = speech._DIARIZE_BATCH_MAP[bidx]
     else:
         batch_size = 1
-    result = model.transcribe(audio, batch_size=batch_size, language=lang)
+    result = model.transcribe(audio, batch_size=batch_size, language=lang,
+                              progress_callback=_stage_progress(f"음성 인식 중 ({device} / {wname})", "asr", 20, 60))
     del model
     _free(device)
     status("타임스탬프 정렬 중...", "align", 60)
@@ -202,7 +256,8 @@ def job_transcribe(job):
     if arepo:
         _fetch(arepo, "정렬 모델", None, 60, 64, "align")
     model_a, meta = whisperx.load_align_model(language_code=result["language"], device=device)
-    result = whisperx.align(result["segments"], model_a, meta, audio, device, return_char_alignments=False)
+    result = whisperx.align(result["segments"], model_a, meta, audio, device, return_char_alignments=False,
+                            progress_callback=_stage_progress("타임스탬프 정렬 중", "align", 64, 99))
     del model_a
     _free(device)
     return {"segments": result["segments"], "language": result.get("language")}
