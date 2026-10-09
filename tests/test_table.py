@@ -97,8 +97,8 @@ def shift_arrows_extend_and_escape_collapses(app):
 def select_all(app):
     load_sample(app)
     click_row(app, 2)
-    app_key("<Control-a>")
-    eq(app._selected_rows, set(range(24)), "Ctrl+A")
+    app_key("<Control-A>")
+    eq(app._selected_rows, set(range(24)), "Ctrl+Shift+A")
 
 
 # ───────── 편집 ─────────
@@ -287,12 +287,13 @@ def paste_with_empty_clipboard_does_nothing(app):
 def split_subtitle_at_position(app):
     load_sample(app)
     # 자막 2: 5.0 ~ 7.0
+    original = app.subtitles[2]["text"]
     ok = app.split_subtitle_at(2, 6.0)
     expect(ok, "나누기 실패")
     eq(len(app.subtitles), 25)
     eq(app.subtitles[2]["timestamp"], "00:00:05,000 --> 00:00:06,000", "앞부분")
     eq(app.subtitles[3]["timestamp"], "00:00:06,000 --> 00:00:07,000", "뒷부분")
-    eq(app.subtitles[3]["text"], app.subtitles[2]["text"], "양쪽 다 같은 글자")
+    eq(app.subtitles[2]["text"] + " " + app.subtitles[3]["text"], original, "내용도 단어 경계에서 나눔")
     eq(app.subtitles[3]["speaker"], app.subtitles[2]["speaker"], "양쪽 다 같은 화자")
     expect(not app.split_subtitle_at(2, 5.01), "너무 가장자리에서는 나눌 수 없어야 해요")
     expect(not app.split_subtitle_at(2, 99.0), "자막 밖 위치")
@@ -472,6 +473,7 @@ def search_finds_text_and_speaker_and_wraps(app):
     pump(0.1)
     eq(app._search_count.cget("text"), "", "검색어를 지우면 표시도 지움")
     app._close_search()
+    pump(0.3)
     expect(not app._search_bar.winfo_ismapped(), "검색 막대가 닫혀야 해요")
 
 

@@ -304,9 +304,9 @@ def volume_set_mute_clamp_and_persist(app):
     app._toggle_mute()
     eq(app._vol_var, 60, "음소거 해제하면 원래 크기")
     wait_until(lambda: cfg().get("volume") == 60, 3, "볼륨 저장")
-    app_key("m")
-    eq(app._vol_var, 0, "M 키 음소거")
-    app_key("m")
+    app_key("<Control-m>")
+    eq(app._vol_var, 0, "Ctrl+M 음소거")
+    app_key("<Control-m>")
 
 
 @test
@@ -410,9 +410,9 @@ def key_hint_badges_cover_timeline_buttons(app):
     app._apply_key_hints(True)
     pump(0.2)
     shown = {b.cget("text") for b in app._key_badges}
-    for key in ("S", "Ctrl+M", "A", "M", "Space", "←", "→"):
+    for key in ("S", "Ctrl+M", "Ctrl+A", "Ctrl+D", "M", "Space", "←", "→"):
         expect(key in shown, f"단축키 표시 켜면 '{key}' 배지가 있어야 해요: {sorted(shown)}")
-    merge = [b for b in app._key_badges if b.cget("text") == "Ctrl+M"][0]
+    merge = [b for b in app._key_badges if b.cget("text") == "M"][0]
     eq(str(merge.place_info()["in"]), str(app._merge_btn), "병합 버튼 위에 붙음")
     app._apply_key_hints(False)
     eq(app._key_badges, [], "끄면 모두 사라짐")
