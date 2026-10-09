@@ -3,6 +3,7 @@ import tkinter as tk
 
 from .. import theme
 from ..theme import ACCENT, BG2, BG3, BORDER, FG, FG_DIM
+from .. import widgets
 from ..widgets import Tooltip, flat_button, show_toast
 
 
@@ -60,11 +61,8 @@ class SearchMixin:
             w.bind("<Escape>", lambda e: (self._close_search(), "break")[1])
 
     def _open_search(self, event=None, replace=False):
-        if not self._search_bar.winfo_ismapped():
-            # 헤더 바로 아래 오른쪽에 띄움 (목록을 밀어내지 않음)
-            self._search_bar.place(relx=1.0, x=-22, y=self._search_before.winfo_height() + 6,
-                                   anchor="ne")
-            self._search_bar.lift()
+        if not self._search_bar.winfo_ismapped() or getattr(self, "_search_closing", False):
+            self._search_anim(True)
         ent = self._replace_entry if replace and self._search_var.get() else self._search_entry
         ent.focus_set()
         ent.select_range(0, "end")
@@ -120,8 +118,42 @@ class SearchMixin:
         show_toast(self, f"{count}곳을 바꿨어요" if count else "바꿀 곳이 없어요")
 
     def _close_search(self):
-        self._search_bar.place_forget()
+        self._search_anim(False)
         self.focus_set()
+
+    def _search_anim(self, show):
+        """검색 창을 위에서 아래로 펼치거나 접는다 (헤더 바로 아래 오른쪽, 목록을 밀어내지 않음)."""
+        bar = self._search_bar
+        job = getattr(self, "_search_anim_job", None)
+        if job:
+            self.after_cancel(job)
+            self._search_anim_job = None
+        self._search_closing = not show
+        full = bar.winfo_reqheight()
+        y = self._search_before.winfo_height() + 6
+        cur = bar.winfo_height() if bar.winfo_ismapped() else 0
+        steps = widgets._ANIM_STEPS if widgets.ANIMATE else 1
+
+        def step(k):
+            t = widgets._ease(k / steps)
+            h = cur + ((full if show else 0) - cur) * t
+            if h < 1 and not show:
+                bar.place_forget()
+                self._search_closing = False
+                self._search_anim_job = None
+                return
+            bar.place(relx=1.0, x=-22, y=y, anchor="ne", height=max(1, int(h)))
+            bar.lift()
+            if k < steps:
+                self._search_anim_job = self.after(widgets._ANIM_MS, lambda: step(k + 1))
+            else:
+                self._search_anim_job = None
+                if show:
+                    bar.place_configure(height="")   # 끝나면 원래 높이로
+                else:
+                    bar.place_forget()
+                    self._search_closing = False
+        step(1)
 
     def _search_update(self):
         """검색어가 바뀌면 일치하는 자막을 다시 찾고 선택 줄 이후 첫 일치로 이동."""
