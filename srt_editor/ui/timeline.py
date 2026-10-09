@@ -108,8 +108,12 @@ class TimelineMixin:
         self._merge_btn = b_merge
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
         b_add.pack(side="left")
-        Tooltip(b_add, "재생 위치에 자막 추가  [A]", delay=400)
+        Tooltip(b_add, "재생 위치에 자막 추가  [Ctrl+A]", delay=400)
         self._add_btn = b_add
+        b_del = flat_button(ctrl, "− 삭제", lambda: (self._on_delete(), self.focus_set()), bg=MEDIA_BG)
+        b_del.pack(side="left", padx=(2, 0))
+        Tooltip(b_del, "선택한 자막 삭제  [Ctrl+D]", delay=400)
+        self._del_btn = b_del
 
         # 재생 묶음은 재생 바 정중앙에 고정, 시간 표시는 그 오른쪽에 붙임
         btn_group = tk.Frame(ctrl, bg=MEDIA_BG)

@@ -532,7 +532,7 @@ class SettingsMixin:
 
         card = self._settings_card(parent, "자막 추가 · 타임라인")
         _, right = self._settings_row(card, "+", "새 자막 기본 길이",
-                                      "A 키·+ 자막으로 추가할 때")
+                                      "Ctrl+A·+ 자막으로 추가할 때")
         self._opt_number(right, "new_sub_len", "초", 0.5, 30, is_float=True)
         _, right = self._settings_row(card, "✂", "나눌 때 내용도 나누기",
                                       "재생 위치에 해당하는 단어에서 나눔")

@@ -203,8 +203,8 @@ class SRTEditor(
         self.bind("<Control-M>", self._mute_shortcut)
         self.bind("<Home>",      self._on_home_key)
         self.bind("<End>",       self._on_end_key)
-        self.bind("<Control-a>", self._on_select_all)
-        self.bind("<Control-A>", self._on_select_all)
+        self.bind("<Control-a>", self._add_subtitle_shortcut)
+        self.bind("<Control-A>", self._on_select_all)   # Ctrl+Shift+A
         self.bind("<Escape>",    self._on_escape_key)
         self.bind("<F2>",        self._edit_selected_text)
         self.bind("<Control-e>", lambda e: self.export())
@@ -220,8 +220,6 @@ class SRTEditor(
             self.bind(_k, self._on_speaker_key)
         self.bind("m", self.merge_selected)
         self.bind("M", self.merge_selected)
-        self.bind("a", self._add_subtitle_shortcut)
-        self.bind("A", self._add_subtitle_shortcut)
         self.bind("s", self._split_subtitle_shortcut)
         self.bind("S", self._split_subtitle_shortcut)
         self.bind("v", self._toggle_video)
@@ -231,7 +229,6 @@ class SRTEditor(
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
-            self.bind("ㅁ", self._add_subtitle_shortcut)
             self.bind("ㅡ", self.merge_selected)
             self.bind("ㅍ", self._toggle_video)
             self.bind("ㄹ", self._review_next_check)
@@ -650,7 +647,7 @@ class SRTEditor(
             badge.destroy()
         self._key_badges = []
         if on:
-            for widget, key in ((self._split_btn, "S"), (self._merge_btn, "M"), (self._add_btn, "A"),
+            for widget, key in ((self._split_btn, "S"), (self._merge_btn, "M"), (self._add_btn, "Ctrl+A"), (self._del_btn, "Ctrl+D"),
                                 (self._vol_icon, "Ctrl+M"), (self.btn_play, "Space"), (self.lbl_check, "F"),
                                 (self.btn_prev, "←"), (self.btn_next, "→")):
                 badge = tk.Label(self, text=key, bg=_BADGE_BG, fg=_BADGE_FG,

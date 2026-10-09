@@ -334,7 +334,7 @@ class EditingMixin:
             self.add_row(getattr(self, "_last_focused_idx", None))
 
     def _add_subtitle_shortcut(self, event=None):
-        """단축키 A: 재생 위치에 자막 추가."""
+        """단축키 Ctrl+A: 재생 위치에 자막 추가."""
         if isinstance(self.focus_get(), tk.Entry) or not self.subtitles:
             return
         self._add_subtitle_here()
