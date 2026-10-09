@@ -1,4 +1,4 @@
-"""자막 검색 막대 (Ctrl+F)."""
+"""자막 검색 창 (Ctrl+F). 자막 목록 위에 떠 있는 형태."""
 import tkinter as tk
 
 from .. import theme
@@ -7,10 +7,10 @@ from ..widgets import Tooltip, flat_button, show_toast
 
 
 class SearchMixin:
-    """자막 목록 위 검색 막대."""
+    """자막 목록 위에 떠 있는 검색 창."""
 
     def _build_search_bar(self, parent, before):
-        bar = tk.Frame(parent, bg=BG2)
+        bar = tk.Frame(parent, bg=BG2, highlightthickness=1, highlightbackground="#3A3A48")
         self._search_bar, self._search_before = bar, before
         self._search_var = tk.StringVar()
         self._search_hits = []
@@ -61,7 +61,10 @@ class SearchMixin:
 
     def _open_search(self, event=None, replace=False):
         if not self._search_bar.winfo_ismapped():
-            self._search_bar.pack(fill="x", before=self._search_before)
+            # 헤더 바로 아래 오른쪽에 띄움 (목록을 밀어내지 않음)
+            self._search_bar.place(relx=1.0, x=-22, y=self._search_before.winfo_height() + 6,
+                                   anchor="ne")
+            self._search_bar.lift()
         ent = self._replace_entry if replace and self._search_var.get() else self._search_entry
         ent.focus_set()
         ent.select_range(0, "end")
@@ -117,7 +120,7 @@ class SearchMixin:
         show_toast(self, f"{count}곳을 바꿨어요" if count else "바꿀 곳이 없어요")
 
     def _close_search(self):
-        self._search_bar.pack_forget()
+        self._search_bar.place_forget()
         self.focus_set()
 
     def _search_update(self):
