@@ -99,11 +99,12 @@ def launch_after_exit(new_exe, old_exe, pid):
 
     def q(p):
         return "'" + p.replace("'", "''") + "'"
-    script = f"Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; "
-    if os.path.normcase(new_exe) != os.path.normcase(old_exe):   # 한글 경로도 안전하게 (UTF-16 인코딩 명령)
-        script += (f"for ($i = 0; $i -lt 20 -and (Test-Path -LiteralPath {q(old_exe)}); $i++) "
-                   f"{{ Remove-Item -LiteralPath {q(old_exe)} -Force -ErrorAction SilentlyContinue; Start-Sleep 1 }}; ")
-    script += f"Start-Process -FilePath {q(new_exe)}"
+    # 새 버전부터 띄우고, 이전 EXE는 잠금이 풀릴 때까지 기다렸다가 지운다 (한글 경로도 안전하게 UTF-16 인코딩 명령)
+    script = (f"Wait-Process -Id {int(pid)} -ErrorAction SilentlyContinue; "
+              f"Start-Process -FilePath {q(new_exe)}")
+    if os.path.normcase(new_exe) != os.path.normcase(old_exe):
+        script += (f"; for ($i = 0; $i -lt 30 -and (Test-Path -LiteralPath {q(old_exe)}); $i++) "
+                   f"{{ Start-Sleep 1; Remove-Item -LiteralPath {q(old_exe)} -Force -ErrorAction SilentlyContinue }}")
     enc = base64.b64encode(script.encode("utf-16-le")).decode()
     cmd = ["powershell", "-NoProfile", "-WindowStyle", "Hidden", "-EncodedCommand", enc]
     subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)

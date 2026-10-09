@@ -64,8 +64,10 @@ def launch_after_exit_waits_removes_old_and_starts_new():
     finally:
         subprocess.Popen = real
     s1 = base64.b64decode(calls[0][-1]).decode("utf-16-le")
-    expect("Wait-Process -Id 4321" in s1 and "Remove-Item -LiteralPath 'C:\\앱\\SRT_1.1.6.exe'" in s1
-           and s1.endswith("Start-Process -FilePath 'C:\\앱\\SRT_1.2.0.exe'"), s1)
+    start, remove = s1.find("Start-Process -FilePath"), s1.find("Remove-Item -LiteralPath")
+    expect("Wait-Process -Id 4321" in s1 and "SRT_1.2.0.exe'" in s1[start:remove]
+           and "SRT_1.1.6.exe'" in s1[remove:] and 0 <= start < remove,
+           "새 버전을 먼저 띄우고 이전 EXE를 지움: " + s1)
     s2 = base64.b64decode(calls[1][-1]).decode("utf-16-le")
     expect("Remove-Item" not in s2, "같은 파일이면 지우지 않음")
 
