@@ -12,7 +12,7 @@ from ..version import APP_VERSION, fetch_latest_version
 from .options import OPTION_DEFAULTS
 from ..transcript_post import DEFAULT_MAX_CHARS
 from ..widgets import (CheckBox, DarkScrollbar, PurpleSlider, Segmented, ToggleSwitch, flat_button,
-                       rounded_rect_image, slide)
+                       rounded_rect_image, show_toast, slide)
 
 
 class SettingsMixin:
@@ -441,8 +441,28 @@ class SettingsMixin:
         cfg.update(picked)
         _save_config(cfg)
         self._reload_settings_from_config()
+        self._apply_imported_speaker_colors(picked.get("speaker_colors"))
         win.destroy()
         self._open_settings(0)
+
+    def _apply_imported_speaker_colors(self, colors):
+        """불러온 화자 색 중 지금 파일에 있는 화자의 색을 바로 바꾼다."""
+        if not self.subtitles:
+            return
+        hits = {}
+        if isinstance(colors, dict):
+            hits = {n: c for n, c in colors.items()
+                    if n in self.speakers and isinstance(c, str) and self.speaker_colors.get(n) != c}
+        if hits:
+            self._push_undo()
+            self.speaker_colors.update(hits)
+            self._unsaved = True
+        self._render_speakers()
+        self._fill_slots(self._vscroll_top)
+        self._wf_img_cache = None
+        self._pb_redraw()
+        if hits:
+            show_toast(self, f"화자 {len(hits)}명의 색을 바꿨어요")
 
     @staticmethod
     def _settings_keys():
