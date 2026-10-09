@@ -148,6 +148,14 @@ class EditingMixin:
                            for i in targets if i < len(self.subtitles)]
         return "break"
 
+    def _clip_times(self, sub):
+        """복사한 자막의 (시작, 끝) 초. 읽을 수 없으면 None."""
+        parts = sub.get("timestamp", "").split("-->")
+        if len(parts) != 2:
+            return None
+        t_s, t_e = self._ts_to_sec(parts[0].strip()), self._ts_to_sec(parts[1].strip())
+        return (t_s, t_e) if t_s is not None and t_e is not None else None
+
     def _on_paste(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
@@ -155,18 +163,35 @@ class EditingMixin:
             return
         # clipboard가 단일 dict(구버전)이면 리스트로 감쌈
         clips = self._clipboard if isinstance(self._clipboard, list) else [self._clipboard]
-        focused = self._focused_idx()
-        insert_at = (focused + 1) if focused is not None else len(self.subtitles)
+        times = [self._clip_times(sub) for sub in clips]
         self._push_undo()
-        for i, sub in enumerate(clips):
-            self.subtitles.insert(insert_at + i, copy.deepcopy(sub))
+        if self.media_path and all(times):
+            # 재생 위치에 첫 자막이 오도록 시간을 옮겨 시간 순서 자리에 넣음 (서로 간격은 그대로)
+            shift = self._video_pos() - min(t_s for t_s, _ in times)
+            new_idx = []
+            for sub, (t_s, t_e) in zip(clips, times):
+                new = copy.deepcopy(sub)
+                n_s, n_e = max(0.0, t_s + shift), max(0.0, t_e + shift)
+                new["timestamp"] = f"{format_srt_time(n_s)} --> {format_srt_time(n_e)}"
+                at = next((i for i, (c_s, _) in enumerate(self._ts_cache)
+                           if c_s is not None and c_s > n_s), len(self.subtitles))
+                self.subtitles.insert(at, new)
+                self._rebuild_ts_cache()
+                new_idx = [j + 1 if j >= at else j for j in new_idx] + [at]
+            insert_at = min(new_idx)
+            new_range = set(new_idx)
+        else:
+            focused = self._focused_idx()
+            insert_at = (focused + 1) if focused is not None else len(self.subtitles)
+            for i, sub in enumerate(clips):
+                self.subtitles.insert(insert_at + i, copy.deepcopy(sub))
+            new_range = set(range(insert_at, insert_at + len(clips)))
         self._rebuild_ts_cache()
         self._renumber_rows(insert_at)
         self._update_count()
         self._render_speakers()
         self._unsaved = True
-        # 붙여넣은 범위 선택
-        new_range = set(range(insert_at, insert_at + len(clips)))
+        # 붙여넣은 자막 선택
         self._selected_rows = new_range
         self._selected_row_idx = insert_at
         for idx in new_range:
