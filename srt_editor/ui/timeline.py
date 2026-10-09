@@ -55,6 +55,7 @@ class TimelineMixin:
         self._pb_canvas = tk.Canvas(tl_row, height=100, bg="#0D0D14",
                                     highlightthickness=1,
                                     highlightbackground="#252535",
+                                    highlightcolor=ACCENT,   # 키보드 포커스가 있을 때 테두리
                                     cursor="hand2")
         self._pb_canvas.pack(side="left", fill="x", expand=True)
         self._pb_dragging  = False
@@ -66,6 +67,8 @@ class TimelineMixin:
         self._wf_offset = 0.0   # 보이는 구간의 시작 비율
         self._wf_manual_lanes = 1   # 자막 레인(레이어) 수 — 사용자가 우클릭으로 직접 조절
 
+        self._pb_canvas.bind("<Shift-Up>",   lambda e: self._seek_edge(-1))
+        self._pb_canvas.bind("<Shift-Down>", lambda e: self._seek_edge(1))
         self._pb_canvas.bind("<ButtonPress-1>",   self._pb_press)
         self._pb_canvas.bind("<B1-Motion>",        self._pb_drag)
         self._pb_canvas.bind("<ButtonRelease-1>", self._pb_release)
@@ -790,6 +793,7 @@ class TimelineMixin:
             self._wf_sub_drag = None
             self._pb_dragging = False
             return "break"
+        self._pb_canvas.focus_set()   # 키보드 포커스 (Shift+↑/↓로 자막 경계 이동)
         x, y = event.x, event.y
         self._pb_press_x = x
         self._pb_press_y = y
@@ -1205,6 +1209,37 @@ class TimelineMixin:
         self._wf_lanes_src = None   # 레인 재계산 강제
         self._wf_img_cache = None
         self._pb_redraw()
+
+    def _seek_edge(self, direction):
+        """재생 위치를 앞(-1)/뒤(1)의 가장 가까운 자막 시작·끝으로 옮긴다. 시작이면 그 자막 선택."""
+        if not self.media_path or not self.subtitles:
+            return "break"
+        pos = self.player.position if self.player.is_playing else self.media_progress_var.get()
+        edges = sorted({t for t_s, t_e in self._ts_cache if t_s is not None and t_e is not None
+                        for t in (t_s, t_e)})
+        if direction > 0:
+            target = next((t for t in edges if t > pos + 0.005), None)
+        else:
+            target = next((t for t in reversed(edges) if t < pos - 0.005), None)
+        if target is None:
+            return "break"
+        self._do_seek(target, update_selection=False)
+        starts = [i for i, (t_s, _) in enumerate(self._ts_cache)
+                  if t_s is not None and abs(t_s - target) < 0.0005]
+        if starts:
+            cur = getattr(self, "_selected_row_idx", None)
+            idx = cur if cur in starts else starts[0]
+            self._select_row(idx, seek=False)
+            self._scroll_to_row(idx)
+        dur = self.player.duration
+        if dur > 0 and self._wf_zoom > 1.0:   # 확대 중이면 화면을 따라감
+            start, end = self._wf_view_range()
+            r = target / dur
+            if not start <= r <= end:
+                span = end - start
+                self._wf_offset = max(0.0, min(r - span * 0.2, 1.0 - span))
+                self._pb_redraw()
+        return "break"
 
     def _do_seek(self, pos, update_selection=True):
         """지정 위치로 seek.

@@ -1222,6 +1222,9 @@ class SubtitleTableMixin:
     # ── 행 선택 / 하이라이트 ─────────────────
     def _on_global_click(self, event):
         clicked = event.widget
+        tl = getattr(self, "_pb_canvas", None)
+        if tl is not None and clicked is not tl and self.focus_get() is tl:
+            self.focus_set()   # 타임라인 밖을 누르면 타임라인 키보드 포커스 해제
         # 클릭한 위젯이 어떤 Entry든 포커스 이동만 허용, 나머지는 blur
         if isinstance(clicked, tk.Entry) or getattr(self, "_txt_drag", None):
             return
