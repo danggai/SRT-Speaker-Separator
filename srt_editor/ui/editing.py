@@ -5,6 +5,18 @@ import tkinter as tk
 from ..srt_io import format_srt_time
 
 
+def split_text_by_ratio(text, ratio):
+    """글자 수 비율(ratio)에 가장 가까운 단어 경계에서 둘로 나눈다. 나눌 곳이 없으면 None."""
+    bounds = [i for i in range(1, len(text)) if text[i].isspace() and not text[i - 1].isspace()]
+    total = sum(1 for c in text if not c.isspace())
+    if not bounds or not total:
+        return None
+    target = total * ratio
+    best = min(bounds, key=lambda b: abs(sum(1 for c in text[:b] if not c.isspace()) - target))
+    front, back = text[:best].rstrip(), text[best:].lstrip()
+    return (front, back) if front and back else None
+
+
 class EditingMixin:
     """실행 취소/다시 실행, 잘라내기/복사/붙여넣기, 자막 추가·분할·삭제."""
 
@@ -202,8 +214,8 @@ class EditingMixin:
         self._pb_redraw()
 
     def split_subtitle_at(self, idx, pos):
-        """idx번 자막을 현재 재생 위치(pos, 초)를 기준으로 앞/뒤 두 개로
-        나눈다. 양쪽 다 원래 텍스트·화자를 그대로 유지한다."""
+        """idx번 자막을 현재 재생 위치(pos, 초)를 기준으로 앞/뒤 두 개로 나눈다.
+        설정이 켜져 있으면 내용도 재생 위치에 해당하는 단어 경계에서 나눈다."""
         if idx < 0 or idx >= len(self.subtitles):
             return False
         cache = getattr(self, "_ts_cache", [])
@@ -221,9 +233,15 @@ class EditingMixin:
         text    = sub.get("text", "")
         speaker = sub.get("speaker", "")
 
+        front, back = text, text
+        if self._opt("split_text"):
+            parts = split_text_by_ratio(text, (pos - t_s) / (t_e - t_s))
+            if parts:
+                front, back = parts
         sub["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(pos)}"
+        sub["text"] = front
         new_sub = {"timestamp": f"{format_srt_time(pos)} --> {format_srt_time(t_e)}",
-                   "text": text, "speaker": speaker}
+                   "text": back, "speaker": speaker}
         # 뒷부분도 원본과 같은 레이어를 유지하도록 _lane을 그대로 물려준다.
         # (안 그러면 새 자막은 _lane이 없어 매번 새로 자동 배치되면서
         #  원본과 다른 레이어로 튀어버리는 버그가 있었다)

@@ -196,7 +196,7 @@ class SettingsMixin:
     _SECTION_OPTS = {
         "general": ("startup_open_last", "update_check"),
         "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "click_seek",
-                 "new_sub_len", "lock_timeline"),
+                 "new_sub_len", "split_text", "lock_timeline"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
     }
@@ -514,6 +514,9 @@ class SettingsMixin:
         _, right = self._settings_row(card, "+", "새 자막 기본 길이",
                                       "A 키·+ 자막으로 추가할 때")
         self._opt_number(right, "new_sub_len", "초", 0.5, 30, is_float=True)
+        _, right = self._settings_row(card, "✂", "나눌 때 내용도 나누기",
+                                      "재생 위치에 해당하는 단어에서 나눔")
+        self._opt_toggle(right, "split_text")
         _, right = self._settings_row(card, "≡", "타임라인 시간 잠금",
                                       "파형에서 자막을 끌어 옮기지 못하게")
         self._opt_toggle(right, "lock_timeline")
