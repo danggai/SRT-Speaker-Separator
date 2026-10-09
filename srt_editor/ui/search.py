@@ -2,6 +2,7 @@
 import tkinter as tk
 
 from .. import theme
+from ..srt_io import trim_text
 from ..theme import ACCENT, BG2, BG3, BORDER, FG, FG_DIM
 from .. import widgets
 from ..widgets import Tooltip, flat_button, show_toast
@@ -90,7 +91,7 @@ class SearchMixin:
             return
         idx = self._search_hits[self._search_pos]
         sub = self.subtitles[idx]
-        new = rx.sub(lambda m: self._replace_var.get(), sub.get("text", ""))
+        new = trim_text(rx.sub(lambda m: self._replace_var.get(), sub.get("text", "")))
         if new != sub.get("text", ""):
             self._push_undo()
             sub["text"] = new
@@ -107,6 +108,7 @@ class SearchMixin:
         changed, count = [], 0
         for i, s in enumerate(self.subtitles):
             new, n = rx.subn(lambda m: rep, s.get("text", ""))
+            new = trim_text(new)
             if n:
                 if not changed:
                     self._push_undo()

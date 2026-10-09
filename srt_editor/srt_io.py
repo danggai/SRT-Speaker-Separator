@@ -41,6 +41,11 @@ def display_to_regex(display: str) -> str:
 # ─────────────────────────────────────────────
 #  SRT 파싱 / 저장
 # ─────────────────────────────────────────────
+def trim_text(text):
+    """자막 내용의 앞뒤 공백과 각 줄 끝 공백을 지운다."""
+    return "\n".join(line.strip() for line in (text or "").split("\n")).strip()
+
+
 def format_srt_time(sec):
     """초 → 'HH:MM:SS,mmm' (음수는 0으로, 밀리초를 먼저 반올림해 '01,1000' 같은 값이 안 나오게)."""
     total = int(round(max(0.0, sec) * 1000))
@@ -86,7 +91,7 @@ def parse_srt(filepath, pattern=None):
         else:
             speaker = ""
             clean   = text
-        subs.append({"timestamp": timestamp, "text": clean, "speaker": speaker})
+        subs.append({"timestamp": timestamp, "text": trim_text(clean), "speaker": speaker})
     return subs
 
 
@@ -95,7 +100,7 @@ def write_srt(subtitles, filepath):
     for i, sub in enumerate(subtitles, start=1):
         lines.append(str(i))
         lines.append(sub["timestamp"])
-        lines.append(sub["text"])
+        lines.append(trim_text(sub["text"]))
         lines.append("")
     with open(filepath, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
@@ -107,7 +112,7 @@ def write_srt_tagged(subtitles, filepath, meta: dict = None):
         lines.append(str(i))
         lines.append(sub["timestamp"])
         spk  = sub.get("speaker", "")
-        text = sub.get("text", "")
+        text = trim_text(sub.get("text", ""))
         if spk:
             # 표시 패턴 적용: % → 화자명, & → 내용
             tagged = g_display_pattern.replace("%", spk).replace("&", text)

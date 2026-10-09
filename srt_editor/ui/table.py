@@ -5,6 +5,7 @@ import tkinter.font as tkfont
 from tkinter import ttk
 
 from .. import theme
+from ..srt_io import trim_text
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_FAINT, FONT_MONO, ROW_HL
 from ..widgets import DarkScrollbar, PopupMenu, Tooltip
 
@@ -715,7 +716,7 @@ class SubtitleTableMixin:
             di = self._slot_data_idx(slot_idx)
         if di < 0 or di >= len(self.subtitles):
             return
-        val = re.sub(r" ?↵ ?", "\n", wi["txt_var"].get())
+        val = trim_text(re.sub(r" ?↵ ?", "\n", wi["txt_var"].get()))
         if self.subtitles[di].get("text", "") != val:
             self._push_undo()   # 실제로 바뀐 경우에만 undo 스냅샷 기록
             self.subtitles[di]["text"] = val
