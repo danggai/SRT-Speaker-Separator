@@ -338,6 +338,10 @@ class SubtitleTableMixin:
         if col == "content" and not (e.state & 0x4):
             self._txt_edit_start(s, e.x)
             self._drag_sel_anchor = None
+            # 이어지는 드래그로 입력칸 글자를 선택
+            ent = self._slot_widgets[s]["content"]
+            x0 = self.canvas.coords(self._slot_widgets[s]["content_win"])[0]
+            self._txt_drag = (ent, ent.index("insert"), x0)
             return "break"
         self._slot_click(s, e)
         self._drag_sel_anchor = di
@@ -606,6 +610,10 @@ class SubtitleTableMixin:
 
     def _canvas_drag_motion(self, event):
         """드래그 중 Y 좌표로 범위 선택 갱신 + 경계 자동 스크롤."""
+        txt = getattr(self, "_txt_drag", None)
+        if txt is not None:
+            self._txt_drag_select(event, *txt)
+            return
         if self._drag_sel_anchor is None or not self.subtitles:
             return
         if not self._drag_from_main(event):
@@ -650,7 +658,22 @@ class SubtitleTableMixin:
             over = None
         return over is None or over.winfo_toplevel() is self
 
+    def _txt_drag_select(self, event, ent, anchor, x0):
+        """자막 칸을 누른 채 끌면 입력칸 글자를 선택."""
+        try:
+            if self.focus_get() is not ent:
+                return
+            cur = ent.index(f"@{int(event.x - x0)}")
+            ent.icursor(cur)
+            if cur == anchor:
+                ent.selection_clear()
+            else:
+                ent.selection_range(min(anchor, cur), max(anchor, cur))
+        except tk.TclError:
+            self._txt_drag = None
+
     def _canvas_drag_end(self, event):
+        self._txt_drag = None
         self._canvas_pressed = False
         self._drag_sel_active = False
         self._drag_sel_anchor = None
@@ -1200,7 +1223,7 @@ class SubtitleTableMixin:
     def _on_global_click(self, event):
         clicked = event.widget
         # 클릭한 위젯이 어떤 Entry든 포커스 이동만 허용, 나머지는 blur
-        if isinstance(clicked, tk.Entry):
+        if isinstance(clicked, tk.Entry) or getattr(self, "_txt_drag", None):
             return
         self._blur_all_entries()
 
