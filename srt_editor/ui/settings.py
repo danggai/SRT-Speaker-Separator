@@ -72,28 +72,31 @@ class SettingsMixin:
             # 내용이 캔버스 뷰포트보다 짧으면(스크롤할 필요가 없으면) 휠을
             # 굴려도 아무 것도 하지 않는다 — 빈 공간이 스크롤되어 보이는
             # 문제 방지.
-            if not canvas.winfo_exists():   # 창이 닫힌 뒤면 메인 스크롤로 넘김
-                _unbind_wheel()
-                return self._on_mousewheel(event)
             bbox = canvas.bbox("all")
             content_h = (bbox[3] - bbox[1]) if bbox else 0
             if content_h <= canvas.winfo_height():
                 return
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        def _bind_wheel(_e=None):
-            canvas.bind_all("<MouseWheel>", _wheel)
-        def _unbind_wheel(_e=None):
-            # 다이얼로그를 벗어나면 메인 테이블의 원래 휠 스크롤 핸들러로 복원
-            self.bind_all("<MouseWheel>", self._on_mousewheel)
-        canvas.bind("<Enter>", _bind_wheel)
-        canvas.bind("<Leave>", _unbind_wheel)
-        inner.bind("<Enter>", _bind_wheel)
-        inner.bind("<Leave>", _unbind_wheel)
-        canvas.bind("<Destroy>", _unbind_wheel, add="+")
+        # 휠은 굴리는 순간 마우스 아래 영역으로 보낸다 (카드 안쪽에서도 동작)
+        self.__dict__.setdefault("_wheel_areas", []).append((canvas, _wheel))
+        self.bind_all("<MouseWheel>", self._route_wheel)
 
         if with_footer:
             return outer, inner, footer
         return outer, inner
+
+    def _route_wheel(self, event):
+        """마우스 아래가 스크롤 영역이면 그 영역을, 아니면 자막 목록을 스크롤."""
+        try:
+            over = self.winfo_containing(event.x_root, event.y_root)
+        except (KeyError, tk.TclError):
+            over = None
+        areas = self.__dict__.get("_wheel_areas", [])
+        areas[:] = [(c, fn) for c, fn in areas if c.winfo_exists()]
+        for canvas, fn in areas:
+            if over is not None and str(over).startswith(str(canvas)):
+                return fn(event)
+        return self._on_mousewheel(event)
 
     # ── 설정 창 공용 레이아웃 (카드 묶음형) ────────
     def _settings_title(self, parent, title, desc=None, section=None):
