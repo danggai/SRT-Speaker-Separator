@@ -101,7 +101,7 @@ class TimelineMixin:
         b_merge = flat_button(ctrl, "⊕ 병합", lambda: (self.merge_selected(), self.focus_set()),
                               bg=MEDIA_BG)
         b_merge.pack(side="left", padx=(0, 2))
-        Tooltip(b_merge, "선택한 자막 병합 (하나면 다음 자막과)  [Ctrl+M]", delay=400)
+        Tooltip(b_merge, "선택한 자막 병합 (하나면 다음 자막과)  [M]", delay=400)
         self._merge_btn = b_merge
         b_add = flat_button(ctrl, "+ 자막", _add_row_and_defocus, bg=MEDIA_BG)
         b_add.pack(side="left")
@@ -1392,7 +1392,7 @@ class TimelineMixin:
             _save_config(cfg)
 
     def _mute_shortcut(self, event=None):
-        """단축키 M: 음소거 켜기/끄기."""
+        """단축키 Ctrl+M: 음소거 켜기/끄기."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         self._toggle_mute()

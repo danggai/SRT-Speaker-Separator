@@ -199,8 +199,8 @@ class SRTEditor(
         self.bind("<bracketright>", lambda e: self._speed_step(1, e))
         self.bind("<Control-h>", self._open_replace)
         self.bind("<Control-H>", self._open_replace)
-        self.bind("<Control-m>", self.merge_selected)
-        self.bind("<Control-M>", self.merge_selected)
+        self.bind("<Control-m>", self._mute_shortcut)
+        self.bind("<Control-M>", self._mute_shortcut)
         self.bind("<Home>",      self._on_home_key)
         self.bind("<End>",       self._on_end_key)
         self.bind("<Control-a>", self._on_select_all)
@@ -218,8 +218,8 @@ class SRTEditor(
         self.bind("<grave>",     self._on_speaker_key)
         for _k in "123456789":
             self.bind(_k, self._on_speaker_key)
-        self.bind("m", self._mute_shortcut)
-        self.bind("M", self._mute_shortcut)
+        self.bind("m", self.merge_selected)
+        self.bind("M", self.merge_selected)
         self.bind("a", self._add_subtitle_shortcut)
         self.bind("A", self._add_subtitle_shortcut)
         self.bind("s", self._split_subtitle_shortcut)
@@ -232,7 +232,7 @@ class SRTEditor(
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
             self.bind("ㅁ", self._add_subtitle_shortcut)
-            self.bind("ㅡ", self._mute_shortcut)
+            self.bind("ㅡ", self.merge_selected)
             self.bind("ㅍ", self._toggle_video)
             self.bind("ㄹ", self._review_next_check)
         except tk.TclError:
@@ -650,8 +650,8 @@ class SRTEditor(
             badge.destroy()
         self._key_badges = []
         if on:
-            for widget, key in ((self._split_btn, "S"), (self._merge_btn, "Ctrl+M"), (self._add_btn, "A"),
-                                (self._vol_icon, "M"), (self.btn_play, "Space"), (self.lbl_check, "F"),
+            for widget, key in ((self._split_btn, "S"), (self._merge_btn, "M"), (self._add_btn, "A"),
+                                (self._vol_icon, "Ctrl+M"), (self.btn_play, "Space"), (self.lbl_check, "F"),
                                 (self.btn_prev, "←"), (self.btn_next, "→")):
                 badge = tk.Label(self, text=key, bg=_BADGE_BG, fg=_BADGE_FG,
                                  font=(theme.FONT_FAMILY, 7), padx=3, pady=0)
@@ -729,7 +729,7 @@ class SRTEditor(
         T(self.btn_prev, "5초 뒤로  [←]  (Shift: 30초)")
         T(self.btn_play, "재생 / 일시정지  [Space]")
         T(self.btn_next, "5초 앞으로  [→]  (Shift: 30초)")
-        T(self._vol_icon,   "음소거 켜기/끄기  [M]")
+        T(self._vol_icon,   "음소거 켜기/끄기  [Ctrl+M]")
         T(self._vol_canvas, "볼륨 조절  (드래그)\n현재: " + str(self._vol_var) + "%")
         T(self._pb_canvas,  "재생 위치 이동  (클릭/드래그)")
         T(self.lbl_dur, "총 재생 시간")
