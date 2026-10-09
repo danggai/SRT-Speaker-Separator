@@ -152,7 +152,7 @@ class TimelineMixin:
         flat_button(zoom_wrap, "−", self._wf_zoom_out, bg=MEDIA_BG,
                     font=(theme.FONT_FAMILY, 10), padx=6, pady=2).pack(side="left")
         self.lbl_zoom = tk.Label(zoom_wrap, text="1×", bg=MEDIA_BG, fg=FG_DIM,
-                                 font=(theme.FONT_FAMILY, 9), width=4)
+                                 font=(theme.FONT_FAMILY, 9), width=6)
         self.lbl_zoom.pack(side="left")
         flat_button(zoom_wrap, "+", self._wf_zoom_in, bg=MEDIA_BG,
                     font=(theme.FONT_FAMILY, 10), padx=6, pady=2).pack(side="left")
@@ -1375,7 +1375,8 @@ class TimelineMixin:
     def _update_zoom_label(self):
         z = self._wf_zoom
         try:
-            self.lbl_zoom.configure(text=f"{z:.0f}×" if z == int(z) else f"{z:.1f}×")
+            # 10배 이상은 소수점 없이 (칸 밖으로 넘치지 않게)
+            self.lbl_zoom.configure(text=f"{z:.0f}×" if z >= 10 or z == int(z) else f"{z:.1f}×")
         except Exception:
             pass
 
