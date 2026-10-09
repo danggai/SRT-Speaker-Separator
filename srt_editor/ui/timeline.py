@@ -455,19 +455,15 @@ class TimelineMixin:
                 for i, (t_s, t_e) in enumerate(cache):
                     if t_s is None or t_e is None:
                         continue
-                    if drag and drag["idx"] == i:
-                        t_s = drag.get("t_s", t_s)
-                        t_e = drag.get("t_e", t_e)
+                    lane = lanes.get(i, 0)
+                    if drag:
+                        t_s, t_e, lane = self._wf_drag_pos(drag, i, t_s, t_e, lane)
                     r_s, r_e = t_s / dur_, t_e / dur_
                     if r_e < start_r or r_s > end_r:
                         continue
                     x1 = int(_r2x(max(r_s, start_r), cw))
                     x2 = int(_r2x(min(r_e, end_r), cw))
                     x2 = max(x1 + 2, x2)
-
-                    lane = lanes.get(i, 0)
-                    if drag and drag["idx"] == i and "target_lane" in drag:
-                        lane = drag["target_lane"]
                     ln_top = lane * LANE_H
                     ln_bot = ln_top + LANE_H
 
@@ -639,10 +635,9 @@ class TimelineMixin:
             for i, (t_s, t_e) in enumerate(cache):
                 if t_s is None or t_e is None:
                     continue
-                ts = t_s; te = t_e
-                if drag and drag["idx"] == i:
-                    ts = drag.get("t_s", ts)
-                    te = drag.get("t_e", te)
+                ts, te, ln = t_s, t_e, lanes.get(i, 0)
+                if drag:
+                    ts, te, ln = self._wf_drag_pos(drag, i, ts, te, ln)
                 r_s, r_e = ts / dur_, te / dur_
                 if r_e < start_r or r_s > end_r:
                     continue
@@ -652,10 +647,7 @@ class TimelineMixin:
                 color = _spk_col(spk)
                 snapped_s = drag and drag["idx"]==i and drag["mode"]=="head_start"
                 snapped_e = drag and drag["idx"]==i and drag["mode"]=="head_end"
-                moving    = drag and drag["idx"]==i and drag["mode"]=="move"
-                ln = lanes.get(i, 0)
-                if drag and drag["idx"] == i and "target_lane" in drag:
-                    ln = drag["target_lane"]
+                moving    = drag and drag["mode"] == "move" and i in drag.get("group", {})
                 ln_top = ln * LANE_H
                 ln_bot = ln_top + LANE_H
                 if moving:
@@ -807,6 +799,15 @@ class TimelineMixin:
         # (self._wf_sub_drag)만 참조하므로, 드래그 중 커서가 다른 자막 위를
         # 지나가도 타겟이 바뀌지 않는다.
         hit = self._wf_hit_test(x, y)
+        self._pb_ctrl_click = False
+
+        if hit["type"] in ("handle", "body") and event.state & 0x0004:   # Ctrl+클릭: 선택 추가/해제
+            self._wf_sub_drag = None
+            self._pb_dragging = False
+            self._pb_ctrl_click = True
+            self._toggle_select(hit["idx"])
+            self._pb_redraw()
+            return
 
         if hit["type"] == "handle":
             self._start_handle_drag(hit["mode"], hit["idx"])
@@ -858,8 +859,17 @@ class TimelineMixin:
     def _start_body_drag(self, idx, x, y, shift_lock, stack=None):
         """자막 바디 드래그 시작: 좌우는 타이밍, 위아래는 레이어 (Shift면 레이어만)."""
         cache = getattr(self, "_ts_cache", [])
-        cur_lane = getattr(self, "_wf_lanes", {}).get(idx, 0)
+        lanes = getattr(self, "_wf_lanes", {})
+        cur_lane = lanes.get(idx, 0)
+        sel = getattr(self, "_selected_rows", set())
+        members = sorted(sel) if idx in sel and len(sel) > 1 else [idx]   # 여러 개 선택돼 있으면 같이 이동
+        group = {j: (cache[j][0], cache[j][1], lanes.get(j, 0)) for j in members
+                 if j < len(cache) and cache[j][0] is not None and cache[j][1] is not None}
+        group[idx] = (cache[idx][0], cache[idx][1], cur_lane)
         self._wf_sub_drag = {
+            "group": group,
+            "g_min": min(g[0] for g in group.values()),
+            "g_max": max(g[1] for g in group.values()),
             "undo_snap": self._snapshot(),
             "mode": "move", "idx": idx,
             "t_s": cache[idx][0], "t_e": cache[idx][1],
@@ -873,6 +883,19 @@ class TimelineMixin:
         self._pb_sub_click_idx = idx
         self._pb_canvas.configure(cursor="fleur")
         self._pb_redraw()   # 마우스를 움직이기 전에도 즉시 미리보기(흰 박스)가 보이도록
+
+    @staticmethod
+    def _wf_drag_pos(drag, i, t_s, t_e, lane):
+        """드래그 중인 자막 i의 미리보기 위치 (시작, 끝, 레이어)."""
+        group = drag.get("group")
+        if drag["mode"] == "move" and group and i in group:
+            os_, oe, ol = group[i]
+            dt = drag.get("t_s", drag["orig_t_s"]) - drag["orig_t_s"]
+            dl = drag.get("target_lane", drag["orig_lane"]) - drag["orig_lane"]
+            return os_ + dt, oe + dt, ol + dl
+        if drag["idx"] == i:
+            return drag.get("t_s", t_s), drag.get("t_e", t_e), lane
+        return t_s, t_e, lane
 
     def _pb_drag(self, event):
         drag = getattr(self, "_wf_sub_drag", None)
@@ -889,7 +912,10 @@ class TimelineMixin:
                 num_lanes = max(1, getattr(self, "_wf_num_lanes", 1))
                 target_lane = max(0, min(num_lanes - 1,
                                          int(event.y // self._WF_LANE_H)))
-                drag["target_lane"] = target_lane
+                lanes_g = [g[2] for g in drag["group"].values()]
+                dl = target_lane - drag["orig_lane"]
+                dl = max(-min(lanes_g), min(dl, num_lanes - 1 - max(lanes_g)))   # 묶음 전체가 레이어 안에
+                drag["target_lane"] = drag["orig_lane"] + dl
 
                 # Shift 상태는 프레스 시점이 아니라 매 순간 실시간으로 확인한다.
                 # (드래그 중간에 Shift를 누르거나 떼도 즉시 반영되도록)
@@ -922,7 +948,7 @@ class TimelineMixin:
                 # 스냅 후보: 다른 모든 자막의 시작/끝점(레이어 무관) + 재생헤드
                 candidates = []
                 for j, (js, je) in enumerate(self._ts_cache):
-                    if j == idx:
+                    if j == idx or j in drag["group"]:
                         continue
                     if js is not None:
                         candidates.append(js)
@@ -940,6 +966,10 @@ class TimelineMixin:
                 if best_delta is not None:
                     new_s += best_delta
                     new_e += best_delta
+                if len(drag["group"]) > 1:   # 묶음 전체가 0초~끝 안에 있게
+                    dt = new_s - drag["orig_t_s"]
+                    dt = max(-drag["g_min"], min(dt, dur - drag["g_max"]))
+                    new_s, new_e = drag["orig_t_s"] + dt, drag["orig_t_e"] + dt
 
                 drag["t_s"] = new_s
                 drag["t_e"] = new_e
@@ -1030,37 +1060,37 @@ class TimelineMixin:
                 return
 
             # 실제 드래그 → 타임스탬프·레이어 적용 (바뀐 경우에만 실행 취소 기록)
-            changed = False
-            if 0 <= idx < len(self.subtitles):
-                if drag["mode"] == "move" and drag.get("shift_lock"):
-                    # Shift 드래그: 타이밍은 그대로 두고 레이어만 반영
-                    pass
-                else:
-                    t_s = drag.get("t_s", self._ts_cache[idx][0])
-                    t_e = drag.get("t_e", self._ts_cache[idx][1])
+            changed = []
+            targets = list(drag["group"]) if drag["mode"] == "move" else [idx]
+            for j in targets:
+                if not (0 <= j < len(self.subtitles)):
+                    continue
+                t_s, t_e, lane = self._wf_drag_pos(drag, j, *self._ts_cache[j],
+                                                   getattr(self, "_wf_lanes", {}).get(j, 0))
+                if not (drag["mode"] == "move" and drag.get("shift_lock")):   # Shift: 레이어만
                     new_ts = f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}"
-                    if self.subtitles[idx].get("timestamp") != new_ts:
-                        self.subtitles[idx]["timestamp"] = new_ts
-                        self._ts_cache[idx] = (t_s, t_e)
-                        changed = True
-
-                if drag["mode"] == "move" and "target_lane" in drag:
-                    new_lane = drag["target_lane"]
-                    if new_lane != drag.get("orig_lane"):
-                        self.subtitles[idx]["_lane"] = new_lane
-                        self._wf_lanes_src = None   # 레인 재계산 강제
-                        changed = True
-
-                if changed:
-                    self._commit_undo(drag["undo_snap"])
-                    self._unsaved = True
-                    self._redraw_slot_for(idx)
+                    if self.subtitles[j].get("timestamp") != new_ts:
+                        self.subtitles[j]["timestamp"] = new_ts
+                        self._ts_cache[j] = (t_s, t_e)
+                        changed.append(j)
+                if drag["mode"] == "move" and lane != drag["group"][j][2]:
+                    self.subtitles[j]["_lane"] = lane
+                    self._wf_lanes_src = None   # 레인 재계산 강제
+                    changed.append(j)
+            if changed:
+                self._commit_undo(drag["undo_snap"])
+                self._unsaved = True
+                for j in set(changed):
+                    self._redraw_slot_for(j)
             self._wf_sub_drag = None
             self._wf_img_cache = None   # 이미지 캐시 무효화
             self._pb_redraw()
             return
 
         self._pb_dragging = False
+        if getattr(self, "_pb_ctrl_click", False):
+            self._pb_ctrl_click = False
+            return
         if not self.media_path:
             return
         self._do_seek(self._pb_pos_from_x(event.x))
