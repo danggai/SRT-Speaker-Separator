@@ -1211,13 +1211,24 @@ class SubtitleTableMixin:
         return -1
 
     def _redraw_slot_for(self, data_idx):
-        """data_idx가 뷰포트에 있으면 해당 슬롯 갱신."""
+        """data_idx가 뷰포트에 있으면 해당 슬롯 갱신 (타임라인 선택 표시도 함께)."""
+        self._schedule_tl_redraw()
         slot = self._find_slot(data_idx)
         if slot < 0:
             return
         # fill_slots의 부분 적용: 해당 슬롯 하나만
         self._paint_slot(slot, data_idx, self._get_col_positions(),
                          max(self.canvas.winfo_width(), 100))
+
+    def _schedule_tl_redraw(self):
+        """타임라인을 한 번만 다시 그리도록 예약 (여러 줄이 바뀌어도 한 번)."""
+        if getattr(self, "_tl_redraw_job", None):
+            return
+
+        def run():
+            self._tl_redraw_job = None
+            self._pb_redraw()
+        self._tl_redraw_job = self.after_idle(run)
 
     # ── 행 선택 / 하이라이트 ─────────────────
     def _on_global_click(self, event):

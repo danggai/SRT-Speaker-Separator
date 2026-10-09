@@ -419,7 +419,11 @@ class TimelineMixin:
         if cache_hit:
             img_tk = cached[1]
         else:
-            img    = Image.new("RGB", (cw, ch), "#0D0D0F")
+            # 파형·눈금(아래쪽)은 자막이 바뀌어도 그대로라 따로 캐시해 두고 자막 줄만 다시 그림
+            base_key = cache_key[:5] + (cache_key[6],)
+            base = getattr(self, "_wf_base_cache", None)
+            base_ok = bool(base and base[0] == base_key)
+            img    = base[1].copy() if base_ok else Image.new("RGB", (cw, ch), "#0D0D0F")
             draw   = ImageDraw.Draw(img)
             pixels = img.load()
 
@@ -484,8 +488,9 @@ class TimelineMixin:
                                 int(fg_*0.22+BG_G*0.78),
                                 int(fb*0.22+BG_B*0.78))
                     fill_hex = f"#{fill_rgb[0]:02x}{fill_rgb[1]:02x}{fill_rgb[2]:02x}"
-                    # 블록 (위아래 2px, 블록 간 1px)
+                    # 블록 (위아래 2px, 블록 간 1px) + 앞쪽 화자 색 막대
                     draw.rectangle([x1, ln_top+2, max(x1, x2-1), ln_bot-2], fill=fill_hex)
+                    draw.rectangle([x1, ln_top+2, x1+2, ln_bot-3], fill=raw)
 
                     # 텍스트 — 밝은 회색 한 줄, 실제 글꼴 폭으로 잘라 '…'
                     box_w = x2 - x1 - 10
@@ -511,99 +516,101 @@ class TimelineMixin:
                         y = ln * LANE_H
                         draw.line([0, y, cw, y], fill="#232330", width=1)
 
-            # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
-            draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
-            # 중앙 분리선
-            draw.line([0, wf_mid, cw, wf_mid], fill="#1A1A28", width=1)
+            if not base_ok:
+                # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
+                draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
+                # 중앙 분리선
+                draw.line([0, wf_mid, cw, wf_mid], fill="#1A1A28", width=1)
 
-            wf = getattr(self, "_waveform_pts", [])
-            if wf:
-                margin  = (end_r - start_r) / max(cw, 1)
-                pts_vis = [(rx, amp) for rx, amp in wf
-                           if start_r - margin <= rx <= end_r + margin]
-                if not pts_vis:
-                    pts_vis = wf
+                wf = getattr(self, "_waveform_pts", [])
+                if wf:
+                    margin  = (end_r - start_r) / max(cw, 1)
+                    pts_vis = [(rx, amp) for rx, amp in wf
+                               if start_r - margin <= rx <= end_r + margin]
+                    if not pts_vis:
+                        pts_vis = wf
 
-                # 데이터 포인트 → x픽셀 (최대값, _wf_ratio_to_x 식을 인라인)
-                span_r = end_r - start_r
-                scale = cw / span_r if span_r > 0 else 0.0
-                x_amp_raw = {}
-                for rx, amp in pts_vis:
-                    x = int((rx - start_r) * scale) if scale else 0
-                    if 0 <= x < cw:
-                        x_amp_raw[x] = max(x_amp_raw.get(x, 0.0), amp)
+                    # 데이터 포인트 → x픽셀 (최대값, _wf_ratio_to_x 식을 인라인)
+                    span_r = end_r - start_r
+                    scale = cw / span_r if span_r > 0 else 0.0
+                    x_amp_raw = {}
+                    for rx, amp in pts_vis:
+                        x = int((rx - start_r) * scale) if scale else 0
+                        if 0 <= x < cw:
+                            x_amp_raw[x] = max(x_amp_raw.get(x, 0.0), amp)
 
-                # 선형 보간: 데이터 없는 픽셀은 인접 포인트 사이를 부드럽게 채움
-                if x_amp_raw:
-                    filled_xs = sorted(x_amp_raw)
-                    x_amp = {}
-                    for i in range(len(filled_xs)):
-                        xa = filled_xs[i]
-                        aa = x_amp_raw[xa]
-                        x_amp[xa] = aa
-                        if i + 1 < len(filled_xs):
-                            xb = filled_xs[i + 1]
-                            ab = x_amp_raw[xb]
-                            for xi in range(xa + 1, xb):
-                                t = (xi - xa) / (xb - xa)
-                                x_amp[xi] = aa + (ab - aa) * t
-                    # 양 끝 채우기
-                    for xi in range(0, filled_xs[0]):
-                        x_amp[xi] = x_amp_raw[filled_xs[0]]
-                    for xi in range(filled_xs[-1] + 1, cw):
-                        x_amp[xi] = x_amp_raw[filled_xs[-1]]
-                else:
-                    x_amp = {}
+                    # 선형 보간: 데이터 없는 픽셀은 인접 포인트 사이를 부드럽게 채움
+                    if x_amp_raw:
+                        filled_xs = sorted(x_amp_raw)
+                        x_amp = {}
+                        for i in range(len(filled_xs)):
+                            xa = filled_xs[i]
+                            aa = x_amp_raw[xa]
+                            x_amp[xa] = aa
+                            if i + 1 < len(filled_xs):
+                                xb = filled_xs[i + 1]
+                                ab = x_amp_raw[xb]
+                                for xi in range(xa + 1, xb):
+                                    t = (xi - xa) / (xb - xa)
+                                    x_amp[xi] = aa + (ab - aa) * t
+                        # 양 끝 채우기
+                        for xi in range(0, filled_xs[0]):
+                            x_amp[xi] = x_amp_raw[filled_xs[0]]
+                        for xi in range(filled_xs[-1] + 1, cw):
+                            x_amp[xi] = x_amp_raw[filled_xs[-1]]
+                    else:
+                        x_amp = {}
 
-                half_h  = wf_h // 2 - 2   # 채널 하나의 최대 높이
-                WF_BASE = (0x1E, 0x1E, 0x3A)
-                WF_PLAY = (0x3A, 0x2A, 0x5A)
+                    half_h  = wf_h // 2 - 2   # 채널 하나의 최대 높이
+                    WF_BASE = (0x1E, 0x1E, 0x3A)
+                    WF_PLAY = (0x3A, 0x2A, 0x5A)
 
-                for x in range(cw):
-                    amp = x_amp.get(x, 0.0)
-                    if False:  # 구 코드 제거
-                        amp = 0.0
-                    px = int(amp * half_h)
-                    col = WF_PLAY if x <= head_x else WF_BASE
+                    for x in range(cw):
+                        amp = x_amp.get(x, 0.0)
+                        if False:  # 구 코드 제거
+                            amp = 0.0
+                        px = int(amp * half_h)
+                        col = WF_PLAY if x <= head_x else WF_BASE
 
-                    # 상단 채널 (wf_mid 기준 위쪽으로)
-                    y0_top = max(wf_top,  wf_mid - px)
-                    y1_top = wf_mid
-                    for y in range(y0_top, y1_top):
-                        pixels[x, y] = col
+                        # 상단 채널 (wf_mid 기준 위쪽으로)
+                        y0_top = max(wf_top,  wf_mid - px)
+                        y1_top = wf_mid
+                        for y in range(y0_top, y1_top):
+                            pixels[x, y] = col
 
-                    # 하단 채널 (wf_mid 기준 아래쪽으로)
-                    y0_bot = wf_mid + 1
-                    y1_bot = min(wf_bot, wf_mid + px + 1)
-                    for y in range(y0_bot, y1_bot):
-                        pixels[x, y] = col
+                        # 하단 채널 (wf_mid 기준 아래쪽으로)
+                        y0_bot = wf_mid + 1
+                        y1_bot = min(wf_bot, wf_mid + px + 1)
+                        for y in range(y0_bot, y1_bot):
+                            pixels[x, y] = col
 
-            elif dur_ > 0:
-                draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
-                if head_x > 0:
-                    draw.rectangle([0, wf_mid-1, head_x, wf_mid+1], fill=ACCENT)
+                elif dur_ > 0:
+                    draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
+                    if head_x > 0:
+                        draw.rectangle([0, wf_mid-1, head_x, wf_mid+1], fill=ACCENT)
 
-            # ── C. 시간 눈금 ─────────────────────
-            if dur > 0:
-                span_sec = (end_r - start_r) * dur
-                for tick in [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]:
-                    if span_sec / tick <= self._WF_MAX_TICKS_ON_SCREEN:
-                        tick_step = tick; break
-                else:
-                    tick_step = 600
-                t = (int(start_r * dur / tick_step)) * tick_step
-                while t <= end_r * dur:
-                    if t > dur: break
-                    x = _r2x(t / dur, cw)
-                    if 0 <= x <= cw:
-                        draw.line([x, wf_bot, x, wf_bot+4], fill="#444466")
-                        h_ = int(t//3600); m_ = int((t%3600)//60); s_ = int(t%60)
-                        ms = int((t*10)%10)
-                        lbl = (f"{m_}:{s_:02d}.{ms}" if tick_step < 1
-                               else f"{h_}:{m_:02d}:{s_:02d}" if h_
-                               else f"{m_}:{s_:02d}")
-                        draw.text((x+3, wf_bot+2), lbl, fill="#555577")
-                    t += tick_step
+                # ── C. 시간 눈금 ─────────────────────
+                if dur > 0:
+                    span_sec = (end_r - start_r) * dur
+                    for tick in [0.1, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600]:
+                        if span_sec / tick <= self._WF_MAX_TICKS_ON_SCREEN:
+                            tick_step = tick; break
+                    else:
+                        tick_step = 600
+                    t = (int(start_r * dur / tick_step)) * tick_step
+                    while t <= end_r * dur:
+                        if t > dur: break
+                        x = _r2x(t / dur, cw)
+                        if 0 <= x <= cw:
+                            draw.line([x, wf_bot, x, wf_bot+4], fill="#444466")
+                            h_ = int(t//3600); m_ = int((t%3600)//60); s_ = int(t%60)
+                            ms = int((t*10)%10)
+                            lbl = (f"{m_}:{s_:02d}.{ms}" if tick_step < 1
+                                   else f"{h_}:{m_:02d}:{s_:02d}" if h_
+                                   else f"{m_}:{s_:02d}")
+                            draw.text((x+3, wf_bot+2), lbl, fill="#555577")
+                        t += tick_step
+                self._wf_base_cache = (base_key, img.copy())
 
             img_tk = ImageTk.PhotoImage(img)
             self._wf_img_cache = (cache_key, img_tk)
@@ -615,8 +622,10 @@ class TimelineMixin:
         # 옮긴다. 재생 중 초당 수십 번 호출되는 이 함수에서 매번 delete("all")
         # 후 전체 아이템을 재생성하는 것이 가장 큰 렉의 원인이었다.
         drag_active = getattr(self, "_wf_sub_drag", None) is not None
+        overlay_key = frozenset(getattr(self, "_selected_rows", ()))
         fast_path = (cache_hit and not drag_active
                      and getattr(self, "_wf_last_img", None) is img_tk
+                     and getattr(self, "_wf_overlay_key", None) == overlay_key
                      and c.find_withtag("bgimg"))
 
         if fast_path:
@@ -628,6 +637,7 @@ class TimelineMixin:
         c.delete("all")
         c.create_image(0, 0, anchor="nw", image=img_tk, tags="bgimg")
         self._wf_last_img = img_tk
+        self._wf_overlay_key = overlay_key
 
         # 재생 헤드
         if dur > 0:
@@ -639,6 +649,7 @@ class TimelineMixin:
         if cache and self.subtitles:
             drag = getattr(self, "_wf_sub_drag", None)
             HW   = self._WF_HANDLE_W
+            sel  = getattr(self, "_selected_rows", set())
             for i, (t_s, t_e) in enumerate(cache):
                 if t_s is None or t_e is None:
                     continue
@@ -657,10 +668,14 @@ class TimelineMixin:
                 moving    = drag and drag["mode"] == "move" and i in drag.get("group", {})
                 ln_top = ln * LANE_H
                 ln_bot = ln_top + LANE_H
+                if not (moving or snapped_s or snapped_e or i in sel):
+                    continue   # 나머지는 배경 이미지에 이미 그려짐
                 if moving:
                     # 이동 중인 자막은 테두리로 강조
                     c.create_rectangle(x1, ln_top+1, x2, ln_bot-1,
                                        outline="#FFFFFF", width=1)
+                elif i in sel:   # 선택된 자막
+                    c.create_rectangle(x1, ln_top+1, x2, ln_bot-1, outline=ACCENT, width=1)
                 # 앞쪽 화자 색 막대, 크기 조절 핸들은 드래그 중에만 표시
                 c.create_rectangle(x1, ln_top+2, x1+3, ln_bot-2,
                                    fill="#FFFFFF" if snapped_s else color, outline="")
