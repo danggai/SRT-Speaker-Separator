@@ -267,7 +267,7 @@ class TimelineMixin:
         """자막들의 시간 겹침을 분석해 각 자막을 레인(줄) 번호(0부터)에
         배정한다. 레인 수는 자동으로 늘어나지 않고, 사용자가 우클릭 메뉴의
         '레이어 추가'로 직접 설정한 개수(self._wf_manual_lanes, 기본 1)만큼만
-        사용한다. 그보다 많이 겹치면 초과분은 마지막 레인을 함께 쓴다.
+        사용한다. 새 자막은 겹치지 않는 레인에, 다 겹치면 가장 덜 겹치는 레인에 둔다.
 
         ⚠ 안정화: 한 번 배정된 레인은(드래그로 직접 옮겼든, 자동으로 배정
         됐든) subtitle["_lane"]에 저장해두고 계속 유지한다. 그래서 자막
@@ -284,7 +284,7 @@ class TimelineMixin:
             return {}, max_lanes
         items.sort(key=lambda x: x[1])
 
-        lane_end = [0.0] * max_lanes
+        spans = [[] for _ in range(max_lanes)]   # 레인별 (시작, 끝)
         lanes = {}
 
         # 1차: 이미 레인이 정해진(드래그로 옮겼든 이전에 자동 배정됐든)
@@ -293,24 +293,20 @@ class TimelineMixin:
             pinned = self.subtitles[idx].get("_lane") if idx < len(self.subtitles) else None
             if isinstance(pinned, int) and 0 <= pinned < max_lanes:
                 lanes[idx] = pinned
-                lane_end[pinned] = max(lane_end[pinned], t_e)
+                spans[pinned].append((t_s, t_e))
 
-        # 2차: 레인이 아직 없는(새로 생긴) 자막만 빈 레인을 찾아 배치
+        def overlap(lane, t_s, t_e):
+            return sum(max(0.0, min(t_e, e) - max(t_s, s)) for s, e in spans[lane])
+
+        # 2차: 레인이 아직 없는(새로 생긴) 자막은 겹치지 않는 레인에 (레인 수는 그대로).
+        # 다 겹치면 가장 덜 겹치는 레인에 넣는다.
         for idx, t_s, t_e in items:
             if idx in lanes:
                 continue
-            placed = False
-            for lane in range(max_lanes):
-                if lane_end[lane] <= t_s:
-                    lane_end[lane] = t_e
-                    lanes[idx] = lane
-                    placed = True
-                    break
-            if not placed:
-                # 최대 레인 초과 → 마지막 레인에 강제 배정(그 경우만 겹쳐 보임)
-                last = max_lanes - 1
-                lane_end[last] = max(lane_end[last], t_e)
-                lanes[idx] = last
+            lane = 0 if max_lanes == 1 else min(
+                range(max_lanes), key=lambda ln: (overlap(ln, t_s, t_e) > 0, overlap(ln, t_s, t_e), ln))
+            lanes[idx] = lane
+            spans[lane].append((t_s, t_e))
 
         # 이번에 정해진 레인을 자막에 다시 저장 — 다음 재계산 때도 유지되게
         for idx, lane in lanes.items():
