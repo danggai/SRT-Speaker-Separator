@@ -1061,7 +1061,10 @@ class TimelineMixin:
             # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프/레이어 변경 없음)
             if moved <= CLICK_THR:
                 self._wf_sub_drag = None
-                if drag["mode"] == "move":
+                if drag["mode"] == "move" and event.state & 0x0001:   # Shift+클릭: 범위 선택
+                    self._shift_select(idx)
+                    self._pb_redraw()
+                elif drag["mode"] == "move":
                     # 자막 바디 클릭 — 같은 위치를 다시 클릭하면 겹친 자막들을 순환 선택
                     # (재생 위치는 옮기지 않고 '선택'만 한다)
                     target_idx = self._wf_cycle_click(drag.get("stack") or [idx], idx)

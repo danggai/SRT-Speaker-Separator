@@ -577,8 +577,11 @@ class SubtitleTableMixin:
     def _slot_shift_click(self, slot_idx):
         """Shift+클릭: anchor부터 현재까지 범위 선택."""
         di = self._slot_data_idx(slot_idx)
-        if di < 0:
-            return
+        if di >= 0:
+            self._shift_select(di)
+
+    def _shift_select(self, di):
+        """기준 줄부터 di까지 범위 선택 (표·타임라인 Shift+클릭 공용)."""
         anchor = getattr(self, "_selected_row_idx", None)
         if anchor is None:
             self._select_row(di)

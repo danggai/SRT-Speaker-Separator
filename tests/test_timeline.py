@@ -166,6 +166,19 @@ def click_on_subtitle_selects_without_changing_time(app):
 
 
 @test
+def shift_click_on_timeline_selects_range(app):
+    with_media(app)
+    x, y = pb_xy(app, 2)
+    drag(app, x, y, x, y, steps=1)
+    old = app.subtitles[6]["timestamp"]
+    x, y = pb_xy(app, 6)
+    drag(app, x, y, x + 2, y, state=0x0001, steps=1)
+    eq(app._selected_rows, {2, 3, 4, 5, 6}, "Shift+클릭으로 사이 자막 모두 선택")
+    eq(app.subtitles[6]["timestamp"], old, "시간은 그대로")
+    expect(not app._unsaved, "선택만으로 수정 표시가 되면 안 돼요")
+
+
+@test
 def resize_handles_respect_minimum_length(app):
     with_media(app)
     s0, e0 = secs(app.subtitles[4]["timestamp"])
@@ -339,11 +352,11 @@ def play_pause_and_seek_keys(app):
     eq(app.btn_play._kind, "play")
     pos = app.player.position
     app_key("<Right>")
-    near(app.player.position, min(pos + 5, 40), 0.3, "→ 키는 5초 앞으로")
+    near(app.player.position, min(pos + 0.5, 40), 0.2, "→ 키는 0.5초 앞으로")
     app_key("<Left>")
-    near(app.player.position, pos, 0.3, "← 키는 5초 뒤로")
+    near(app.player.position, pos, 0.2, "← 키는 0.5초 뒤로")
     app_key("<Shift-Right>")
-    near(app.player.position, min(pos + 30, 40), 0.3, "Shift+→ 는 30초")
+    near(app.player.position, min(pos + 5, 40), 0.3, "Shift+→ 는 5초")
     app._media_stop()
     eq(app.media_progress_var.get(), 0, "정지하면 처음으로")
     eq(app._playing_rows, set())
