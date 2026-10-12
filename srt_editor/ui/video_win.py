@@ -105,13 +105,15 @@ class VideoMixin:
     def _prepare_play_audio(self, path):
         """음성 파일의 재생용 WAV를 뒤에서 만든다 (만드는 동안은 원본으로 재생, 부품이 없으면 원본 그대로)."""
         from ..video import needs_play_audio
-        from ..video_deps import load_av
-        av = load_av()
-        if av is None or not needs_play_audio(path):
+        if not needs_play_audio(path):
             return
 
         def work():
             from ..video import extract_audio
+            from ..video_deps import load_av
+            av = load_av()   # 부품 불러오기도 뒤에서 (처음 실행 땐 몇 초 걸려 화면이 멈춤)
+            if av is None:
+                return
             try:
                 audio = extract_audio(av, path)
             except Exception:   # noqa: BLE001 (원본으로 계속 재생)
