@@ -344,9 +344,11 @@ def media_wav_duration_and_waveform(app):
                        f"콜백 통계={__import__('harness')._stats}, 대기={__import__('harness')._pending.qsize()})")
     expect(abs(app.player.duration - 40) < 0.5, f"길이 {app.player.duration}")
     expect("sample.wav" in str(app.media_path))
-    wait_until(lambda: len(app._waveform_pts) > 100 and not app._wf_loading, 90, "파형 추출")
-    amps = [a for _, a in app._waveform_pts]
-    expect(0.0 <= min(amps) and max(amps) <= 1.0 and max(amps) > 0.1, "파형 값 범위")
+    wait_until(lambda: app._waveform is not None and not app._wf_loading, 90, "파형 추출")
+    from srt_editor.waveform import STEP_SEC, columns
+    expect(abs(len(app._waveform[0]) * STEP_SEC - 40) < 0.1, f"파형 길이 {len(app._waveform[0]) * STEP_SEC}초")
+    amps = columns(app._waveform, 0, 40, 400)
+    expect(0.0 <= amps.min() and amps.max() <= 1.0 and amps.max() > 0.1, "파형 값 범위")
     from srt_editor import waveform
     expect(list(pathlib.Path(waveform.CACHE_DIR).glob("*.bin")), "파형 캐시가 안 만들어짐")
 

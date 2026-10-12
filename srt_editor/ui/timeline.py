@@ -59,7 +59,7 @@ class TimelineMixin:
                                     cursor="hand2")
         self._pb_canvas.pack(side="left", fill="x", expand=True)
         self._pb_dragging  = False
-        self._waveform_pts = []
+        self._waveform = None   # 10ms 조각별 (최대값, 제곱평균) 배열 쌍
         self._wf_loading   = False
 
         # 줌/스크롤 상태: _wf_zoom=1.0~10.0, _wf_offset=0.0~1.0 (좌측 비율)
@@ -402,7 +402,7 @@ class TimelineMixin:
 
         # ── 캐시 키 ───────────────────────────
         cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
-                     id(self._waveform_pts),
+                     id(getattr(self, "_waveform", None)),
                      tuple((s.get("speaker",""), s.get("timestamp",""))
                             for s in (self.subtitles or [])),
                      round(dur_, 2))
@@ -421,7 +421,6 @@ class TimelineMixin:
             base_ok = bool(base and base[0] == base_key)
             img    = base[1].copy() if base_ok else Image.new("RGB", (cw, ch), "#0D0D0F")
             draw   = ImageDraw.Draw(img)
-            pixels = img.load()
 
             # ── A. 자막 타임라인 행 ───────────
             # 배경
@@ -518,67 +517,22 @@ class TimelineMixin:
                 # 중앙 분리선
                 draw.line([0, wf_mid, cw, wf_mid], fill="#1A1A28", width=1)
 
-                wf = getattr(self, "_waveform_pts", [])
-                if wf:
-                    margin  = (end_r - start_r) / max(cw, 1)
-                    pts_vis = [(rx, amp) for rx, amp in wf
-                               if start_r - margin <= rx <= end_r + margin]
-                    if not pts_vis:
-                        pts_vis = wf
-
-                    # 데이터 포인트 → x픽셀 (최대값, _wf_ratio_to_x 식을 인라인)
-                    span_r = end_r - start_r
-                    scale = cw / span_r if span_r > 0 else 0.0
-                    x_amp_raw = {}
-                    for rx, amp in pts_vis:
-                        x = int((rx - start_r) * scale) if scale else 0
-                        if 0 <= x < cw:
-                            x_amp_raw[x] = max(x_amp_raw.get(x, 0.0), amp)
-
-                    # 선형 보간: 데이터 없는 픽셀은 인접 포인트 사이를 부드럽게 채움
-                    if x_amp_raw:
-                        filled_xs = sorted(x_amp_raw)
-                        x_amp = {}
-                        for i in range(len(filled_xs)):
-                            xa = filled_xs[i]
-                            aa = x_amp_raw[xa]
-                            x_amp[xa] = aa
-                            if i + 1 < len(filled_xs):
-                                xb = filled_xs[i + 1]
-                                ab = x_amp_raw[xb]
-                                for xi in range(xa + 1, xb):
-                                    t = (xi - xa) / (xb - xa)
-                                    x_amp[xi] = aa + (ab - aa) * t
-                        # 양 끝 채우기
-                        for xi in range(0, filled_xs[0]):
-                            x_amp[xi] = x_amp_raw[filled_xs[0]]
-                        for xi in range(filled_xs[-1] + 1, cw):
-                            x_amp[xi] = x_amp_raw[filled_xs[-1]]
-                    else:
-                        x_amp = {}
-
-                    half_h  = wf_h // 2 - 2   # 채널 하나의 최대 높이
-                    WF_BASE = (0x1E, 0x1E, 0x3A)
-                    WF_PLAY = (0x3A, 0x2A, 0x5A)
-
-                    for x in range(cw):
-                        amp = x_amp.get(x, 0.0)
-                        if False:  # 구 코드 제거
-                            amp = 0.0
-                        px = int(amp * half_h)
-                        col = WF_PLAY if x <= head_x else WF_BASE
-
-                        # 상단 채널 (wf_mid 기준 위쪽으로)
-                        y0_top = max(wf_top,  wf_mid - px)
-                        y1_top = wf_mid
-                        for y in range(y0_top, y1_top):
-                            pixels[x, y] = col
-
-                        # 하단 채널 (wf_mid 기준 아래쪽으로)
-                        y0_bot = wf_mid + 1
-                        y1_bot = min(wf_bot, wf_mid + px + 1)
-                        for y in range(y0_bot, y1_bot):
-                            pixels[x, y] = col
+                wf = getattr(self, "_waveform", None)
+                if wf is not None:
+                    import numpy as np
+                    from ..waveform import columns
+                    # 보이는 구간을 초 단위로 잘라 10ms 조각에서 바로 계산 (확대해도 소리와 같은 자리)
+                    col_amp = columns(wf, start_r * dur_, end_r * dur_, cw)
+                    half_h = wf_h // 2 - 2   # 채널 하나의 최대 높이
+                    px = (col_amp * half_h).astype(np.int32)
+                    ys = np.arange(wf_top, wf_bot)[:, None]
+                    on = (((ys >= wf_mid - px) & (ys < wf_mid)) |
+                          ((ys >= wf_mid + 1) & (ys < np.minimum(wf_bot, wf_mid + px + 1))))
+                    region = np.asarray(img.crop((0, wf_top, cw, wf_bot))).copy()
+                    played = np.arange(cw) <= head_x
+                    region[on & played] = (0x3A, 0x2A, 0x5A)
+                    region[on & ~played] = (0x1E, 0x1E, 0x3A)
+                    img.paste(Image.fromarray(region), (0, wf_top))
 
                 elif dur_ > 0:
                     draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
@@ -1500,28 +1454,25 @@ class TimelineMixin:
         """PyAV로 파형 추출 — UI 블로킹 없음. src: 실제로 읽을 소리 파일 (영상이면 뽑아 둔 mp3)."""
         src = src or path
         self._wf_loading = True
-        self._waveform_pts = []
+        self._waveform = None
         self._pb_redraw()
-
-        cw    = max(self._pb_canvas.winfo_width(), 800)
-        N_PTS = max(4000, min(cw * 128, 32000))
 
         def _worker():
             import traceback
             try:
-                from ..waveform import extract_waveform_pts, load_cached, save_cached
-                pts = load_cached(src, N_PTS)
+                from ..waveform import extract_waveform, load_cached, save_cached
+                pts = load_cached(src)
                 if pts is None:
                     # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
                     from concurrent.futures import ProcessPoolExecutor
                     import multiprocessing as _mp
                     with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
-                        pts = ex.submit(extract_waveform_pts, src, N_PTS).result()
-                    save_cached(src, N_PTS, pts)
+                        pts = ex.submit(extract_waveform, src).result()
+                    save_cached(src, pts)
 
                 def _apply():
                     if self.media_path == path:
-                        self._waveform_pts = pts
+                        self._waveform = pts
                         self._wf_loading   = False
                         self._pb_redraw()
                 self.after(0, _apply)

@@ -75,7 +75,7 @@ class FileMixin:
         self._update_count()
         self._pb_redraw()
         # 파형 초기화
-        self._waveform_pts = []
+        self._waveform = None
         self._wf_loading   = False
         try:
             self._set_media_label(None)
@@ -298,7 +298,7 @@ class FileMixin:
         threading.Thread(target=_fetch, daemon=True).start()
 
         # 파형 추출 시작 (영상은 소리를 뽑은 뒤)
-        self._waveform_pts = []
+        self._waveform = None
         self._pb_redraw()
         if self._is_video():
             self._prepare_video_audio(path)
