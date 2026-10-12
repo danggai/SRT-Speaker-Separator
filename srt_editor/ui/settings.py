@@ -527,8 +527,8 @@ class SettingsMixin:
 
         card = self._settings_card(parent, "재생 · 이동")
         _, right = self._settings_row(card, "↔", "←/→ 이동 간격", None)
-        self._opt_number(right, "seek_step", "초", 1, 60)
-        self._opt_number(right, "seek_step_shift", "초", 1, 300, label="Shift")
+        self._opt_number(right, "seek_step", "초", 0.1, 60, is_float=True)
+        self._opt_number(right, "seek_step_shift", "초", 0.1, 300, is_float=True, label="Shift")
         _, right = self._settings_row(card, "▸", "자막 클릭 시 재생 위치 이동",
                                       None)
         self._opt_toggle(right, "click_seek")

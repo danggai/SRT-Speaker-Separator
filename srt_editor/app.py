@@ -723,9 +723,9 @@ class SRTEditor(
 
         # ── 재생 컨트롤 ──────────────────────
         T(self.btn_stop, "처음으로 이동")
-        T(self.btn_prev, "5초 뒤로  [←]  (Shift: 30초)")
+        T(self.btn_prev, "뒤로 이동  [←]  (Shift: 크게)")
         T(self.btn_play, "재생 / 일시정지  [Space]")
-        T(self.btn_next, "5초 앞으로  [→]  (Shift: 30초)")
+        T(self.btn_next, "앞으로 이동  [→]  (Shift: 크게)")
         T(self._vol_icon,   "음소거 켜기/끄기  [Ctrl+M]")
         T(self._vol_canvas, "볼륨 조절  (드래그)\n현재: " + str(self._vol_var) + "%")
         T(self._pb_canvas,  "재생 위치 이동  (클릭/드래그)")
