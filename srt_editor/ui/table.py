@@ -220,7 +220,7 @@ class SubtitleTableMixin:
                       font=(theme.FONT_FAMILY, 10), tags=(t, t + "txt"), state="hidden")
 
         wi = {"_ts_editing": False, "_txt_editing": False, "pill_values": [], "pill_w": [],
-              "_paint": {}, "tag": t}
+              "_paint": {}, "_ic": {}, "tag": t}
 
         def _entry(**kw):
             return tk.Entry(c, relief="flat", highlightthickness=1, **kw)
@@ -847,15 +847,16 @@ class SubtitleTableMixin:
         t   = wi["tag"]
         c   = self.canvas
         bg, outline, width = self._slot_colors(di)
-        c.itemconfigure(t + "card", fill=bg, outline=outline, width=width)
+        ic  = self._slot_ic
+        ic(wi, t + "card", fill=bg, outline=outline, width=width)
         if sub.get("_check"):   # 화자 분석이 확신하지 못한 줄
-            c.itemconfigure(t + "num", text=str(di + 1), fill=_CHECK_FG, font=(theme.FONT_FAMILY, 8, "bold"))
-            c.itemconfigure(t + "chk", text="?")
+            ic(wi, t + "num", text=str(di + 1), fill=_CHECK_FG, font=(theme.FONT_FAMILY, 8, "bold"))
+            ic(wi, t + "chk", text="?")
         else:
-            c.itemconfigure(t + "num", text=str(di + 1), fill="#6A6A76", font=(theme.FONT_FAMILY, 8))
-            c.itemconfigure(t + "chk", text="")
+            ic(wi, t + "num", text=str(di + 1), fill="#6A6A76", font=(theme.FONT_FAMILY, 8))
+            ic(wi, t + "chk", text="")
         spk = sub.get("speaker", "")
-        c.itemconfigure(t + "bar", fill=self._speaker_color(spk) if spk else "")
+        ic(wi, t + "bar", fill=self._speaker_color(spk) if spk else "")
 
         ts_full  = sub.get("timestamp", "")
         parts    = ts_full.split("-->")
@@ -872,11 +873,11 @@ class SubtitleTableMixin:
             self._ts_style(wi["ts_e"], ts_end)
         if self._ts_valid(ts_start) and self._ts_valid(ts_end):
             t_s, t_e = self._ts_to_sec(ts_start), self._ts_to_sec(ts_end)
-            c.itemconfigure(t + "tlbl", text=self._fmt_card_time(t_s), fill="#B9A6EC")
-            c.itemconfigure(t + "dur", text=f"+{max(0.0, t_e - t_s):.2f}초")
+            ic(wi, t + "tlbl", text=self._fmt_card_time(t_s), fill="#B9A6EC")
+            ic(wi, t + "dur", text=f"+{max(0.0, t_e - t_s):.2f}초")
         else:
-            c.itemconfigure(t + "tlbl", text="시간 오류", fill="#FF6B8A")
-            c.itemconfigure(t + "dur", text="")
+            ic(wi, t + "tlbl", text="시간 오류", fill="#FF6B8A")
+            ic(wi, t + "dur", text="")
 
         if focus is not wi["content"]:
             wi["txt_var"].set(sub.get("text", "").replace("\n", _BR))
@@ -945,6 +946,13 @@ class SubtitleTableMixin:
             cache[key] = self._pill_font(bold).measure(label)
         return cache[key]
 
+    def _slot_ic(self, wi, item, **kw):
+        """슬롯의 캔버스 항목 설정 (지난번과 같으면 건너뜀)."""
+        last = wi["_ic"]
+        if last.get(item) != kw:
+            self.canvas.itemconfigure(item, **kw)
+            last[item] = kw
+
     def _update_slot_pills(self, slot_idx, sub, bg):
         """화자 버튼(캔버스 그림)의 글자·색을 갱신하고, 모자라면 새로 그린다."""
         wi      = self._slot_widgets[slot_idx]
@@ -962,11 +970,11 @@ class SubtitleTableMixin:
         for pi, (val, label) in enumerate(choices):
             is_sel = val == current
             color = self._speaker_color(val)
-            c.itemconfigure(f"{t}pb{pi}", fill=color if is_sel else bg,
-                            outline=color if is_sel else "#3A3A44")
-            c.itemconfigure(f"{t}pt{pi}", text=label,
-                            fill=_on_color(color) if is_sel else FG_FAINT,
-                            font=self._pill_font(is_sel))
+            self._slot_ic(wi, f"{t}pb{pi}", fill=color if is_sel else bg,
+                          outline=color if is_sel else "#3A3A44")
+            self._slot_ic(wi, f"{t}pt{pi}", text=label,
+                          fill=_on_color(color) if is_sel else FG_FAINT,
+                          font=self._pill_font(is_sel))
             wi["pill_values"][pi] = val
             wi["pill_w"][pi] = self._pill_text_w(label, is_sel) + 2 * self._PILL_PADX
         wi["_pill_n"] = len(choices)
@@ -1030,7 +1038,7 @@ class SubtitleTableMixin:
                 c.itemconfigure(wi[key], width=ew, height=ch - 10)
             paint["geom"] = geom
             paint["pills"] = paint["tlbl_w"] = None
-        tlbl = c.itemcget(t + "tlbl", "text")
+        tlbl = wi["_ic"].get(t + "tlbl", {}).get("text") or c.itemcget(t + "tlbl", "text")
         if paint.get("tlbl_w") != len(tlbl):   # 시간 글자 길이가 바뀔 때만 길이 표시를 옮긴다
             bb = c.bbox(t + "tlbl")
             c.coords(t + "dur", (bb[2] if bb else tx + 11) + 5, cy + 1)
