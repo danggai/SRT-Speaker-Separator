@@ -110,8 +110,8 @@ class SubtitleTableMixin:
         self.canvas.bind("<Button-3>",        self._canvas_right_press)
         self.canvas.bind("<B1-Motion>",       self._canvas_drag_motion)
         self.canvas.bind("<ButtonRelease-1>", self._canvas_drag_end)
-        self.canvas.tag_bind("pill", "<Enter>", lambda e: self.canvas.configure(cursor="hand2"))
-        self.canvas.tag_bind("pill", "<Leave>", lambda e: self.canvas.configure(cursor=""))
+        self.canvas.bind("<Motion>", self._canvas_motion)
+        self.canvas.bind("<Leave>", lambda e: self._set_canvas_cursor(""))
         self._drag_sel_active  = False   # 드래그 범위선택 진행 중
         self._drag_sel_anchor  = None    # 드래그 시작 자막 인덱스
         self._drag_autoscroll_job = None
@@ -329,7 +329,7 @@ class SubtitleTableMixin:
             self._canvas_drag_start(e)
             return
         # 편집을 연 클릭은 "break"로 끝내 전역 클릭 처리가 포커스를 뺏지 않게 함
-        pi = self._pill_at(s, e.x, e.y)
+        pi = self._pill_at(s, self.canvas.canvasx(e.x), self.canvas.canvasy(e.y))
         if pi is not None:
             self._blur_all_entries()
             self._slot_pill_click(s, pi)
@@ -748,6 +748,7 @@ class SubtitleTableMixin:
         # 가드를 우회하고 반드시 지금 자막의 실제 저장값으로 강제 갱신한다.
         sub = self.subtitles[di] if di < len(self.subtitles) else {}
         wi["txt_var"].set(sub.get("text", "").replace("\n", _BR))
+        wi["_txt_shown"] = None   # 이제 입력칸 글자가 기준 (입력하면 바뀜)
         ts_full = sub.get("timestamp", "")
         parts   = ts_full.split("-->")
         wi["ts_s_var"].set(parts[0].strip() if len(parts) >= 2 else ts_full.strip())
@@ -867,12 +868,12 @@ class SubtitleTableMixin:
         ts_start = parts[0].strip() if len(parts) >= 2 else ts_full.strip()
         ts_end   = parts[1].strip() if len(parts) >= 2 else ""
         focus = self.focus_get()
-        # 편집 중(포커스 상태)인 입력칸은 덮어쓰지 않음
-        if focus is not wi["ts_s"]:
-            wi["ts_s_var"].set(ts_start)
-        if focus is not wi["ts_e"]:
-            wi["ts_e_var"].set(ts_end)
-        if wi.get("_ts_editing"):
+        if wi.get("_ts_editing"):   # 시간 입력칸은 펼쳤을 때만 채움 (평소엔 숨겨져 있음)
+            # 편집 중(포커스 상태)인 입력칸은 덮어쓰지 않음
+            if focus is not wi["ts_s"]:
+                wi["ts_s_var"].set(ts_start)
+            if focus is not wi["ts_e"]:
+                wi["ts_e_var"].set(ts_end)
             self._ts_style(wi["ts_s"], ts_start)
             self._ts_style(wi["ts_e"], ts_end)
         if self._ts_valid(ts_start) and self._ts_valid(ts_end):
@@ -884,7 +885,10 @@ class SubtitleTableMixin:
             ic(wi, t + "dur", text="")
 
         if focus is not wi["content"]:
-            wi["txt_var"].set(sub.get("text", "").replace("\n", _BR))
+            txt = sub.get("text", "").replace("\n", _BR)
+            if wi.get("_txt_shown") != txt:
+                wi["txt_var"].set(txt)
+                wi["_txt_shown"] = txt
         if wi["_paint"].get("bg") != bg:   # 바뀔 때만 위젯 설정
             wi["content"].configure(bg=bg, highlightbackground=bg)
             wi["_paint"]["bg"] = bg
@@ -902,6 +906,9 @@ class SubtitleTableMixin:
             self._blur_all_entries()   # 다른 편집칸 내용 먼저 저장
         self._close_other_edits(slot_idx)
         wi["_ts_editing"] = True
+        parts = self.subtitles[di].get("timestamp", "").split("-->")
+        wi["ts_s_var"].set(parts[0].strip() if len(parts) >= 2 else "".join(parts).strip())
+        wi["ts_e_var"].set(parts[1].strip() if len(parts) >= 2 else "")
         self._ts_style(wi["ts_s"], wi["ts_s_var"].get())
         self._ts_style(wi["ts_e"], wi["ts_e_var"].get())
         self._apply_col_to_slot(slot_idx, self._get_col_positions(),
@@ -998,6 +1005,17 @@ class SubtitleTableMixin:
                                     outline="#3A3A44", width=s)
             cache[key] = ImageTk.PhotoImage(im.resize((w, h), Image.LANCZOS), master=self)
         return cache[key]
+
+    def _set_canvas_cursor(self, cur):
+        if self.__dict__.get("_canvas_cursor") != cur:
+            self._canvas_cursor = cur
+            self.canvas.configure(cursor=cur)
+
+    def _canvas_motion(self, e):
+        """화자 버튼 위에서만 손가락 커서."""
+        s = self._slot_at(e)
+        on = s >= 0 and self._slot_data[s] >= 0 and self._pill_at(s, self.canvas.canvasx(e.x), self.canvas.canvasy(e.y)) is not None
+        self._set_canvas_cursor("hand2" if on else "")
 
     def _pill_at(self, slot_idx, x, y):
         """슬롯의 (x, y)에 있는 화자 버튼 번호 (없으면 None)."""
@@ -1103,7 +1121,8 @@ class SubtitleTableMixin:
         if paint.get("pills") != pills:
             self._layout_pills(slot_idx, pos)
             paint["pills"] = pills
-        fit = (wi["txt_var"].get(), ew_txt - 6)
+        shown = wi.get("_txt_shown")
+        fit = (shown if shown is not None else wi["txt_var"].get(), ew_txt - 6)
         if paint.get("text") != fit:   # 글자나 칸 폭이 바뀔 때만 다시 자름
             c.itemconfigure(t + "txt", text=self._fit_text(*fit))
             paint["text"] = fit

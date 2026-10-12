@@ -367,6 +367,11 @@ def pill_click_assigns_speaker_with_undo(app):
     eq(app.subtitles[2]["speaker"], "준호", "버튼으로 지정")
     app._undo()
     eq(app.subtitles[2]["speaker"], "", "실행 취소")
+    app._canvas_motion(Ev(app.canvas, cx, cy))
+    eq(app.canvas.cget("cursor"), "hand2", "화자 버튼 위에서는 손가락 커서")
+    gap_x = int(bx + bw + app._PILL_GAP / 2 + 1)
+    app._canvas_motion(Ev(app.canvas, gap_x, cy))
+    eq(app.canvas.cget("cursor"), "", "버튼 사이 틈에서는 기본 커서")
 
 
 @test

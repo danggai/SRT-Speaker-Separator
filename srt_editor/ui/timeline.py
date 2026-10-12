@@ -646,7 +646,13 @@ class TimelineMixin:
             drag = getattr(self, "_wf_sub_drag", None)
             HW   = self._WF_HANDLE_W
             sel  = getattr(self, "_selected_rows", set())
-            for i, (t_s, t_e) in enumerate(cache):
+            # 표시할 건 선택·드래그 중인 자막뿐 (나머지는 배경 이미지에 있음) — 전부 돌면 줄 이동마다 느려짐
+            todo = set(sel)
+            if drag:
+                todo.add(drag["idx"])
+                todo.update(drag.get("group", {}))
+            for i in sorted(j for j in todo if 0 <= j < len(cache)):
+                t_s, t_e = cache[i]
                 if t_s is None or t_e is None:
                     continue
                 ts, te, ln = t_s, t_e, lanes.get(i, 0)

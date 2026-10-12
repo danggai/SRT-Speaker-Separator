@@ -86,6 +86,25 @@ def stress_long_srt_editing_lag(app):
     r("실행 취소", app._undo, 10)
     r("Page Down", k("<Next>"), 20)
     r("Page Up", k("<Prior>"), 20)
+    split = [0.0, 0.0]
+    for i in range(20):
+        t0 = time.perf_counter()
+        app.event_generate("<Next>" if i % 2 == 0 else "<Prior>")
+        t1 = time.perf_counter()
+        app.update()
+        split[0] += t1 - t0
+        split[1] += time.perf_counter() - t1
+    rep.append("Page Up/Down 나눠 보기: 처리 %.1fms / 화면 그리기 %.1fms" % (split[0] / 20 * 1000, split[1] / 20 * 1000))
+    if os.environ.get("SRT_STRESS_PROFILE_OPS"):   # 그리기를 뺀 처리만 분석
+        p = cProfile.Profile()
+        for i in range(20):
+            p.enable()
+            app.event_generate("<Next>" if i % 2 == 0 else "<Prior>")
+            p.disable()
+            app.update()
+        s = io.StringIO()
+        pstats.Stats(p, stream=s).sort_stats("cumulative").print_stats(25)
+        profs["Page Up/Down 처리만"] = s.getvalue()
     rep.append("정지 상태 지연: 평균 %.1f / 최대 %.1fms" % _latency(app, 2))
 
     def hold(seq, n=30, gap_ms=33):
