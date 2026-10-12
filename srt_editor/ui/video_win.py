@@ -102,8 +102,38 @@ class VideoMixin:
         threading.Thread(target=work, daemon=True).start()
 
     # ── 영상의 소리 ──────────────────────────
+    def _prepare_play_audio(self, path):
+        """음성 파일의 재생용 WAV를 뒤에서 만든다 (만드는 동안은 원본으로 재생, 부품이 없으면 원본 그대로)."""
+        from ..video import needs_play_audio
+        from ..video_deps import load_av
+        av = load_av()
+        if av is None or not needs_play_audio(path):
+            return
+
+        def work():
+            from ..video import extract_audio
+            try:
+                audio = extract_audio(av, path)
+            except Exception:   # noqa: BLE001 (원본으로 계속 재생)
+                return
+            self.after(0, lambda: self._swap_play_audio(path, audio))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _swap_play_audio(self, path, audio):
+        """재생 중인 소리를 같은 위치에서 재생용 소리로 바꾼다."""
+        if self.media_path != path:
+            return
+        player = self.player
+        pos, was_playing = player.position, player.is_playing
+        player._stop_music()
+        player._filepath = audio
+        player._position = pos
+        self._set_play_speed(getattr(self, "_speed_choice", 1.0))   # 배속 소리도 바뀐 소리로 다시
+        if was_playing:
+            player.play()
+
     def _prepare_video_audio(self, path):
-        """영상의 소리를 mp3로 뽑아 재생·파형에 쓴다."""
+        """영상의 소리를 재생용 WAV로 뽑아 재생·파형에 쓴다."""
         def start(av):
             if self.media_path != path:
                 return
@@ -127,12 +157,7 @@ class VideoMixin:
                 self._pb_redraw()
                 messagebox.showwarning("영상", f"영상의 소리를 불러오지 못했어요.\n{err}", parent=self)
                 return
-            was_playing = self.player.is_playing
-            self.player.stop()
-            self.player._filepath = audio
-            self._set_play_speed(getattr(self, "_speed_choice", 1.0))   # 배속 소리도 뽑은 소리로 다시
-            if was_playing:
-                self.btn_play.configure(text="▶")
+            self._swap_play_audio(path, audio)
             self._extract_waveform(path, src=audio)
         self._with_av(start)
 

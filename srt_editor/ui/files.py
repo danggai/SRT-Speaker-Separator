@@ -304,6 +304,7 @@ class FileMixin:
             self._prepare_video_audio(path)
         else:
             self._extract_waveform(path)
+            self._prepare_play_audio(path)
 
     # ── 전체 저장 ─────────────────────────────
     def _do_write_srt(self, path):

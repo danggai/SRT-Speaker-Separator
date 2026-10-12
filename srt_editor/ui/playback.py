@@ -207,6 +207,9 @@ class PlaybackMixin:
             self._stop_progress_poll()
             # 하이라이트 유지 — _playing_rows 건드리지 않음
         else:
+            if self._is_video() and self.player._filepath == self.media_path:   # 영상 소리를 아직 뽑는 중
+                show_toast(self, "소리 준비 중…")
+                return
             self.player.play()
             self.btn_play.configure(text="⏸")
             self._start_progress_poll()

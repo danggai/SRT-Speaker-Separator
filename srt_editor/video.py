@@ -5,18 +5,37 @@ import pathlib
 import threading
 
 VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".webm")
+PLAY_DIRECT_EXTS = (".wav",)   # 그대로 재생해도 이동이 빠른 형식
 AUDIO_CACHE = pathlib.Path.home() / ".srt_speaker_editor_cache" / "audio"
-_AUDIO_KEEP = 10   # 최근 영상 몇 개의 소리까지 보관
+_AUDIO_KEEP = 10                 # 최근 몇 개의 재생용 소리까지 보관
+_AUDIO_MAX_BYTES = 3 * 1024 ** 3   # 재생용 소리 전체 용량 한도
+PLAY_RATE = 22050   # 재생용 소리 (모노 WAV: 어디로 이동해도 즉시. mp3는 뒤로 갈수록 느려짐)
+
+
+def needs_play_audio(path):
+    """재생용 WAV를 따로 만들어야 하는 파일인가."""
+    return os.path.splitext(path)[1].lower() not in PLAY_DIRECT_EXTS
 
 
 def audio_cache_path(path):
     st = os.stat(path)
     key = f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}"
-    return AUDIO_CACHE / (hashlib.md5(key.encode("utf-8")).hexdigest() + ".mp3")
+    return AUDIO_CACHE / (hashlib.md5(key.encode("utf-8")).hexdigest() + ".wav")
+
+
+def _trim_cache(keep):
+    """오래된 재생용 소리부터 지워 개수·용량 한도를 맞춘다 (keep은 남김)."""
+    files = sorted((f for f in AUDIO_CACHE.glob("*") if f.suffix in (".wav", ".mp3")),
+                   key=lambda f: f.stat().st_mtime, reverse=True)
+    total = 0
+    for i, f in enumerate(files):
+        total += f.stat().st_size
+        if f != keep and (f.suffix == ".mp3" or i >= _AUDIO_KEEP or total > _AUDIO_MAX_BYTES):
+            f.unlink(missing_ok=True)
 
 
 def extract_audio(av, path):
-    """영상의 소리를 mp3로 뽑아 캐시 경로를 반환 (이미 있으면 그대로)."""
+    """영상·음성의 소리를 재생용 WAV로 뽑아 캐시 경로를 반환 (이미 있으면 그대로)."""
     out = audio_cache_path(path)
     if out.exists():
         os.utime(out)
@@ -27,10 +46,9 @@ def extract_audio(av, path):
     try:
         if not src.streams.audio:
             raise RuntimeError("소리가 없는 영상이에요.")
-        with av.open(str(tmp), "w", format="mp3") as dst:
-            ost = dst.add_stream("libmp3lame", rate=44100, layout="stereo")
-            ost.bit_rate = 128000
-            res = av.AudioResampler(format="s16p", layout="stereo", rate=44100)
+        with av.open(str(tmp), "w", format="wav") as dst:
+            ost = dst.add_stream("pcm_s16le", rate=PLAY_RATE, layout="mono")
+            res = av.AudioResampler(format="s16", layout="mono", rate=PLAY_RATE)
             for frame in src.decode(src.streams.audio[0]):
                 frame.pts = None
                 for rf in res.resample(frame):
@@ -44,9 +62,7 @@ def extract_audio(av, path):
     finally:
         src.close()
     os.replace(tmp, out)
-    files = sorted(AUDIO_CACHE.glob("*.mp3"), key=lambda f: f.stat().st_mtime, reverse=True)
-    for f in files[_AUDIO_KEEP:]:
-        f.unlink(missing_ok=True)
+    _trim_cache(out)
     return str(out)
 
 
