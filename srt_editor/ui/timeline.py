@@ -511,6 +511,7 @@ class TimelineMixin:
                         y = ln * LANE_H
                         draw.line([0, y, cw, y], fill="#232330", width=1)
 
+            played_wf = base[2] if base_ok else None
             if not base_ok:
                 # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
                 draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
@@ -529,15 +530,16 @@ class TimelineMixin:
                     on = (((ys >= wf_mid - px) & (ys < wf_mid)) |
                           ((ys >= wf_mid + 1) & (ys < np.minimum(wf_bot, wf_mid + px + 1))))
                     region = np.asarray(img.crop((0, wf_top, cw, wf_bot))).copy()
-                    played = np.arange(cw) <= head_x
-                    region[on & played] = (0x3A, 0x2A, 0x5A)
-                    region[on & ~played] = (0x1E, 0x1E, 0x3A)
+                    region_p = region.copy()
+                    region[on] = (0x1E, 0x1E, 0x3A)
+                    region_p[on] = (0x3A, 0x2A, 0x5A)   # 재생된 부분 색 (재생선 왼쪽에만 따로 복사해 씀)
                     img.paste(Image.fromarray(region), (0, wf_top))
+                    played_wf = Image.fromarray(region_p)
 
                 elif dur_ > 0:
                     draw.rectangle([0, wf_mid-1, cw, wf_mid+1], fill="#2A2A4A")
-                    if head_x > 0:
-                        draw.rectangle([0, wf_mid-1, head_x, wf_mid+1], fill=ACCENT)
+                    played_wf = img.crop((0, wf_top, cw, wf_bot))
+                    ImageDraw.Draw(played_wf).rectangle([0, wf_mid-1-wf_top, cw, wf_mid+1-wf_top], fill=ACCENT)
 
                 # ── C. 시간 눈금 ─────────────────────
                 if dur > 0:
@@ -560,10 +562,21 @@ class TimelineMixin:
                                    else f"{m_}:{s_:02d}")
                             draw.text((x+3, wf_bot+2), lbl, fill="#555577")
                         t += tick_step
-                self._wf_base_cache = (base_key, img.copy())
+                self._wf_base_cache = (base_key, img.copy(), played_wf)
 
+            # 보이는 이미지(img_tk)는 '안 재생' 이미지에서 시작해, 재생선 왼쪽만 '재생됨' 이미지에서 복사해 온다
             img_tk = ImageTk.PhotoImage(img)
+            plain = ImageTk.PhotoImage(img)
+            if played_wf is not None:
+                img_p = img.copy()
+                img_p.paste(played_wf, (0, wf_top))
+                played = ImageTk.PhotoImage(img_p)
+            else:
+                played = plain
             self._wf_img_cache = (cache_key, img_tk)
+            self._wf_play_layers = {"img": img_tk, "plain": plain, "played": played, "x": -1,
+                                    "y0": wf_top, "y1": wf_bot}
+        self._wf_paint_played(img_tk, head_x)
 
         # ── Canvas 오버레이 ───────────────────
         # 배경(파형/자막 블록)이 캐시 히트이고 드래그 중도 아니라면 — 즉 이번
@@ -645,6 +658,23 @@ class TimelineMixin:
                          text="파형 분석 중...", fill="#555577", font=(theme.FONT_FAMILY, 9))
 
         self._wf_hsb_redraw()
+
+    def _wf_paint_played(self, img_tk, head_x):
+        """재생선 왼쪽 파형을 '재생됨' 색으로 (바뀐 세로 띠만 복사해 가볍게)."""
+        lay = getattr(self, "_wf_play_layers", None)
+        if not lay or lay["img"] is not img_tk:
+            return
+        w = img_tk.width()
+        new = max(0, min(int(head_x) + 1, w))
+        old = max(0, lay["x"])
+        if new == lay["x"]:
+            return
+        lo, hi = (old, new) if new > old else (new, old)
+        if lo < hi:
+            src = lay["played"] if new > old else lay["plain"]
+            img_tk.tk.call(str(img_tk), "copy", str(src), "-from", lo, lay["y0"], hi, lay["y1"],
+                           "-to", lo, lay["y0"])
+        lay["x"] = new
 
     def _wf_hit_test(self, x, y):
         """재생바 자막 히트테스트.
