@@ -1,4 +1,4 @@
-"""재생 배속용 소리 만들기: 음 높이는 그대로 두고 속도만 바꾼 WAV (PyAV atempo)."""
+"""재생 배속용 소리 만들기: 음 높이는 그대로 두고 속도만 바꾼 재생용 FLAC (PyAV atempo)."""
 import hashlib
 import os
 import pathlib
@@ -28,18 +28,20 @@ def cache_dir():
 def cache_path(src, speed):
     st = os.stat(src)
     key = hashlib.sha1(f"{os.path.abspath(src)}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
-    return cache_dir() / f"{key}_{speed:g}.wav"
+    return cache_dir() / f"{key}_{speed:g}.flac"
 
 
 def render(src, speed, cancelled=None):
-    """src를 speed배로 만든 WAV 경로 (이미 있으면 그대로). 취소되면 None."""
+    """src를 speed배로 만든 재생용 FLAC 경로 (이미 있으면 그대로). 취소되면 None."""
     import av
+    from .video import PlayAudioWriter
     dst = cache_path(src, speed)
     if dst.exists():
         return dst
     dst.parent.mkdir(parents=True, exist_ok=True)
-    part = dst.with_suffix(".part.wav")
-    with av.open(str(src)) as inp, av.open(str(part), "w", format="wav") as out:
+    part = dst.with_suffix(".part")
+    out = PlayAudioWriter(av, part, RATE)
+    with av.open(str(src)) as inp:
         stream = next(s for s in inp.streams if s.type == "audio")
         graph = av.filter.Graph()
         nodes = [graph.add_abuffer(template=stream)]
@@ -49,7 +51,6 @@ def render(src, speed, cancelled=None):
         for a, b in zip(nodes, nodes[1:]):
             a.link_to(b)
         graph.configure()
-        ost = out.add_stream("pcm_s16le", rate=RATE, layout="mono")
 
         def drain():
             while True:
@@ -59,9 +60,7 @@ def render(src, speed, cancelled=None):
                     return
                 except (EOFError, av.error.EOFError):
                     return
-                f.pts = None
-                for p in ost.encode(f):
-                    out.mux(p)
+                out.write(f)
         for frame in inp.decode(stream):
             if cancelled and cancelled():
                 break
@@ -70,8 +69,7 @@ def render(src, speed, cancelled=None):
         else:
             graph.push(None)
             drain()
-        for p in ost.encode(None):
-            out.mux(p)
+    out.close()
     if cancelled and cancelled():
         part.unlink(missing_ok=True)
         return None
@@ -85,8 +83,8 @@ def clear(keep_src=None):
     if not d.exists():
         return
     keep = cache_path(keep_src, 1.0).name.split("_")[0] if keep_src and os.path.exists(keep_src) else None
-    for f in d.glob("*.wav"):
-        if keep is None or not f.name.startswith(keep):
+    for f in list(d.glob("*.flac")) + list(d.glob("*.wav")):
+        if keep is None or not f.name.startswith(keep) or f.suffix == ".wav":
             try:
                 f.unlink()
             except OSError:

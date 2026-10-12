@@ -341,7 +341,7 @@ def f_key_plays_next_check_line_and_number_key_moves_on(app):
     for s in app.subtitles:
         s["speaker"] = ""
     conf = [0.9] * 20
-    conf[4], conf[11], conf[17] = 0.01, 0.02, 0.03
+    conf[4], conf[11], conf[14] = 0.01, 0.02, 0.03   # 시험용 소리(40초) 안쪽 줄
     app._apply_line_speakers(["민지"] * 20, True, conf)
     app._select_row(0)
     app._review_next_check(NS())
@@ -363,7 +363,7 @@ def f_key_plays_next_check_line_and_number_key_moves_on(app):
     app._media_play_pause()
     app._on_speaker_key(NS(keysym=str(k)))
     pump(0.1)
-    eq(app._selected_row_idx, 17)
+    eq(app._selected_row_idx, 14)
     expect(app.player.is_playing, "재생 중이었으면 다음 줄도 재생")
     app._media_play_pause()
     from harness import write_config
@@ -376,7 +376,7 @@ def f_key_plays_next_check_line_and_number_key_moves_on(app):
     app._select_row(0)
     app._on_speaker_key(NS(keysym=str(k)))
     eq(app._selected_row_idx, 0 if not app._opt("advance_after_assign") else 1, "? 아닌 줄은 기존 동작 그대로")
-    for i in (11, 17):   # 남은 ? 정리
+    for i in (11, 14):   # 남은 ? 정리
         app._set_line_speaker(i, "준호")
     app._update_count()
     ctx.msgs.clear()

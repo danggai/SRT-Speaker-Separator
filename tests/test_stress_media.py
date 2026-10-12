@@ -54,7 +54,7 @@ def stress_big_media_play_stop_seek(app):
     wait_until(lambda: app.player.duration > 0, 30, "길이")
     s1, b1 = _hammer(app, 40, 1, log)   # 소리 추출 중
     t = time.perf_counter()
-    wait_until(lambda: str(app.player._filepath).endswith(".wav"), 900, "소리 추출")
+    wait_until(lambda: str(app.player._filepath).endswith(".flac"), 900, "소리 추출")
     log.append(f"소리 추출 {time.perf_counter() - t:.0f}초")
     s2, b2 = _hammer(app, 300, 2, log)
     app._media_stop()

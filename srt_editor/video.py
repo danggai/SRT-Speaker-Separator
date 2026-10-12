@@ -5,37 +5,74 @@ import pathlib
 import threading
 
 VIDEO_EXTS = (".mp4", ".mkv", ".avi", ".mov", ".webm")
-PLAY_DIRECT_EXTS = (".wav",)   # 그대로 재생해도 이동이 빠른 형식
 AUDIO_CACHE = pathlib.Path.home() / ".srt_speaker_editor_cache" / "audio"
 _AUDIO_KEEP = 10                 # 최근 몇 개의 재생용 소리까지 보관
 _AUDIO_MAX_BYTES = 3 * 1024 ** 3   # 재생용 소리 전체 용량 한도
-PLAY_RATE = 22050   # 재생용 소리 (모노 WAV: 어디로 이동해도 즉시. mp3는 뒤로 갈수록 느려짐)
+PLAY_RATE = 22050   # 재생용 소리: 모노 FLAC + 위치 색인 (어디로 이동해도 즉시·소수점까지 정확)
+# mp3는 뒤로 갈수록 이동이 느려지고, WAV는 재생 엔진이 시작 위치의 소수점을 버려 최대 1초 늦게 들림
+_SEEK_EVERY = 10   # 위치 색인 간격 (초)
 
 
 def needs_play_audio(path):
-    """재생용 WAV를 따로 만들어야 하는 파일인가."""
-    return os.path.splitext(path)[1].lower() not in PLAY_DIRECT_EXTS
+    """재생용 소리를 따로 만들어야 하는 파일인가 (이미 만든 재생용 소리면 아님)."""
+    return pathlib.Path(path).parent != AUDIO_CACHE
 
 
 def audio_cache_path(path):
     st = os.stat(path)
     key = f"{os.path.abspath(path)}|{st.st_size}|{int(st.st_mtime)}"
-    return AUDIO_CACHE / (hashlib.md5(key.encode("utf-8")).hexdigest() + ".wav")
+    return AUDIO_CACHE / (hashlib.md5(key.encode("utf-8")).hexdigest() + ".flac")
 
 
 def _trim_cache(keep):
-    """오래된 재생용 소리부터 지워 개수·용량 한도를 맞춘다 (keep은 남김)."""
-    files = sorted((f for f in AUDIO_CACHE.glob("*") if f.suffix in (".wav", ".mp3")),
+    """오래된 재생용 소리부터 지워 개수·용량 한도를 맞춘다 (keep은 남김, 예전 형식은 지움)."""
+    files = sorted((f for f in AUDIO_CACHE.glob("*") if f.suffix in (".flac", ".wav", ".mp3")),
                    key=lambda f: f.stat().st_mtime, reverse=True)
     total = 0
     for i, f in enumerate(files):
         total += f.stat().st_size
-        if f != keep and (f.suffix == ".mp3" or i >= _AUDIO_KEEP or total > _AUDIO_MAX_BYTES):
+        if f != keep and (f.suffix != ".flac" or i >= _AUDIO_KEEP or total > _AUDIO_MAX_BYTES):
             f.unlink(missing_ok=True)
 
 
+class PlayAudioWriter:
+    """재생용 소리(모노 s16 FLAC) 쓰기. 닫을 때 위치 색인을 넣어 이동이 항상 1ms 안쪽."""
+
+    def __init__(self, av, path, rate=PLAY_RATE):
+        self.path, self.rate = str(path), rate
+        self._out = av.open(self.path, "w", format="flac")
+        self._st = self._out.add_stream("flac", rate=rate, layout="mono")
+        self._points, self._off, self._smp, self._next = [], 0, 0, 0
+
+    def _mux(self, pkts):
+        for pk in pkts:
+            n = pk.duration or 0
+            if self._smp >= self._next:   # (첫 샘플, 첫 프레임부터 바이트 위치, 샘플 수)
+                self._points.append((self._smp, self._off, n))
+                self._next = self._smp + self.rate * _SEEK_EVERY
+            self._off += pk.size
+            self._smp += n
+            self._out.mux(pk)
+
+    def write(self, frame):
+        """frame: 모노 s16, rate와 같은 샘플레이트."""
+        frame.pts = None
+        self._mux(self._st.encode(frame))
+
+    def close(self):
+        self._mux(self._st.encode(None))
+        self._out.close()
+        import mutagen.flac as mf
+        f = mf.FLAC(self.path)
+        st = mf.SeekTable(None)
+        st.seekpoints = [mf.SeekPoint(*p) for p in self._points]
+        f.metadata_blocks = [b for b in f.metadata_blocks if not isinstance(b, mf.SeekTable)] + [st]
+        f.seektable = st
+        f.save()
+
+
 def extract_audio(av, path):
-    """영상·음성의 소리를 재생용 WAV로 뽑아 캐시 경로를 반환 (이미 있으면 그대로)."""
+    """영상·음성의 소리를 재생용 FLAC으로 뽑아 캐시 경로를 반환 (이미 있으면 그대로)."""
     out = audio_cache_path(path)
     if out.exists():
         os.utime(out)
@@ -46,19 +83,15 @@ def extract_audio(av, path):
     try:
         if not src.streams.audio:
             raise RuntimeError("소리가 없는 영상이에요.")
-        with av.open(str(tmp), "w", format="wav") as dst:
-            ost = dst.add_stream("pcm_s16le", rate=PLAY_RATE, layout="mono")
-            res = av.AudioResampler(format="s16", layout="mono", rate=PLAY_RATE)
-            for frame in src.decode(src.streams.audio[0]):
-                frame.pts = None
-                for rf in res.resample(frame):
-                    for pkt in ost.encode(rf):
-                        dst.mux(pkt)
-            for rf in res.resample(None):
-                for pkt in ost.encode(rf):
-                    dst.mux(pkt)
-            for pkt in ost.encode(None):
-                dst.mux(pkt)
+        w = PlayAudioWriter(av, tmp)
+        res = av.AudioResampler(format="s16", layout="mono", rate=PLAY_RATE)
+        for frame in src.decode(src.streams.audio[0]):
+            frame.pts = None
+            for rf in res.resample(frame):
+                w.write(rf)
+        for rf in res.resample(None):
+            w.write(rf)
+        w.close()
     finally:
         src.close()
     os.replace(tmp, out)

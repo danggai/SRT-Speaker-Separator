@@ -47,7 +47,7 @@ def stress_long_srt_editing_lag(app):
     rep.append(f"열기 {time.perf_counter() - t:.2f}초 ({len(app.subtitles)}줄, 화자 {len(app.speakers)}명)")
     wait_until(lambda: app.player.duration > 0, 30, "길이")
     wait_until(lambda: app._waveform is not None, 300, "파형")
-    wait_until(lambda: str(app.player._filepath).endswith(".wav"), 120, "재생용 소리")
+    wait_until(lambda: str(app.player._filepath).endswith(".flac"), 120, "재생용 소리")
     pump(0.5)
 
     def r(name, fn, n=1):
