@@ -88,6 +88,23 @@ def stress_long_srt_editing_lag(app):
     r("Page Up", k("<Prior>"), 20)
     rep.append("정지 상태 지연: 평균 %.1f / 최대 %.1fms" % _latency(app, 2))
 
+    def hold(seq, n=30, gap_ms=33):
+        """키를 누르고 있을 때(초당 30번 반복): 손을 뗀 뒤 화면이 따라잡기까지 걸린 시간."""
+        app.update()
+        t0 = time.perf_counter()
+        for i in range(n):
+            app.after(i * gap_ms, lambda: app.event_generate(seq))
+        last = t0 + (n - 1) * gap_ms / 1000
+        while time.perf_counter() < last + 0.005:
+            app.update()
+        app.update()
+        return (time.perf_counter() - last) * 1000
+    app._select_row(100, seek=False)
+    app._scroll_to_row(100)
+    app.update()
+    rep.append("Page Down 누르고 있기: 뗀 뒤 %.0fms 늦게 멈춤" % hold("<Next>"))
+    rep.append("↓ 누르고 있기: 뗀 뒤 %.0fms 늦게 멈춤" % hold("<Down>"))
+
     app._select_row(900, seek=True)
     app._media_play_pause()
     pump(0.3)
