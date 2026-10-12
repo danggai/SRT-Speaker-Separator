@@ -529,6 +529,7 @@ class SpeakerMixin:
         """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자. 선택한 줄에 적용."""
         if isinstance(self.focus_get(), tk.Entry):
             return
+        self._tip_learned("speaker")
         key = event.keysym
         if key == "grave":
             val = ""

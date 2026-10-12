@@ -97,6 +97,8 @@ class EditingMixin:
         """Del / Ctrl+D: 선택된 행 일괄 삭제."""
         if isinstance(self.focus_get(), tk.Entry):
             return
+        if event is not None:
+            self._tip_learned("delete")
         targets = self._selected_targets()
         if not targets:
             return
@@ -325,6 +327,7 @@ class EditingMixin:
         idx = self._edge_key_target()
         if idx is None:
             return
+        self._tip_learned("edge")
         if not self._set_sub_edge(idx, which, self.media_progress_var.get()):
             show_toast(self, "시작이 끝보다 뒤예요" if which == "s" else "끝이 시작보다 앞이에요")
         elif which == "e" and self.player.is_playing and idx + 1 < len(self.subtitles):
@@ -337,6 +340,7 @@ class EditingMixin:
         idx = self._edge_key_target()
         if idx is None:
             return
+        self._tip_learned("nudge")
         t_s, t_e = self._ts_cache[idx]
         if t_s is not None:
             self._set_sub_edge(idx, which, (t_s if which == "s" else t_e) + delta * self._NUDGE_SEC)
@@ -347,6 +351,8 @@ class EditingMixin:
         시간은 처음~끝, 화자는 가장 오래 말한 화자, 내용은 띄어쓰기로 이어 붙인다."""
         if event is not None and isinstance(self.focus_get(), tk.Entry):
             return
+        if event is not None:
+            self._tip_learned("merge")
         self._blur_all_entries()
         targets = [i for i in self._selected_targets() if 0 <= i < len(self.subtitles)]
         if len(targets) == 1 and targets[0] + 1 < len(self.subtitles):
@@ -419,6 +425,7 @@ class EditingMixin:
         """단축키 Ctrl+A: 재생 위치에 자막 추가."""
         if isinstance(self.focus_get(), tk.Entry) or not self.subtitles:
             return
+        self._tip_learned("add")
         self._add_subtitle_here()
         return "break"
 
@@ -427,6 +434,7 @@ class EditingMixin:
         둘로 나눈다."""
         if isinstance(self.focus_get(), tk.Entry):
             return
+        self._tip_learned("split")
         idx, pos = self._subtitle_idx_at_playhead()
         if idx is None:
             return "break"

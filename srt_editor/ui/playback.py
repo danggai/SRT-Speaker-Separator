@@ -17,6 +17,7 @@ class PlaybackMixin:
         focused = self.focus_get()
         if isinstance(focused, (tk.Entry, tk.Text)) or isinstance(event.widget, (tk.Entry, tk.Text)):
             return
+        self._tip_learned("play")
         # 버튼에 포커스가 있으면 앱으로 돌려서 이중 호출 방지
         if isinstance(focused, (tk.Button, ttk.Button)):
             self.focus_set()
@@ -201,6 +202,7 @@ class PlaybackMixin:
     def _media_play_pause(self):
         if not self.media_path:
             return
+        self._schedule_ctx_keys()
         if self.player.is_playing:
             self.player.pause()
             self.btn_play.configure(text="▶")
@@ -300,6 +302,7 @@ class PlaybackMixin:
 
     def _media_stop(self):
         self.player.stop()
+        self._schedule_ctx_keys()
         self.btn_play.configure(text="▶")
         self.media_progress_var.set(0)
         self.lbl_pos.configure(text="0:00:00")
@@ -390,6 +393,7 @@ class PlaybackMixin:
             self._last_polled_pos = -1.0
             self.btn_play.configure(text="▶")
             self._seek_job = None
+            self._schedule_ctx_keys()
 
     def _wf_follow_playhead(self, pos):
         """재생 중 헤드가 뷰 밖으로 나가지 않도록 부드럽게 오프셋 추종."""

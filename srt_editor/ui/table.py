@@ -332,6 +332,7 @@ class SubtitleTableMixin:
         # 편집을 연 클릭은 "break"로 끝내 전역 클릭 처리가 포커스를 뺏지 않게 함
         pi = self._pill_at(s, self.canvas.canvasx(e.x), self.canvas.canvasy(e.y))
         if pi is not None:
+            self._tip("speaker")
             self._blur_all_entries()
             self._slot_pill_click(s, pi)
             return "break"
@@ -339,6 +340,7 @@ class SubtitleTableMixin:
         col = self._col_at(e.x)
         if (col == "time" and di == getattr(self, "_selected_row_idx", None)
                 and len(getattr(self, "_selected_rows", set())) <= 1):
+            self._tip("edge")
             self._ts_edit_start(s)
             return "break"
         if col == "content" and not (e.state & 0x4):
@@ -358,6 +360,7 @@ class SubtitleTableMixin:
             return "break"
         s = self._slot_at(e)
         if s >= 0 and self._col_at(e.x) == "time":
+            self._tip("edge")
             self._ts_edit_start(s)
             return "break"
 

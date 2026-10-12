@@ -41,10 +41,12 @@ class TimelineMixin:
         self._set_media_label(None)
 
         def _add_row_and_defocus():
+            self._tip("add")
             self._add_subtitle_here()
             self.focus_set()   # 스페이스바로 버튼이 재실행되는 것 방지
 
         def _split_and_defocus():
+            self._tip("split")
             idx, pos = self._subtitle_idx_at_playhead()
             if idx is not None:
                 self.split_subtitle_at(idx, pos)
@@ -95,13 +97,14 @@ class TimelineMixin:
         ctrl = tk.Frame(inner, bg=MEDIA_BG, height=40)
         ctrl.pack(fill="x", pady=(5, 0))
         ctrl.pack_propagate(False)   # 가운데 재생 묶음(place)까지 들어가게 높이 고정
+        self._build_ctx_keys(inner, MEDIA_BG)   # 그 아래: 지금 쓸 수 있는 단축키 한 줄
 
         # 자막 도구 (재생 위치 기준으로 나누기 / 추가)
         b_split = flat_button(ctrl, "✂ 나누기", _split_and_defocus, bg=MEDIA_BG)
         b_split.pack(side="left", padx=(4, 2))
         self._split_btn = b_split
         Tooltip(b_split, "재생 위치에서 자막 나누기  [S]", delay=400)
-        b_merge = flat_button(ctrl, "⊕ 병합", lambda: (self.merge_selected(), self.focus_set()),
+        b_merge = flat_button(ctrl, "⊕ 병합", lambda: (self._tip("merge"), self.merge_selected(), self.focus_set()),
                               bg=MEDIA_BG)
         b_merge.pack(side="left", padx=(0, 2))
         Tooltip(b_merge, "선택한 자막 병합 (하나면 다음 자막과)  [M]", delay=400)
@@ -110,7 +113,7 @@ class TimelineMixin:
         b_add.pack(side="left")
         Tooltip(b_add, "재생 위치에 자막 추가  [Ctrl+A]", delay=400)
         self._add_btn = b_add
-        b_del = flat_button(ctrl, "− 삭제", lambda: (self._on_delete(), self.focus_set()), bg=MEDIA_BG)
+        b_del = flat_button(ctrl, "− 삭제", lambda: (self._tip("delete"), self._on_delete(), self.focus_set()), bg=MEDIA_BG)
         b_del.pack(side="left", padx=(2, 0))
         Tooltip(b_del, "선택한 자막 삭제  [Ctrl+D]", delay=400)
         self._del_btn = b_del
@@ -124,7 +127,7 @@ class TimelineMixin:
         # 재생 컨트롤 — 도형을 직접 그린 아이콘 + 보라 원형 재생 버튼
         self.btn_prev = IconButton(btn_group, "back", lambda: self._media_seek(-self._opt("seek_step")))
         self.btn_prev.pack(side="left", padx=1)
-        self.btn_play = IconButton(btn_group, "play", self._media_play_pause, size=34,
+        self.btn_play = IconButton(btn_group, "play", lambda: (self._tip("play"), self._media_play_pause()), size=34,
                                    fg="white", circle=ACCENT, circle_hover="#AE96E2")
         self.btn_play.pack(side="left", padx=6)
         self.btn_next = IconButton(btn_group, "fwd", lambda: self._media_seek(+self._opt("seek_step")))
@@ -1092,6 +1095,8 @@ class TimelineMixin:
             if changed:
                 self._commit_undo(drag["undo_snap"])
                 self._unsaved = True
+                if drag["mode"] in ("head_start", "head_end"):
+                    self._tip("nudge")
                 for j in set(changed):
                     self._redraw_slot_for(j)
             self._wf_sub_drag = None

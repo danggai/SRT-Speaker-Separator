@@ -197,7 +197,7 @@ class SettingsMixin:
         ent.bind("<FocusOut>", _commit)
 
     _SECTION_OPTS = {
-        "general": ("startup_open_last", "update_check"),
+        "general": ("startup_open_last", "update_check", "context_keys", "key_tips"),
         "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "click_seek",
                  "new_sub_len", "split_text", "lock_timeline"),
         "storage": ("backup_enabled", "backup_minutes"),
@@ -390,6 +390,10 @@ class SettingsMixin:
             self._apply_key_hints(bool(var.get()))
             cfg = _load_config(); cfg["show_key_hints"] = bool(var.get()); _save_config(cfg)
         ToggleSwitch(right, var, _hints).pack()
+        _, right = self._settings_row(card, "⌨", "지금 쓸 수 있는 키", "화면 아래 한 줄로 표시")
+        self._opt_toggle(right, "context_keys", self._update_ctx_keys)
+        _, right = self._settings_row(card, "✦", "단축키 알림", "마우스로 한 동작에 단축키 알려 주기")
+        self._opt_toggle(right, "key_tips")
 
         card = self._settings_card(parent, "설정 파일")
         _, right = self._settings_row(card, "⇅", "설정 내보내기 · 불러오기",

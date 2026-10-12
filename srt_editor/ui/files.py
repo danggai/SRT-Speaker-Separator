@@ -216,6 +216,7 @@ class FileMixin:
         self._render_speakers()
         self._render_rows()
         self.after_idle(lambda p=path: self._restore_view(p))   # 마지막으로 보던 위치로
+        self._schedule_ctx_keys()
 
         # 동명 미디어 파일 자동 로드
         self._try_load_sibling_media(path)

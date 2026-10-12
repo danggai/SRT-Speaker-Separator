@@ -11,6 +11,8 @@ from ..config import _load_config, _save_config
 OPTION_DEFAULTS = {
     "startup_open_last": False,   # 시작할 때 마지막 파일 열기
     "update_check": True,         # 새 버전 알림
+    "context_keys": True,         # 화면 아래에 지금 쓸 수 있는 단축키 한 줄
+    "key_tips": True,             # 마우스로 한 동작에 단축키 알림
     "advance_after_assign": False,  # 숫자 키로 화자 지정 후 다음 줄로
     "advance_to_check": True,     # ? 줄을 지정하면 다음 ? 줄로
     "seek_step": 0.5,             # ←/→ 이동 간격 (초)

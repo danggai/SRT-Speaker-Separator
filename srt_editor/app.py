@@ -21,6 +21,7 @@ from .ui.options import OptionsMixin
 from .ui.video_win import VideoMixin
 from .ui.search import SearchMixin
 from .ui.updater import UpdateMixin
+from .ui.tips import TipsMixin
 from . import theme
 from .config import _load_config, _save_config
 from .ime import ImeCompositionOverlay
@@ -73,6 +74,7 @@ class SRTEditor(
     VideoMixin,
     SearchMixin,
     UpdateMixin,
+    TipsMixin,
     tk.Tk,
 ):
     """SRT 화자 편집기 메인 창. 기능별 메서드는 ui/ 믹스인에 있다."""
@@ -242,6 +244,8 @@ class SRTEditor(
             self.bind("ㅈ", lambda e: self._mark_edge("e", e))
         except tk.TclError:
             pass
+        for _ev in ("<KeyRelease>", "<ButtonRelease-1>", "<FocusIn>"):   # 상황별 단축키 줄 갱신
+            self.bind_all(_ev, lambda e: self._schedule_ctx_keys(), add="+")
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ── 스타일 ────────────────────────────────

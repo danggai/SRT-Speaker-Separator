@@ -762,7 +762,7 @@ def slide(widget, show, animate=True, **pack_kw):
     step()
 
 
-def show_toast(root, text, duration_ms=1600):
+def show_toast(root, text, duration_ms=1600, icon="✓"):
     """창 위쪽 가운데에 잠깐 떴다 사라지는 알림."""
     old = getattr(root, "_toast_win", None)
     if old is not None:
@@ -779,7 +779,7 @@ def show_toast(root, text, duration_ms=1600):
         pass
     box = tk.Frame(win, bg="#2A2A33", highlightthickness=1, highlightbackground=ACCENT)
     box.pack()
-    tk.Label(box, text="✓", bg="#2A2A33", fg="#7FD48F",
+    tk.Label(box, text=icon, bg="#2A2A33", fg="#7FD48F" if icon == "✓" else ACCENT,
              font=(theme.FONT_FAMILY, 11, "bold")).pack(side="left", padx=(14, 6), pady=8)
     tk.Label(box, text=text, bg="#2A2A33", fg=FG,
              font=(theme.FONT_FAMILY, 10)).pack(side="left", padx=(0, 16), pady=8)
