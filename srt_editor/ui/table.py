@@ -218,6 +218,12 @@ class SubtitleTableMixin:
                       font=(theme.FONT_FAMILY, 8), tags=(t, t + "dur"), state="hidden")
         c.create_text(0, 0, text="", anchor="w", fill=FG,
                       font=(theme.FONT_FAMILY, 10), tags=(t, t + "txt"), state="hidden")
+        # 화자 버튼: 선택 안 된 버튼 테두리 이미지 1장 + 선택된 버튼 + 이름 글자 (버튼마다 항목을 두면 넘기기가 느림)
+        c.create_image(0, 0, anchor="nw", tags=(t, "pill", t + "pstrip"), state="hidden")
+        c.create_polygon(0, 0, 0, 0, smooth=True, tags=(t, "pill", t + "psel"), state="hidden")
+        for key in ("ptA", "ptB"):
+            c.create_text(0, 0, text="", anchor="w", fill=FG_FAINT, tags=(t, "pill", t + key), state="hidden")
+        c.create_text(0, 0, text="", tags=(t, "pill", t + "pselt"), state="hidden")
 
         wi = {"_ts_editing": False, "_txt_editing": False, "pill_values": [], "pill_w": [],
               "_paint": {}, "_ic": {}, "tag": t}
@@ -323,13 +329,11 @@ class SubtitleTableMixin:
             self._canvas_drag_start(e)
             return
         # 편집을 연 클릭은 "break"로 끝내 전역 클릭 처리가 포커스를 뺏지 않게 함
-        pill = next((t for t in self.canvas.gettags("current") if t.startswith("pk")), None)
-        if pill:
-            ps, pi = pill[2:].split("_")
-            if int(ps) == s:
-                self._blur_all_entries()
-                self._slot_pill_click(s, int(pi))
-                return "break"
+        pi = self._pill_at(s, e.x, e.y)
+        if pi is not None:
+            self._blur_all_entries()
+            self._slot_pill_click(s, pi)
+            return "break"
         di = self._slot_data[s]
         col = self._col_at(e.x)
         if (col == "time" and di == getattr(self, "_selected_row_idx", None)
@@ -781,6 +785,7 @@ class SubtitleTableMixin:
                 self.canvas.itemconfigure(wi["tag"], state="normal")
                 wi["_paint"]["hidden"] = False
                 wi["_paint"]["pills"] = None   # 칸을 넘는 화자 버튼을 다시 숨기도록
+                wi["_ic"].clear()   # 숨김을 풀면서 모든 항목이 보이게 됐으므로 다시 설정
             self._paint_slot(slot_idx, di, pos, cw)
 
     def _hide_slot(self, slot_idx):
@@ -845,7 +850,6 @@ class SubtitleTableMixin:
         wi  = self._slot_widgets[slot_idx]
         sub = self.subtitles[di]
         t   = wi["tag"]
-        c   = self.canvas
         bg, outline, width = self._slot_colors(di)
         ic  = self._slot_ic
         ic(wi, t + "card", fill=bg, outline=outline, width=width)
@@ -954,52 +958,104 @@ class SubtitleTableMixin:
             last[item] = kw
 
     def _update_slot_pills(self, slot_idx, sub, bg):
-        """화자 버튼(캔버스 그림)의 글자·색을 갱신하고, 모자라면 새로 그린다."""
-        wi      = self._slot_widgets[slot_idx]
-        c       = self.canvas
-        t       = wi["tag"]
-        current = sub.get("speaker", "")
-        choices = [(sp, sp) for sp in self.speakers]
-        while len(wi["pill_values"]) < len(choices):
-            pi = len(wi["pill_values"])
-            tags = (t, "pill", f"pk{slot_idx}_{pi}")
-            c.create_polygon(0, 0, 0, 0, smooth=True, tags=tags + (f"{t}pb{pi}",))
-            c.create_text(0, 0, text="", tags=tags + (f"{t}pt{pi}",))
-            wi["pill_values"].append("")
-            wi["pill_w"].append(0)
-        for pi, (val, label) in enumerate(choices):
-            is_sel = val == current
-            color = self._speaker_color(val)
-            self._slot_ic(wi, f"{t}pb{pi}", fill=color if is_sel else bg,
-                          outline=color if is_sel else "#3A3A44")
-            self._slot_ic(wi, f"{t}pt{pi}", text=label,
-                          fill=_on_color(color) if is_sel else FG_FAINT,
-                          font=self._pill_font(is_sel))
-            wi["pill_values"][pi] = val
-            wi["pill_w"][pi] = self._pill_text_w(label, is_sel) + 2 * self._PILL_PADX
-        wi["_pill_n"] = len(choices)
+        """화자 버튼 상태(값·선택·폭·색)만 기록. 그리기는 _layout_pills가 바뀐 경우에만."""
+        wi = self._slot_widgets[slot_idx]
+        cur = sub.get("speaker", "")
+        wi["pill_values"] = list(self.speakers)
+        wi["pill_w"] = [self._pill_text_w(v, v == cur) + 2 * self._PILL_PADX for v in self.speakers]
+        wi["_pill_n"] = len(self.speakers)
+        wi["_pill_look"] = (cur, bg, self._speaker_color(cur) if cur else "")
+
+    def _pill_gap_text(self):
+        """이름 사이에 넣을 공백: 글자 폭이 '여백+간격+여백'과 같게 (이름들을 글자 하나로 그릴 때)."""
+        cache = self.__dict__.setdefault("_pill_gap_cache", {})
+        if theme.FONT_FAMILY not in cache:
+            font, target = self._pill_font(False), 2 * self._PILL_PADX + self._PILL_GAP
+            best = " " * 4
+            for ns in range(8):
+                for nt in range(4):
+                    for nh in range(4):
+                        s = " " * ns + " " * nt + " " * nh
+                        if abs(font.measure(s) - target) < abs(font.measure(best) - target):
+                            best = s
+            cache[theme.FONT_FAMILY] = (best, font.measure(best) - 2 * self._PILL_PADX)
+        return cache[theme.FONT_FAMILY]
+
+    def _pill_strip(self, boxes, bg):
+        """선택 안 된 버튼 테두리들을 그린 이미지 (배치·색별로 한 번만 만듦)."""
+        cache = self.__dict__.setdefault("_pill_strip_cache", {})
+        key = (boxes, bg)
+        if key not in cache:
+            from PIL import Image, ImageDraw, ImageTk
+            if len(cache) > 400:
+                cache.clear()
+            s, h = 3, self._PILL_H + 1
+            w = boxes[-1][0] + boxes[-1][1] + 1
+            im = Image.new("RGB", (w * s, h * s), bg)
+            d = ImageDraw.Draw(im)
+            for x, bw in boxes:
+                d.rounded_rectangle([x * s, 0, (x + bw + 1) * s - 1, h * s - 1], radius=4 * s,
+                                    outline="#3A3A44", width=s)
+            cache[key] = ImageTk.PhotoImage(im.resize((w, h), Image.LANCZOS), master=self)
+        return cache[key]
+
+    def _pill_at(self, slot_idx, x, y):
+        """슬롯의 (x, y)에 있는 화자 버튼 번호 (없으면 None)."""
+        wi = self._slot_widgets[slot_idx]
+        cy = slot_idx * self.ROW_H + self.ROW_H / 2
+        if abs(y - cy) > self._PILL_H / 2:
+            return None
+        for pi, (bx, bw) in enumerate(wi.get("pill_x", ())):
+            if bx <= x <= bx + bw:
+                return pi
+        return None
 
     def _layout_pills(self, slot_idx, pos):
-        """화자 버튼을 화자 칸 안에 왼쪽부터 배치. 칸을 넘는 버튼은 숨긴다."""
+        """화자 버튼을 화자 칸 안에 왼쪽부터 배치 (칸을 넘는 버튼은 안 그림).
+        선택 안 된 버튼은 테두리 이미지 1장과 앞뒤 글자 2개로 그려 항목 수를 줄인다."""
         wi = self._slot_widgets[slot_idx]
-        c  = self.canvas
+        c, t, ic = self.canvas, wi["tag"], self._slot_ic
+        gap_s, gap = self._pill_gap_text()
         sx, sw = pos["speaker"]
         x, right = sx + 8, sx + sw - 6
         cy = slot_idx * self.ROW_H + self.ROW_H / 2
         y0, y1 = cy - self._PILL_H / 2, cy + self._PILL_H / 2
-        r = 5
-        n = wi.get("_pill_n", 0)
-        for pi, w in enumerate(wi["pill_w"]):
-            tag = f"pk{slot_idx}_{pi}"
-            if pi >= n or x + w > right:
-                c.itemconfigure(tag, state="hidden")
-                continue
-            x1 = x + w
-            c.coords(f"{wi['tag']}pb{pi}", x + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r,
-                     x1, y1, x1 - r, y1, x + r, y1, x, y1, x, y1 - r, x, y0 + r, x, y0)
-            c.coords(f"{wi['tag']}pt{pi}", x + w / 2, cy)
-            c.itemconfigure(tag, state="normal")
-            x = x1 + self._PILL_GAP
+        cur, bg, color = wi.get("_pill_look", ("", self._CARD_BG, ""))
+        boxes = []
+        for w in wi["pill_w"][:wi.get("_pill_n", 0)]:
+            if x + w > right:
+                break
+            boxes.append((x, w))
+            x += w + gap
+        wi["pill_x"] = boxes
+        vals = wi["pill_values"][:len(boxes)]
+        si = vals.index(cur) if cur in vals else None
+        unsel = [b for i, b in enumerate(boxes) if i != si]
+        if unsel:
+            x0 = unsel[0][0]
+            ic(wi, t + "pstrip", image=self._pill_strip(tuple((bx - x0, bw) for bx, bw in unsel), bg), state="normal")
+            c.coords(t + "pstrip", x0, int(y0))
+        else:
+            ic(wi, t + "pstrip", state="hidden")
+        if si is not None:
+            bx, bw = boxes[si]
+            x1, r = bx + bw, 5
+            c.coords(t + "psel", bx + r, y0, x1 - r, y0, x1, y0, x1, y0 + r, x1, y1 - r,
+                     x1, y1, x1 - r, y1, bx + r, y1, bx, y1, bx, y1 - r, bx, y0 + r, bx, y0)
+            ic(wi, t + "psel", fill=color, outline=color, state="normal")
+            c.coords(t + "pselt", bx + bw / 2, cy)
+            ic(wi, t + "pselt", text=cur, fill=_on_color(color), font=self._pill_font(True), state="normal")
+        else:
+            ic(wi, t + "psel", state="hidden")
+            ic(wi, t + "pselt", state="hidden")
+        before = vals if si is None else vals[:si]
+        after = [] if si is None else vals[si + 1:]
+        for key, names, start in (("ptA", before, 0), ("ptB", after, (si or 0) + 1)):
+            if names:
+                c.coords(t + key, boxes[start][0] + self._PILL_PADX, cy)
+                ic(wi, t + key, text=gap_s.join(names), font=self._pill_font(False), state="normal")
+            else:
+                ic(wi, t + key, state="hidden")
 
     def _apply_col_to_slot(self, slot_idx, pos, cw):
         """단일 슬롯의 카드 테두리·구분선·글자·입력칸 위치를 pos에 맞게 재배치."""
@@ -1043,7 +1099,7 @@ class SubtitleTableMixin:
             bb = c.bbox(t + "tlbl")
             c.coords(t + "dur", (bb[2] if bb else tx + 11) + 5, cy + 1)
             paint["tlbl_w"] = len(tlbl)
-        pills = (wi.get("_pill_n", 0), tuple(wi["pill_w"]))
+        pills = (tuple(wi["pill_values"]), tuple(wi["pill_w"]), wi.get("_pill_look"))
         if paint.get("pills") != pills:
             self._layout_pills(slot_idx, pos)
             paint["pills"] = pills

@@ -403,8 +403,7 @@ def many_speakers_show_all_buttons_and_sidebar_scrolls(app):
     app._fill_slots(0)
     pump(0.3)
     wi = app._slot_widgets[0]
-    shown = [i for i in range(15) if app.canvas.itemcget(f"pk0_{i}", "state") != "hidden"]
-    eq(len(shown), 15, "화자 칸이 자동으로 넓어져서 모든 화자 버튼이 보여야 해요")
+    eq(len(wi["pill_x"]), 15, "화자 칸이 자동으로 넓어져서 모든 화자 버튼이 보여야 해요")
     app.update_idletasks()
     inner_h = app.speaker_inner.winfo_reqheight()
     view_h = app._spk_canvas.winfo_height()

@@ -358,8 +358,8 @@ def pill_click_assigns_speaker_with_undo(app):
     s = slot_of(app, 2)
     wi = app._slot_widgets[s]
     eq(wi["pill_values"][:2], ["민지", "준호"], "화자 버튼 순서 (화자 목록과 같음)")
-    bbox = app.canvas.bbox(f"{wi['tag']}pb1")
-    cx, cy = (bbox[0] + bbox[2]) // 2, (bbox[1] + bbox[3]) // 2
+    bx, bw = wi["pill_x"][1]
+    cx, cy = int(bx + bw / 2), s * app.ROW_H + app.ROW_H // 2
     app.canvas.event_generate("<Motion>", x=cx, y=cy)   # Tk가 '마우스 아래 항목'을 알아내려면 이동 이벤트가 필요
     pump(0.05)
     app._canvas_press(Ev(app.canvas, cx, cy))
