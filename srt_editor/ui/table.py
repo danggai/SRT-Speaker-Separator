@@ -297,6 +297,7 @@ class SubtitleTableMixin:
         txt_e.bind("<Control-Return>", lambda e, s=slot_idx: self._txt_jump(s, 1))
         txt_e.bind("<Shift-Tab>",     lambda e, s=slot_idx: self._txt_jump(s, -1))
         txt_e.bind("<Shift-Return>", lambda e: self._txt_insert_br(e.widget))
+        txt_e.bind("<Escape>",       lambda e, s=slot_idx: self._txt_cancel(s))
         txt_e.bind("<FocusIn>",  lambda e, s=slot_idx: self._slot_focus_in(s))
 
         self._slot_data.append(-1)
@@ -458,6 +459,19 @@ class SubtitleTableMixin:
         self._txt_edit_start(slot)
         self._slot_widgets[slot]["content"].icursor("end")
         self._play_line(nxt)
+        return "break"
+
+    def _txt_cancel(self, slot_idx):
+        """편집 중 Esc: 고친 내용은 버리고 표로 돌아감."""
+        wi = self._slot_widgets[slot_idx]
+        di = self._txt_editing_idx(slot_idx)
+        if 0 <= di < len(self.subtitles):
+            orig = self.subtitles[di].get("text", "").replace("\n", _BR)
+            wi["txt_var"].set(orig)
+            wi["_txt_shown"] = orig
+        wi["_edit_di"] = None
+        self._txt_edit_end(slot_idx)   # 편집 상태를 먼저 끝내 포커스가 빠질 때 저장되지 않게
+        self.focus_set()
         return "break"
 
     def _txt_edit_end(self, slot_idx):

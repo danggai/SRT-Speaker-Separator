@@ -3,6 +3,7 @@ import copy
 import tkinter as tk
 
 from ..srt_io import format_srt_time
+from ..widgets import show_toast
 
 
 def split_text_by_ratio(text, ratio):
@@ -284,6 +285,62 @@ class EditingMixin:
         self._wf_img_cache = None
         self._pb_redraw()
         return True
+
+    # ── 키보드로 시간 맞추기 ───────────────────
+    _NUDGE_SEC = 0.05
+
+    def _set_sub_edge(self, idx, which, t):
+        """idx번 자막의 시작('s') 또는 끝('e')을 t초로. 최소 길이를 못 지키면 False."""
+        cache = getattr(self, "_ts_cache", [])
+        if not (0 <= idx < len(cache)) or cache[idx][0] is None or cache[idx][1] is None:
+            return False
+        t_s, t_e = cache[idx]
+        t = max(0.0, round(t, 3))
+        if which == "s":
+            t_s = t
+        else:
+            t_e = t
+        if t_e - t_s < self._MIN_SUB_DURATION:
+            return False
+        ref = getattr(self, "_edge_undo_ref", None)   # 같은 쪽을 연달아 움직이면 실행 취소는 한 번으로
+        if not (ref and ref[0] == (idx, which) and self._undo_stack and self._undo_stack[-1] is ref[1]):
+            self._push_undo()
+            self._edge_undo_ref = ((idx, which), self._undo_stack[-1])
+        self.subtitles[idx]["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}"
+        self._ts_cache[idx] = (t_s, t_e)
+        self._unsaved = True
+        self._redraw_slot_for(idx)
+        self._wf_img_cache = None
+        self._pb_redraw()
+        return True
+
+    def _edge_key_target(self):
+        idx = getattr(self, "_selected_row_idx", None)
+        if isinstance(self.focus_get(), tk.Entry) or not self.media_path or idx is None:
+            return None
+        return idx
+
+    def _mark_edge(self, which, event=None):
+        """Q·W: 선택한 줄의 시작·끝을 지금 재생 위치로 (재생 중 W면 다음 줄로 넘어가 이어서 찍기)."""
+        idx = self._edge_key_target()
+        if idx is None:
+            return
+        if not self._set_sub_edge(idx, which, self.media_progress_var.get()):
+            show_toast(self, "시작이 끝보다 뒤예요" if which == "s" else "끝이 시작보다 앞이에요")
+        elif which == "e" and self.player.is_playing and idx + 1 < len(self.subtitles):
+            self._select_row(idx + 1, seek=False)
+            self._scroll_to_row(idx + 1)
+        return "break"
+
+    def _nudge_edge(self, which, delta, event=None):
+        """Alt+←/→: 시작을, Alt+Shift+←/→: 끝을 0.05초씩 옮김."""
+        idx = self._edge_key_target()
+        if idx is None:
+            return
+        t_s, t_e = self._ts_cache[idx]
+        if t_s is not None:
+            self._set_sub_edge(idx, which, (t_s if which == "s" else t_e) + delta * self._NUDGE_SEC)
+        return "break"
 
     def merge_selected(self, event=None):
         """선택한 자막을 하나로 병합 (하나만 선택했으면 다음 자막과).

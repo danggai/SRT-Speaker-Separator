@@ -226,12 +226,20 @@ class SRTEditor(
         self.bind("V", self._toggle_video)
         self.bind("f", self._review_next_check)
         self.bind("F", self._review_next_check)
+        for _k, _w in (("q", "s"), ("Q", "s"), ("w", "e"), ("W", "e")):   # 재생 위치로 시작·끝 찍기
+            self.bind(_k, lambda e, w=_w: self._mark_edge(w, e))
+        self.bind("<Alt-Left>",        lambda e: self._nudge_edge("s", -1, e))
+        self.bind("<Alt-Right>",       lambda e: self._nudge_edge("s", 1, e))
+        self.bind("<Alt-Shift-Left>",  lambda e: self._nudge_edge("e", -1, e))
+        self.bind("<Alt-Shift-Right>", lambda e: self._nudge_edge("e", 1, e))
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
             self.bind("ㅡ", self.merge_selected)
             self.bind("ㅍ", self._toggle_video)
             self.bind("ㄹ", self._review_next_check)
+            self.bind("ㅂ", lambda e: self._mark_edge("s", e))
+            self.bind("ㅈ", lambda e: self._mark_edge("e", e))
         except tk.TclError:
             pass
         self.protocol("WM_DELETE_WINDOW", self._on_close)
