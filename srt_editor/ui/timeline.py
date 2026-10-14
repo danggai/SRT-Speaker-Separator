@@ -850,6 +850,7 @@ class TimelineMixin:
             "mode": mode, "idx": idx,
             "t_s": cache[idx][0],
             "t_e": cache[idx][1],
+            "link": self._linked_edge(idx, "s" if mode == "head_start" else "e"),   # 붙은 옆 줄도 함께
         }
         self._pb_dragging = False
         self._pb_sub_click_idx = None
@@ -907,6 +908,10 @@ class TimelineMixin:
             return os_ + dt, oe + dt, ol + dl
         if drag["idx"] == i:
             return drag.get("t_s", t_s), drag.get("t_e", t_e), lane
+        if drag.get("link") == i:   # 붙어 있던 옆 줄: 맞닿은 경계만 같이
+            if drag["mode"] == "head_start":
+                return t_s, max(t_s + 0.05, drag["t_s"]), lane
+            return min(t_e - 0.05, drag["t_e"]), t_e, lane
         return t_s, t_e, lane
 
     def _pb_drag(self, event):
@@ -1077,6 +1082,8 @@ class TimelineMixin:
             # 실제 드래그 → 타임스탬프·레이어 적용 (바뀐 경우에만 실행 취소 기록)
             changed = []
             targets = list(drag["group"]) if drag["mode"] == "move" else [idx]
+            if drag["mode"] != "move" and drag.get("link") is not None:
+                targets.append(drag["link"])
             for j in targets:
                 if not (0 <= j < len(self.subtitles)):
                     continue

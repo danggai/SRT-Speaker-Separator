@@ -291,8 +291,22 @@ class EditingMixin:
     # ── 키보드로 시간 맞추기 ───────────────────
     _NUDGE_SEC = 0.05
 
+    def _linked_edge(self, idx, which):
+        """idx번 줄의 시작('s')·끝('e')에 딱 붙은 옆 줄 번호. 없거나 설정이 꺼져 있으면 None."""
+        cache = getattr(self, "_ts_cache", [])
+        if not self._opt("link_edges") or not (0 <= idx < len(cache)):
+            return None
+        t = cache[idx][0 if which == "s" else 1]
+        if t is None:
+            return None
+        k = 1 if which == "s" else 0   # 시작이면 옆 줄의 끝, 끝이면 옆 줄의 시작
+        for j in sorted(range(max(0, idx - 3), min(len(cache), idx + 4)), key=lambda j: abs(j - idx)):
+            if j != idx and cache[j][k] is not None and abs(cache[j][k] - t) < 0.0015:
+                return j
+        return None
+
     def _set_sub_edge(self, idx, which, t):
-        """idx번 자막의 시작('s') 또는 끝('e')을 t초로. 최소 길이를 못 지키면 False."""
+        """idx번 자막의 시작('s') 또는 끝('e')을 t초로 (붙은 옆 줄 경계도 함께). 최소 길이를 못 지키면 False."""
         cache = getattr(self, "_ts_cache", [])
         if not (0 <= idx < len(cache)) or cache[idx][0] is None or cache[idx][1] is None:
             return False
@@ -304,12 +318,22 @@ class EditingMixin:
             t_e = t
         if t_e - t_s < self._MIN_SUB_DURATION:
             return False
+        link = self._linked_edge(idx, which)
+        if link is not None:
+            l_s, l_e = cache[link]
+            l_s, l_e = (l_s, t) if which == "s" else (t, l_e)
+            if l_e - l_s < self._MIN_SUB_DURATION:   # 옆 줄이 너무 짧아지면 함께 옮기지 않음
+                link = None
         ref = getattr(self, "_edge_undo_ref", None)   # 같은 쪽을 연달아 움직이면 실행 취소는 한 번으로
         if not (ref and ref[0] == (idx, which) and self._undo_stack and self._undo_stack[-1] is ref[1]):
             self._push_undo()
             self._edge_undo_ref = ((idx, which), self._undo_stack[-1])
         self.subtitles[idx]["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}"
         self._ts_cache[idx] = (t_s, t_e)
+        if link is not None:
+            self.subtitles[link]["timestamp"] = f"{format_srt_time(l_s)} --> {format_srt_time(l_e)}"
+            self._ts_cache[link] = (l_s, l_e)
+            self._redraw_slot_for(link)
         self._unsaved = True
         self._redraw_slot_for(idx)
         self._wf_img_cache = None

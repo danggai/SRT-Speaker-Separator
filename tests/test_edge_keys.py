@@ -75,3 +75,58 @@ def esc_while_editing_discards_changes(app):
     expect(not app._unsaved, "수정 표시 없음")
     eq(app.canvas.itemcget(f"{app._slot_widgets[s]['tag']}txt", "text")[:3], before[:3], "화면 글자도 원래대로")
     expect(not ctx.tk_errors, f"Tk 오류: {ctx.tk_errors[:1]}")
+
+
+@test
+def touching_edges_move_together(app):
+    from harness import ts
+    load_sample(app, with_wav=True)   # 자막 3: 7.5~9.5, 자막 4: 10.0~12.0
+    app.subtitles[3]["timestamp"] = f"{ts(7.5)} --> {ts(10.0)}"   # 3번 끝을 4번 시작에 붙임
+    app._rebuild_ts_cache()
+    app._select_row(3, seek=False)
+    app._do_seek(10.3, update_selection=False)
+    app_key("w")
+    near(times(app, 3)[1], 10.3, 0.002, "W: 3번 끝")
+    near(times(app, 4)[0], 10.3, 0.002, "붙어 있던 4번 시작도 같이")
+    app._undo()
+    near(times(app, 4)[0], 10.0, 0.002, "실행 취소 한 번에 둘 다 되돌림")
+    near(times(app, 3)[1], 10.0, 0.002)
+    app._select_row(4, seek=False)
+    app_key("<Alt-Left>", 0.02)
+    near(times(app, 4)[0], 9.95, 0.002, "Alt+←: 4번 시작")
+    near(times(app, 3)[1], 9.95, 0.002, "붙은 3번 끝도 같이")
+    app._select_row(5, seek=False)   # 5번은 4번과 떨어져 있음
+    app_key("<Alt-Left>", 0.02)
+    near(times(app, 4)[1], 12.0, 0.002, "떨어진 줄은 그대로")
+    app._set_opt("link_edges", False)
+    app._select_row(4, seek=False)
+    app_key("<Alt-Left>", 0.02)
+    near(times(app, 3)[1], 9.95, 0.002, "설정을 끄면 따로 움직임")
+    app._set_opt("link_edges", True)
+
+
+@test
+def dragging_shared_edge_on_timeline_moves_neighbor(app):
+    from harness import ts, Ev
+    load_sample(app, with_wav=True)
+    app.subtitles[3]["timestamp"] = f"{ts(7.5)} --> {ts(10.0)}"
+    app._rebuild_ts_cache()
+    app._wf_img_cache = None
+    app._pb_redraw()
+    pump(0.2)
+    pb = app._pb_canvas
+    dur = app._timeline_duration() if hasattr(app, "_timeline_duration") else app.player.duration
+    cw = pb.winfo_width()
+    x = app._wf_ratio_to_x(10.0 / dur, cw) + 1
+    y = int(app._WF_LANE_H / 2)
+    hit = app._wf_hit_test(x, y)
+    eq(hit["type"], "handle", f"경계 핸들 판정 {hit}")
+    x2 = app._wf_ratio_to_x(10.6 / dur, cw)
+    app._pb_press(Ev(pb, x, y))
+    for k in range(1, 5):
+        app._pb_drag(Ev(pb, x + (x2 - x) * k // 4, y))
+    app._pb_release(Ev(pb, x2, y))
+    pump(0.1)
+    moved = times(app, 4)[0] if hit["idx"] == 4 else times(app, 3)[1]
+    expect(abs(moved - 10.0) > 0.3, f"끈 경계가 움직임 ({times(app, 3)}, {times(app, 4)})")
+    near(times(app, 3)[1], times(app, 4)[0], 0.002, "맞닿은 두 줄이 계속 붙어 있음")

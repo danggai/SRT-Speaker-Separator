@@ -21,6 +21,7 @@ OPTION_DEFAULTS = {
     "split_text": True,           # 나누기 할 때 내용도 단어 단위로 나누기
     "click_seek": True,           # 자막 클릭 시 재생 위치 이동
     "lock_timeline": False,       # 타임라인에서 자막 시간 바꾸기 잠금
+    "link_edges": True,           # 붙어 있는 앞뒤 줄 경계를 함께 옮기기
     "backup_enabled": True,       # 자동 백업
     "backup_minutes": 3,          # 자동 백업 간격 (분)
     "export_dir_mode": "ask",     # 내보내기 폴더: ask | same | fixed

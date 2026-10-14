@@ -199,7 +199,7 @@ class SettingsMixin:
     _SECTION_OPTS = {
         "general": ("startup_open_last", "update_check", "context_keys", "key_tips"),
         "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "click_seek",
-                 "new_sub_len", "split_text", "lock_timeline"),
+                 "new_sub_len", "split_text", "lock_timeline", "link_edges"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
     }
@@ -547,6 +547,9 @@ class SettingsMixin:
         _, right = self._settings_row(card, "≡", "타임라인 시간 잠금",
                                       "파형에서 자막을 끌어 옮기지 못하게")
         self._opt_toggle(right, "lock_timeline")
+        _, right = self._settings_row(card, "⇹", "붙은 경계 함께 옮기기",
+                                      "앞뒤 줄이 맞닿아 있으면 한쪽을 옮길 때 같이")
+        self._opt_toggle(right, "link_edges")
 
     # ── 섹션: 자동 자막 ───────────────────────
     def _build_transcribe_settings_tab(self, parent):
