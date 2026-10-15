@@ -236,6 +236,9 @@ def whisper_repeat_loops_are_found_and_retried():
     segs = [seg("시작", 0, 1)] + [seg(" 정지해주세요.", 1 + k, 2 + k) for k in range(6)] + [seg("끝", 8, 9)]
     eq(speech.find_loops(segs), [(1, 6)], "같은 문장 4번 이상 이어지면 반복 오류")
     eq(speech.find_loops(segs[:4]), [], "3번까지는 그대로")
+    stut = [seg("보스", 0, 1), seg("아니이이이이이이이이이이이이", 1, 3), seg("이이이이이이이이이이", 3, 5), seg("가자", 5, 6)]
+    eq(speech.find_loops(stut), [(1, 2)], "한 문장 안 글자 반복도 (이어진 줄은 묶어서)")
+    eq(speech.find_loops([seg("오지마 오지마 오지마", 0, 2)]), [], "몇 번 반복은 실제 말일 수 있어 그대로")
 
     class Model:
         def __init__(self, result):
