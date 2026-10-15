@@ -60,6 +60,28 @@ def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
     return model, wmodel
 
 
+LOOP_MIN = 4        # 같은 문장이 이만큼 이어지면 Whisper 반복 오류로 봄
+LOOP_RETRY_CHUNK = 8   # 반복 구간을 다시 인식할 때 조각 길이 (초, 기본 30초보다 짧아야 반복에 덜 빠짐)
+
+
+def find_loops(segments, min_run=LOOP_MIN):
+    """같은 문장이 min_run번 이상 이어진 구간 [(시작 번호, 끝 번호)] (Whisper가 같은 말을 되풀이하는 오류)."""
+    import re
+
+    def norm(t):
+        return re.sub(r"[\s\.,\?\!~…]+", "", t or "")
+    out, i = [], 0
+    while i < len(segments):
+        j = i
+        key = norm(segments[i].get("text"))
+        while key and j + 1 < len(segments) and norm(segments[j + 1].get("text")) == key:
+            j += 1
+        if j - i + 1 >= min_run:
+            out.append((i, j))
+        i = j + 1
+    return out
+
+
 def _diarize_exclusive(diar_model, audio, num_speakers=0, exact=False):
     """pyannote 화자 분리 → DataFrame(start, end, speaker). 겹침 구간은 우세 화자 하나만."""
     import torch

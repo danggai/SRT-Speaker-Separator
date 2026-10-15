@@ -225,3 +225,33 @@ def auto_transcribe_loads_lines_and_removes_temp_file(app):
     left = [f for f in set(os.listdir(tempfile.gettempdir())) - before if f.endswith(".srt")]
     eq(left, [], "임시 SRT는 지움")
     expect(app.save_path.endswith(".srt") and app._unsaved, "미디어 이름으로 저장 대기")
+
+
+@test
+def whisper_repeat_loops_are_found_and_retried():
+    from srt_editor import speech, ai_worker
+
+    def seg(t, s, e):
+        return {"text": t, "start": s, "end": e}
+    segs = [seg("시작", 0, 1)] + [seg(" 정지해주세요.", 1 + k, 2 + k) for k in range(6)] + [seg("끝", 8, 9)]
+    eq(speech.find_loops(segs), [(1, 6)], "같은 문장 4번 이상 이어지면 반복 오류")
+    eq(speech.find_loops(segs[:4]), [], "3번까지는 그대로")
+
+    class Model:
+        def __init__(self, result):
+            self.result, self.calls = result, []
+
+        def transcribe(self, audio, **kw):
+            self.calls.append((len(audio), kw.get("chunk_size")))
+            return {"segments": self.result}
+    status, ai_worker.status = ai_worker.status, lambda *a, **k: None
+    try:
+        good = Model([seg("나 돈이 없어", 0.5, 1.5), seg("그냥 가라", 3.0, 4.0)])
+        out = ai_worker._retry_loops(good, [0.0] * (16000 * 10), segs, 8, "ko")
+        eq([s["text"] for s in out], ["시작", "나 돈이 없어", "그냥 가라", "끝"], "반복 구간을 다시 인식한 결과로 바꿈")
+        eq((out[1]["start"], out[2]["end"]), (1.5, 5.0), "다시 인식한 시간은 구간 시작 기준으로 옮김")
+        eq(good.calls[0], (16000 * 6, speech.LOOP_RETRY_CHUNK), "그 구간만 짧은 조각으로")
+        bad = Model([seg("정지", 0, 1)] * 5)
+        eq(len(ai_worker._retry_loops(bad, [0.0] * 160000, segs, 8, "ko")), len(segs), "다시 해도 반복이면 원래대로")
+    finally:
+        ai_worker.status = status

@@ -229,6 +229,29 @@ def _stage_progress(label, step, lo, hi):
     return cb
 
 
+def _retry_loops(model, audio, segments, batch_size, lang):
+    """같은 문장만 되풀이한 구간을 짧은 조각으로 다시 인식 (그 사이 실제 대사가 통째로 빠지는 오류)."""
+    import speech
+    loops = speech.find_loops(segments)
+    if not loops:
+        return segments
+    status("반복 인식된 구간 다시 듣는 중...", "asr", 60)
+    out, last = [], 0
+    for i, j in loops:
+        a, b = segments[i]["start"], segments[j]["end"]
+        out.extend(segments[last:i])
+        last = j + 1
+        try:
+            r = model.transcribe(audio[int(a * SR):int(b * SR)], batch_size=batch_size, language=lang,
+                                 chunk_size=speech.LOOP_RETRY_CHUNK)
+            new = [dict(s, start=s["start"] + a, end=s["end"] + a) for s in r["segments"]]
+        except Exception:
+            new = []
+        out.extend(new if new and not speech.find_loops(new) else segments[i:j + 1])
+    out.extend(segments[last:])
+    return out
+
+
 def job_transcribe(job):
     import model_download
     import speech
@@ -249,6 +272,7 @@ def job_transcribe(job):
         batch_size = 1
     result = model.transcribe(audio, batch_size=batch_size, language=lang,
                               progress_callback=_stage_progress(f"음성 인식 중 ({device} / {wname})", "asr", 20, 60))
+    result["segments"] = _retry_loops(model, audio, result["segments"], batch_size, lang)
     del model
     _free(device)
     status("타임스탬프 정렬 중...", "align", 60)
