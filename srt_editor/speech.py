@@ -66,14 +66,14 @@ LOOP_RETRY_CHUNK = 8   # 반복 구간을 다시 인식할 때 조각 길이 (�
 
 def find_loops(segments, min_run=LOOP_MIN):
     """Whisper가 같은 말을 되풀이한 구간 [(시작 번호, 끝 번호)]: 같은 문장이 min_run번 이상 이어지거나,
-    한 문장 안에서 1~4글자가 8번 이상 이어짐 ('아니이이이…')."""
+    한 줄 안에서 1~4글자가 8번('아니이이이…') 또는 5~15글자가 4번 이상 이어짐."""
     import re
 
     def norm(t):
         return re.sub(r"[\s\.,\?\!~…]+", "", t or "")
 
-    def stutters(t):
-        return bool(re.search(r"(.{1,4})\1{7,}", norm(t)))
+    def stutters(t):   # 정렬 전에는 되풀이한 문장들이 한 줄에 붙어 있음
+        return bool(re.search(r"(.{1,4})\1{7,}|(.{5,15})\2{3,}", norm(t)))
     out, i = [], 0
     while i < len(segments):
         j = i
