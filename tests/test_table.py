@@ -237,7 +237,9 @@ def delete_selected_rows_with_undo(app):
     app._on_delete()
     eq(len(app.subtitles), 21, "3줄 삭제")
     eq([s["text"] for s in app.subtitles], texts[:3] + texts[6:], "나머지 순서")
-    eq(app._selected_rows, set(), "삭제 후 선택 해제")
+    eq(app._selected_rows, {3}, "삭제 후 그 자리의 다음 줄 선택")
+    app._on_arrow_down(None)
+    eq(app._selected_row_idx, 4, "↓는 건너뛰지 않고 바로 다음 줄")
     app._undo()
     eq([s["text"] for s in app.subtitles], texts, "실행 취소로 복구")
 

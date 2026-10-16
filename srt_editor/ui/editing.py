@@ -115,8 +115,16 @@ class EditingMixin:
         self._render_speakers()
         self._unsaved = True
         self._wf_img_cache = None
-        self._pb_redraw()
+        self._select_after_remove(min(targets))
         return "break"
+
+    def _select_after_remove(self, idx):
+        """지운 자리의 다음 줄을 선택 (↓가 한 줄 건너뛰지 않게)."""
+        if self.subtitles:
+            self._select_row(max(0, min(idx, len(self.subtitles) - 1)), seek=False)
+        else:
+            self._last_focused_idx = None
+        self._pb_redraw()
 
     def _on_cut(self, event):
         if isinstance(self.focus_get(), tk.Entry):
@@ -138,7 +146,7 @@ class EditingMixin:
         self._render_speakers()
         self._unsaved = True
         self._wf_img_cache = None
-        self._pb_redraw()
+        self._select_after_remove(min(targets))
         return "break"
 
     def _on_copy(self, event):
