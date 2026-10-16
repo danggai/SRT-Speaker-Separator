@@ -3,7 +3,7 @@ import json
 import os
 import pathlib
 
-from harness import (Skip, cfg, ctx, eq, expect, fresh_dir, load_sample, pump, sample_subs, test,
+from harness import (steps, Skip, cfg, ctx, eq, expect, fresh_dir, load_sample, pump, sample_subs, test,
                      wait_until, write_srt_file, write_wav)
 
 
@@ -13,7 +13,6 @@ def _backup_files():
 
 
 # ───────── 열기 ─────────
-@test
 def open_srt_loads_everything(app):
     p = load_sample(app)
     eq(len(app.subtitles), 24, "자막 수")
@@ -27,7 +26,6 @@ def open_srt_loads_everything(app):
     eq(app._slot_data[:3], [0, 1, 2], "자막 목록 화면")
 
 
-@test
 def open_srt_counts_unassigned(app):
     load_sample(app, tagged_every=2)
     n = sum(1 for s in app.subtitles if not s["speaker"])
@@ -35,7 +33,6 @@ def open_srt_counts_unassigned(app):
     expect(f"미지정 {n}개" in app.lbl_count.cget("text"), app.lbl_count.cget("text"))
 
 
-@test
 def open_invalid_file_reports_error_and_keeps_state(app):
     p = load_sample(app)
     bad = fresh_dir() / "bad.srt"
@@ -47,7 +44,6 @@ def open_invalid_file_reports_error_and_keeps_state(app):
     eq(app.save_path, str(p["srt"]), "경로도 그대로")
 
 
-@test
 def open_srt_restores_meta_speaker_order_colors_lanes(app):
     d = fresh_dir()
     meta = {"speakers": ["준호", "민지", "빈화자"], "speaker_colors": {"민지": "#123456"},
@@ -61,7 +57,6 @@ def open_srt_restores_meta_speaker_order_colors_lanes(app):
     eq([s.get("_lane") for s in app.subtitles[:6]], [0, 1, 2, 0, 1, 2], "자막별 레이어")
 
 
-@test
 def open_srt_ignores_malformed_meta_values(app):
     d = fresh_dir()
     meta = {"speakers": ["민지", 5, None, "", "민지"], "speaker_colors": "깨짐", "lanes": "많이",
@@ -76,7 +71,6 @@ def open_srt_ignores_malformed_meta_values(app):
     app._render_speakers()
 
 
-@test
 def open_paths_srt_plus_media_both_loaded(app):
     d = fresh_dir()
     srt = write_srt_file(d / "x.srt", sample_subs(6))
@@ -86,7 +80,6 @@ def open_paths_srt_plus_media_both_loaded(app):
     eq(len(app.subtitles), 6)
 
 
-@test
 def open_paths_media_only_with_sibling_srt(app):
     d = fresh_dir()
     write_srt_file(d / "clip.srt", sample_subs(5))
@@ -95,7 +88,6 @@ def open_paths_media_only_with_sibling_srt(app):
     wait_until(lambda: len(app.subtitles) == 5 and app.media_path == str(wav), 5)
 
 
-@test
 def open_paths_media_only_offers_auto_transcribe(app):
     calls = []
     app._ask_auto_transcribe = lambda path: calls.append(path)
@@ -107,7 +99,6 @@ def open_paths_media_only_offers_auto_transcribe(app):
     del app._ask_auto_transcribe
 
 
-@test
 def open_srt_autoloads_sibling_media(app):
     p = load_sample(app, with_wav=False)
     wav = write_wav(p["dir"] / "sample.wav", seconds=3)
@@ -115,7 +106,6 @@ def open_srt_autoloads_sibling_media(app):
     wait_until(lambda: app.media_path == str(wav), 5, "같은 이름 미디어 자동 로드")
 
 
-@test
 def drop_event_parses_braced_paths(app):
     seen = []
     app._open_paths = lambda paths: seen.append(list(paths))
@@ -127,7 +117,6 @@ def drop_event_parses_braced_paths(app):
     eq(seen, [["C:/폴더 이름/영상 파일.mp4", "C:/a/b.srt", "D:/x y/z.srt"]], "공백이 든 경로 묶기")
 
 
-@test
 def open_file_dialog_cancel_does_nothing(app):
     ctx.paths[:] = [""]
     app.open_file()
@@ -166,7 +155,6 @@ def view_state_is_restored_on_reopen(app):
 
 
 # ───────── 저장 ─────────
-@test
 def save_writes_tagged_srt_with_meta(app):
     p = load_sample(app)
     app.subtitles[2]["text"] = "고친 내용"
@@ -182,7 +170,6 @@ def save_writes_tagged_srt_with_meta(app):
     expect(not app.title().startswith("●"), "저장 후 제목의 변경 표시가 남음")
 
 
-@test
 def save_without_path_asks_for_location(app):
     p = load_sample(app)
     app.save_path = None
@@ -195,7 +182,6 @@ def save_without_path_asks_for_location(app):
     eq(len(app.subtitles), 24)
 
 
-@test
 def save_as_cancel_leaves_everything(app):
     p = load_sample(app)
     app.subtitles[0]["text"] = "바꿈"
@@ -207,7 +193,6 @@ def save_as_cancel_leaves_everything(app):
     expect(app._unsaved, "취소했는데 저장된 것으로 표시됨")
 
 
-@test
 def save_as_overwrite_needs_confirmation(app):
     p = load_sample(app)
     other = write_srt_file(fresh_dir() / "exist.srt", sample_subs(2))
@@ -221,14 +206,12 @@ def save_as_overwrite_needs_confirmation(app):
     expect(other.read_text(encoding="utf-8").count("-->") == 24, "허락했는데 안 덮어씀")
 
 
-@test
 def save_empty_warns(app):
     app.save_file()
     app.save_file_as()
     eq([m[0] for m in ctx.msgs], ["showwarning", "showwarning"])
 
 
-@test
 def save_keeps_untagged_text_and_custom_display_pattern(app):
     from srt_editor import srt_io
     p = load_sample(app, tagged_every=2)
@@ -250,7 +233,6 @@ def save_keeps_untagged_text_and_custom_display_pattern(app):
 
 
 # ───────── 백업·닫기 ─────────
-@test
 def backup_written_and_cleared_on_save(app):
     p = load_sample(app)
     app.subtitles[0]["text"] = "백업 확인"
@@ -266,7 +248,6 @@ def backup_written_and_cleared_on_save(app):
     eq(_backup_files(), [], "저장하면 백업은 지워져야 해요")
 
 
-@test
 def backup_restore_after_crash(app):
     p = load_sample(app)
     app.subtitles[1]["text"] = "저장 못 하고 꺼진 내용"
@@ -283,7 +264,6 @@ def backup_restore_after_crash(app):
     expect(app._unsaved, "복구한 내용은 저장 안 된 상태여야 해요")
 
 
-@test
 def close_to_home_asks_when_unsaved(app):
     p = load_sample(app)
     app.subtitles[0]["text"] = "저장해야 하는 변경"
@@ -298,7 +278,6 @@ def close_to_home_asks_when_unsaved(app):
     expect(app.overlay.winfo_manager(), "홈 화면이 다시 보여야 해요")
 
 
-@test
 def close_to_home_save_yes_writes_file(app):
     p = load_sample(app)
     app.subtitles[0]["text"] = "저장하고 닫기"
@@ -309,7 +288,6 @@ def close_to_home_save_yes_writes_file(app):
     expect("저장하고 닫기" in p["srt"].read_text(encoding="utf-8"), "저장 후 닫기를 눌렀는데 저장 안 됨")
 
 
-@test
 def close_to_home_save_yes_but_save_dialog_cancelled_keeps_document(app):
     load_sample(app)
     app.save_path = None
@@ -322,7 +300,6 @@ def close_to_home_save_yes_but_save_dialog_cancelled_keeps_document(app):
     eq(len(app.subtitles), 24, "저장이 취소됐는데 문서를 닫음 (변경 손실)")
 
 
-@test
 def unsaved_marker_in_title(app):
     load_sample(app)
     expect(not app.title().startswith("●"))
@@ -335,7 +312,6 @@ def unsaved_marker_in_title(app):
 
 
 # ───────── 미디어 ─────────
-@test
 def media_wav_duration_and_waveform(app):
     p = load_sample(app, with_wav=True)
     wait_until(lambda: app.player.duration > 0, 10,
@@ -353,7 +329,6 @@ def media_wav_duration_and_waveform(app):
     expect(list(pathlib.Path(waveform.CACHE_DIR).glob("*.bin")), "파형 캐시가 안 만들어짐")
 
 
-@test
 def media_unreadable_file_does_not_crash(app):
     load_sample(app)
     bad = fresh_dir() / "broken.wav"
@@ -372,7 +347,6 @@ def _read_plain(path):
     return srt_io.parse_srt(str(path), pattern=r"^\[\[never\]\]")   # 태그를 해석하지 않고 그대로
 
 
-@test
 def export_same_folder_per_speaker_and_untagged(app):
     p = load_sample(app, tagged_every=3)
     app._set_opt("export_dir_mode", "same")
@@ -387,7 +361,6 @@ def export_same_folder_per_speaker_and_untagged(app):
     expect(ctx.msgs and ctx.msgs[-1][0] == "showinfo", "완료 안내")
 
 
-@test
 def export_ask_folder_and_subfolder_option(app):
     p = load_sample(app)
     out = fresh_dir()
@@ -397,7 +370,6 @@ def export_ask_folder_and_subfolder_option(app):
     expect((out / "srts" / "민지.srt").exists() and (out / "srts" / "준호.srt").exists(), "srts 폴더에 저장")
 
 
-@test
 def export_fixed_folder(app):
     load_sample(app)
     out = fresh_dir()
@@ -407,7 +379,6 @@ def export_fixed_folder(app):
     expect((out / "민지.srt").exists(), "지정한 폴더에 저장")
 
 
-@test
 def export_cancelled_folder_dialog_writes_nothing(app):
     p = load_sample(app)
     before = set(p["dir"].glob("*"))
@@ -416,7 +387,6 @@ def export_cancelled_folder_dialog_writes_nothing(app):
     eq(set(p["dir"].glob("*")), before, "취소했는데 파일이 생김")
 
 
-@test
 def export_sanitizes_and_dedupes_speaker_file_names(app):
     d = fresh_dir()
     subs = [{"timestamp": f"{'00:00:0%d,000' % i} --> {'00:00:0%d,500' % i}", "text": f"t{i}", "speaker": s}
@@ -430,7 +400,6 @@ def export_sanitizes_and_dedupes_speaker_file_names(app):
     expect({"ab.srt", "ab (2).srt", "_CON.srt"} <= names, f"파일 이름 정리: {sorted(names)}")
 
 
-@test
 def export_without_subtitles_warns(app):
     app.export()
     eq(ctx.msgs[-1][0], "showwarning")
@@ -447,3 +416,38 @@ def goto_next_unassigned_cycles(app):
         seen.append(app._selected_row_idx)
     eq(seen[:len(un)], [i for i in un][:len(un)], "미지정 줄을 차례로")
     eq(seen[len(un)], un[0], "끝까지 가면 처음 미지정 줄로 돌아옴")
+
+
+@test
+def open_srt(app):
+    steps(open_srt_loads_everything, open_srt_counts_unassigned, open_srt_restores_meta_speaker_order_colors_lanes, open_srt_ignores_malformed_meta_values, open_srt_autoloads_sibling_media)
+
+
+@test
+def open_paths_drop_and_dialog(app):
+    steps(open_paths_srt_plus_media_both_loaded, open_paths_media_only_with_sibling_srt, open_paths_media_only_offers_auto_transcribe, drop_event_parses_braced_paths, open_file_dialog_cancel_does_nothing, open_invalid_file_reports_error_and_keeps_state)
+
+
+@test
+def save_and_save_as(app):
+    steps(save_writes_tagged_srt_with_meta, save_without_path_asks_for_location, save_as_cancel_leaves_everything, save_as_overwrite_needs_confirmation, save_empty_warns, save_keeps_untagged_text_and_custom_display_pattern, unsaved_marker_in_title)
+
+
+@test
+def backup_write_clear_restore(app):
+    steps(backup_written_and_cleared_on_save, backup_restore_after_crash)
+
+
+@test
+def close_to_home_flows(app):
+    steps(close_to_home_asks_when_unsaved, close_to_home_save_yes_writes_file, close_to_home_save_yes_but_save_dialog_cancelled_keeps_document)
+
+
+@test
+def media_load_and_unreadable(app):
+    steps(media_wav_duration_and_waveform, media_unreadable_file_does_not_crash)
+
+
+@test
+def export_by_speaker(app):
+    steps(export_same_folder_per_speaker_and_untagged, export_ask_folder_and_subfolder_option, export_fixed_folder, export_cancelled_folder_dialog_writes_nothing, export_sanitizes_and_dedupes_speaker_file_names, export_without_subtitles_warns)

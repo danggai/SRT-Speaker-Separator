@@ -1,10 +1,9 @@
 """모델 내려받기 진행률 표시."""
 import time
 
-from harness import eq, expect, test
+from harness import steps, eq, expect, test
 
 
-@test
 def format_progress_lines():
     from srt_editor.model_download import format_progress
     eq(format_progress("모델", 412 * 1048576, 3087 * 1048576), "모델  412 / 3,087 MB (13%)")
@@ -43,10 +42,14 @@ def download_skips_when_cached_and_reports_progress_when_not():
         M.is_cached, M._remote_size, M._blobs_size, huggingface_hub.snapshot_download = orig
 
 
-@test
 def whisper_and_align_repo_names():
     from srt_editor import model_download as M
     eq(M.whisper_repo("large-v3"), "Systran/faster-whisper-large-v3")
     eq(M.whisper_repo("a/b"), "a/b", "저장소 이름이면 그대로")
     eq(M.align_repo("ko"), "kresnik/wav2vec2-large-xlsr-korean")
     eq(M.align_repo("en"), None, "영어 정렬 모델은 내장이라 내려받을 게 없음")
+
+
+@test
+def names_and_progress_text():
+    steps(format_progress_lines, whisper_and_align_repo_names)

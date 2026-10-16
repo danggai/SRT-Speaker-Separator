@@ -1,12 +1,11 @@
 """키보드로 시간 맞추기(Q·W, Alt+←/→)와 편집 중 Esc 취소."""
-from harness import app_key, ctx, eq, expect, load_sample, near, pump, slot_of, test
+from harness import steps, app_key, ctx, eq, expect, load_sample, near, pump, slot_of, test
 
 
 def times(app, i):
     return app._ts_cache[i]
 
 
-@test
 def q_w_set_start_and_end_to_playhead_with_undo(app):
     load_sample(app, with_wav=True)   # 자막 3: 7.5~9.5초
     app._select_row(3, seek=False)
@@ -27,7 +26,6 @@ def q_w_set_start_and_end_to_playhead_with_undo(app):
     near(times(app, 3)[0], 7.8, 0.002, "끝보다 뒤면 바꾸지 않음")
 
 
-@test
 def w_while_playing_moves_to_next_line(app):
     load_sample(app, with_wav=True)
     app._select_row(2, seek=False)
@@ -40,7 +38,6 @@ def w_while_playing_moves_to_next_line(app):
     app._media_play_pause()
 
 
-@test
 def alt_arrows_nudge_start_and_end(app):
     load_sample(app, with_wav=True)
     app._select_row(4, seek=False)   # 10.0~12.0초
@@ -56,7 +53,6 @@ def alt_arrows_nudge_start_and_end(app):
     near(times(app, 4)[0], 10.0, 0.002, "연달아 민 시작은 실행 취소 한 번에")
 
 
-@test
 def esc_while_editing_discards_changes(app):
     load_sample(app)
     app._select_row(5, seek=False)
@@ -166,3 +162,8 @@ def dragging_shared_edge_separates_but_ctrl_drag_moves_neighbor(app):
     app._pb_press(Ev(pb, x, y, 0x0004))
     app._pb_release(Ev(pb, x, y, 0x0004))
     eq(app._selected_rows, {0, hit["idx"]}, "경계 Ctrl+클릭은 선택 추가")
+
+
+@test
+def edge_keys(app):
+    steps(q_w_set_start_and_end_to_playhead_with_undo, w_while_playing_moves_to_next_line, alt_arrows_nudge_start_and_end, esc_while_editing_discards_changes)

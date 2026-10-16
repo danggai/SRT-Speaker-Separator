@@ -2,7 +2,7 @@
 import json
 import sys
 
-from harness import ctx, eq, expect, find, pump, test, toplevels
+from harness import steps, ctx, eq, expect, find, pump, test, toplevels
 
 
 def _rt():
@@ -10,7 +10,6 @@ def _rt():
     return ai_runtime
 
 
-@test
 def ai_python_prefers_installed_runtime_then_dev_env():
     R = _rt()
     eq(R.installed_info(), None, "임시 폴더에는 설치돼 있지 않음")
@@ -30,7 +29,6 @@ def ai_python_prefers_installed_runtime_then_dev_env():
         R.uninstall()
 
 
-@test
 def run_job_streams_events_and_returns_result():
     R = _rt()
     events = []
@@ -40,7 +38,6 @@ def run_job_streams_events_and_returns_result():
     expect((R.ROOT / "worker" / "ai_worker.py").exists(), "작업 실행기는 AI 폴더에 복사해서 실행")
 
 
-@test
 def first_run_of_unwarmed_install_shows_notice_once():
     import pathlib
     R = _rt()
@@ -104,7 +101,6 @@ def line_embedding_cache_reuses_unchanged_lines():
         LS.line_embeddings, W._diar_pipeline, W.status, W._campplus, LS.combine_embeddings, W._load_audio = saved
 
 
-@test
 def run_job_reports_worker_error_and_missing_runtime():
     R = _rt()
     try:
@@ -123,7 +119,6 @@ def run_job_reports_worker_error_and_missing_runtime():
         R.ai_python = orig
 
 
-@test
 def ensure_ai_opens_install_dialog_when_missing(app):
     R = _rt()
     orig = R.ai_python
@@ -144,7 +139,6 @@ def ensure_ai_opens_install_dialog_when_missing(app):
         R.ai_python = orig
 
 
-@test
 def settings_storage_shows_ai_card(app):
     app._open_settings(4)
     pump(0.5)
@@ -156,7 +150,6 @@ def settings_storage_shows_ai_card(app):
     eq(ctx.tk_errors, [])
 
 
-@test
 def storage_delete_all_models_removes_every_cached_model(app):
     import os
     import pathlib
@@ -174,3 +167,13 @@ def storage_delete_all_models_removes_every_cached_model(app):
     pump(0.3)
     expect(any(m[1] == "모델 전체 삭제" for m in ctx.msgs), "확인을 물어야 해요")
     eq([p.name for p in hub.iterdir()], [], "모두 지워짐")
+
+
+@test
+def runtime_and_jobs():
+    steps(ai_python_prefers_installed_runtime_then_dev_env, run_job_streams_events_and_returns_result, run_job_reports_worker_error_and_missing_runtime, first_run_of_unwarmed_install_shows_notice_once)
+
+
+@test
+def install_and_storage_ui(app):
+    steps(ensure_ai_opens_install_dialog_when_missing, settings_storage_shows_ai_card, storage_delete_all_models_removes_every_cached_model)

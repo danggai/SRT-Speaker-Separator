@@ -1,8 +1,7 @@
 """재생용 소리: 위치 색인을 넣은 FLAC이고 원본과 시간이 같아야 함 (WAV는 재생 엔진이 시작 위치의 소수점을 버림)."""
-from harness import eq, expect, fresh_dir, test, write_wav
+from harness import steps, eq, expect, fresh_dir, test, write_wav
 
 
-@test
 def play_audio_is_flac_with_seektable_and_same_timing(app):
     import numpy as np
     import av
@@ -30,7 +29,6 @@ def play_audio_is_flac_with_seektable_and_same_timing(app):
     expect(np.abs(a[:n] - b[:n]).max() <= 1, "내용이 원본과 같음 (무손실, 시간 어긋남 없음)")
 
 
-@test
 def speed_audio_is_flac_with_seektable(app):
     import mutagen.flac as mf
     from srt_editor import stretch
@@ -41,3 +39,8 @@ def speed_audio_is_flac_with_seektable(app):
     f = mf.FLAC(str(out))
     expect(abs(f.info.length - 20) < 0.2, f"2배속 길이 {f.info.length}")
     expect(len(f.seektable.seekpoints) >= 2, "위치 색인")
+
+
+@test
+def play_audio_format(app):
+    steps(play_audio_is_flac_with_seektable_and_same_timing, speed_audio_is_flac_with_seektable)

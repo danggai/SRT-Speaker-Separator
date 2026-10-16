@@ -1,5 +1,5 @@
 """자막 교정 창: 제안 표시·적용·실행 취소, 음성으로 다시 확인."""
-from harness import ctx, eq, expect, find, flat, load_sample, press, pump, test, toplevels, wait_until
+from harness import steps, ctx, eq, expect, find, flat, load_sample, press, pump, test, toplevels, wait_until
 
 TEXTS = ["루파가 왔어요", "루파는 어디 갔어요", "루파한테 말했는데", "루파가 웃었어요",
          "루팍이 먼저 갔어요", "그래서 루파도 같이", "오늘은 루파가 이겼어요"]
@@ -59,7 +59,6 @@ def correction_audio_check_uses_ai_job_and_hides_wrong(app):
         del app._run_ai_job
 
 
-@test
 def app_dialogs_return_values_per_button_and_escape(app):
     import importlib
     import srt_editor.dialogs as D
@@ -90,7 +89,6 @@ def app_dialogs_return_values_per_button_and_escape(app):
             setattr(D, k, v)
 
 
-@test
 def recent_token_menu_stays_open_in_modal_dialog(app):
     from srt_editor.widgets import PopupMenu
     from harness import flat
@@ -105,3 +103,8 @@ def recent_token_menu_stays_open_in_modal_dialog(app):
     m = PopupMenu._active
     expect(m is not None and m._win is not None and m._win.winfo_exists(), "메뉴가 바로 닫히면 안 돼요")
     m._destroy()
+
+
+@test
+def correction_dialogs(app):
+    steps(app_dialogs_return_values_per_button_and_escape, recent_token_menu_stays_open_in_modal_dialog)

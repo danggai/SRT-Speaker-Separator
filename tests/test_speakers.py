@@ -1,7 +1,7 @@
 """화자: 사이드바·추가·이름 변경·삭제·순서·색·단축키 지정·자동 색 유지."""
 import tkinter as tk
 
-from harness import (Ev, app_key, cfg, click_row, ctx, eq, expect, key, load_sample, pump, slot_of, test, wait_until,
+from harness import (steps, Ev, app_key, cfg, click_row, ctx, eq, expect, key, load_sample, pump, slot_of, test, wait_until,
                      write_srt_file, fresh_dir)
 
 
@@ -62,7 +62,6 @@ def use_fake_picker(result):
 
 
 # ───────── 사이드바 ─────────
-@test
 def sidebar_lists_speakers_in_order_with_counts(app):
     load_sample(app)
     eq([r._spk_name for r in rows(app)], ["민지", "준호"], "사이드바 순서")
@@ -73,7 +72,6 @@ def sidebar_lists_speakers_in_order_with_counts(app):
     eq(app._spk_total_lbl.cget("text"), "2", "화자 총 수")
 
 
-@test
 def sidebar_empty_state(app):
     app._render_speakers()
     expect(not rows(app), "화자가 없을 땐 줄이 없어야 해요")
@@ -82,7 +80,6 @@ def sidebar_empty_state(app):
     eq(app.speakers, ["새화자1"], "화자가 없을 때 추가")
 
 
-@test
 def sidebar_click_assigns_to_all_selected_rows(app):
     load_sample(app)
     for s in app.subtitles:
@@ -97,7 +94,6 @@ def sidebar_click_assigns_to_all_selected_rows(app):
     eq([app.subtitles[i]["speaker"] for i in (2, 3, 4)], [""] * 3, "한 번에 실행 취소")
 
 
-@test
 def sidebar_click_single_row_and_no_selection(app):
     load_sample(app)
     app._assign_speaker_from_sidebar("준호")     # 선택이 없을 때는 아무 일도 없어야 함
@@ -108,7 +104,6 @@ def sidebar_click_single_row_and_no_selection(app):
 
 
 # ───────── 단축키 지정 ─────────
-@test
 def number_keys_assign_selection_and_backtick_clears(app):
     load_sample(app)
     click_row(app, 2)
@@ -126,7 +121,6 @@ def number_keys_assign_selection_and_backtick_clears(app):
     eq([app.subtitles[i]["speaker"] for i in (2, 3, 4)], ["민지"] * 3, "해제도 실행 취소")
 
 
-@test
 def number_key_ignored_while_typing(app):
     load_sample(app)
     click_row(app, 3)
@@ -143,7 +137,6 @@ def key_target_entry(app, di):
     return ent
 
 
-@test
 def advance_after_assign_option(app):
     load_sample(app, tagged_every=0)
     app.speakers[:] = ["민지", "준호"]
@@ -161,7 +154,6 @@ def advance_after_assign_option(app):
 
 
 # ───────── 추가·이름 변경·삭제 ─────────
-@test
 def add_speaker_default_names_and_inline_rename(app):
     load_sample(app)
     app.add_speaker()
@@ -178,7 +170,6 @@ def add_speaker_default_names_and_inline_rename(app):
     eq(app.speakers[2:], ["새화자1", "새화자2"], "이름 변경도 실행 취소")
 
 
-@test
 def rename_updates_subtitles_and_color(app):
     load_sample(app)
     restore = use_fake_picker("#778899")
@@ -193,7 +184,6 @@ def rename_updates_subtitles_and_color(app):
     eq(counts(app), {"수진": "12", "준호": "12"})
 
 
-@test
 def rename_rejects_duplicate_blank_and_noop(app):
     load_sample(app)
     undo_before = len(app._undo_stack)
@@ -209,7 +199,6 @@ def rename_rejects_duplicate_blank_and_noop(app):
     eq(app.speakers[0], "공백있는이름", "앞뒤 공백은 정리")
 
 
-@test
 def inline_name_edit_escape_and_duplicate_are_ignored(app):
     load_sample(app)
     app._begin_name_edit(rows(app)[0])
@@ -228,7 +217,6 @@ def inline_name_edit_escape_and_duplicate_are_ignored(app):
     app._end_name_edit(commit=False)
 
 
-@test
 def delete_speaker_clears_assignments_with_confirmation(app):
     load_sample(app)
     ctx.answers["askyesno"] = False
@@ -244,7 +232,6 @@ def delete_speaker_clears_assignments_with_confirmation(app):
     eq([s["speaker"] for s in app.subtitles[:4]], ["민지", "준호", "민지", "준호"], "실행 취소로 지정도 복구")
 
 
-@test
 def speaker_context_menu_has_rename_color_delete(app):
     from srt_editor.widgets import PopupMenu
     load_sample(app)
@@ -272,7 +259,6 @@ def reorder_by_dragging_and_undo(app):
     eq(app.speakers, ["화자1", "화자2", "화자3", "화자4", "화자5"], "실행 취소")
 
 
-@test
 def color_change_applies_persists_and_undo_restores(app):
     load_sample(app)
     original = app._speaker_color("준호")
@@ -290,7 +276,6 @@ def color_change_applies_persists_and_undo_restores(app):
     eq(app._speaker_color("준호"), original, "실행 취소하면 원래 색으로 (설정에 저장된 색이 되살아나면 안 돼요)")
 
 
-@test
 def color_change_cancel_and_same_color_do_nothing(app):
     load_sample(app)
     before = colors(app)
@@ -308,7 +293,6 @@ def color_change_cancel_and_same_color_do_nothing(app):
     expect(not app._unsaved, "같은 색을 고르면 변경이 아님")
 
 
-@test
 def saved_global_color_applies_to_same_name_in_other_file(app):
     load_sample(app)
     restore = use_fake_picker("#0A0B0C")
@@ -327,7 +311,6 @@ def saved_global_color_applies_to_same_name_in_other_file(app):
 
 
 # ───────── 자동 색 ─────────
-@test
 def auto_colors_distinct_and_follow_palette_order(app):
     from srt_editor.theme import SPEAKER_COLORS
     make_speakers(app, 5)
@@ -339,7 +322,6 @@ def auto_colors_distinct_and_follow_palette_order(app):
     expect(all(v in SPEAKER_COLORS for v in colors(app).values()), "프리셋을 넘으면 순환")
 
 
-@test
 def auto_colors_stay_with_speaker_when_reordered(app):
     make_speakers(app, 11, pinned={"화자2": "#FF00AA", "화자5": "#00AAFF", "화자9": "#AAFF00"})
     before = colors(app)
@@ -351,7 +333,6 @@ def auto_colors_stay_with_speaker_when_reordered(app):
     eq(colors(app), before, "실행 취소 후에도")
 
 
-@test
 def auto_colors_stable_across_rename_delete_and_new_speaker(app):
     make_speakers(app, 6)
     before = colors(app)
@@ -369,7 +350,6 @@ def auto_colors_stable_across_rename_delete_and_new_speaker(app):
     expect(colors(app)[new] not in [colors(app)[n] for n in app.speakers if n != new], "기존 화자와 다른 색")
 
 
-@test
 def auto_colors_saved_and_restored_with_file(app):
     from srt_editor import srt_io
     make_speakers(app, 11, pinned={"화자2": "#FF00AA"})
@@ -387,7 +367,6 @@ def auto_colors_saved_and_restored_with_file(app):
     eq({n: app._speaker_color(n) for n in before}, before, "다시 열어도 같은 색")
 
 
-@test
 def auto_color_conflict_with_pinned_color_is_reassigned(app):
     make_speakers(app, 4, pinned={"화자1": "#D63838"})   # 첫 프리셋을 직접 지정
     c = colors(app)
@@ -408,3 +387,33 @@ def many_speakers_show_all_buttons_and_sidebar_scrolls(app):
     inner_h = app.speaker_inner.winfo_reqheight()
     view_h = app._spk_canvas.winfo_height()
     expect(inner_h > view_h, "화자 15명이면 사이드바가 스크롤돼야 해요")
+
+
+@test
+def sidebar_list_and_click(app):
+    steps(sidebar_lists_speakers_in_order_with_counts, sidebar_empty_state, sidebar_click_assigns_to_all_selected_rows, sidebar_click_single_row_and_no_selection)
+
+
+@test
+def number_keys_assign(app):
+    steps(number_keys_assign_selection_and_backtick_clears, number_key_ignored_while_typing, advance_after_assign_option)
+
+
+@test
+def add_and_rename_speakers(app):
+    steps(add_speaker_default_names_and_inline_rename, rename_updates_subtitles_and_color, rename_rejects_duplicate_blank_and_noop, inline_name_edit_escape_and_duplicate_are_ignored)
+
+
+@test
+def delete_speaker_and_menu(app):
+    steps(delete_speaker_clears_assignments_with_confirmation, speaker_context_menu_has_rename_color_delete)
+
+
+@test
+def manual_colors(app):
+    steps(color_change_applies_persists_and_undo_restores, color_change_cancel_and_same_color_do_nothing, saved_global_color_applies_to_same_name_in_other_file)
+
+
+@test
+def auto_colors(app):
+    steps(auto_colors_distinct_and_follow_palette_order, auto_colors_stay_with_speaker_when_reordered, auto_colors_stable_across_rename_delete_and_new_speaker, auto_colors_saved_and_restored_with_file, auto_color_conflict_with_pinned_color_is_reassigned)

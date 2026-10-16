@@ -3,10 +3,9 @@ import io
 import json
 import sys
 
-from harness import ctx, eq, expect, fresh_dir, test, wait_until
+from harness import steps, ctx, eq, expect, fresh_dir, test, wait_until
 
 
-@test
 def release_exe_picks_exe_asset_and_falls_back_to_v_tag():
     from srt_editor import version as V
     seen = []
@@ -34,7 +33,6 @@ def release_exe_picks_exe_asset_and_falls_back_to_v_tag():
         V.urllib.request.urlopen = orig
 
 
-@test
 def download_writes_file_reports_progress_and_cancel_leaves_nothing():
     from srt_editor import version as V
     d = fresh_dir()
@@ -50,7 +48,6 @@ def download_writes_file_reports_progress_and_cancel_leaves_nothing():
            "취소하면 파일을 남기지 않음")
 
 
-@test
 def launch_after_exit_waits_removes_old_and_starts_new():
     import base64
     from srt_editor import version as V
@@ -72,7 +69,6 @@ def launch_after_exit_waits_removes_old_and_starts_new():
     expect("Remove-Item" not in s2, "같은 파일이면 지우지 않음")
 
 
-@test
 def update_click_in_dev_opens_page_and_in_exe_downloads_then_closes(app):
     import webbrowser
     from srt_editor import version as V
@@ -102,3 +98,8 @@ def update_click_in_dev_opens_page_and_in_exe_downloads_then_closes(app):
     eq(launched, [(str(d / "SRTSpeakerEditor_9.9.9.exe"), str(d / "SRTSpeakerEditor_1.0.0.exe"))],
        "새 EXE는 지금 EXE 옆에 받고, 닫힌 뒤 실행")
     eq([m[1] for m in ctx.msgs], ["업데이트", "업데이트"], "두 번 모두 확인만 묻고 오류 없음")
+
+
+@test
+def self_update(app):
+    steps(release_exe_picks_exe_asset_and_falls_back_to_v_tag, download_writes_file_reports_progress_and_cancel_leaves_nothing, launch_after_exit_waits_removes_old_and_starts_new, update_click_in_dev_opens_page_and_in_exe_downloads_then_closes)

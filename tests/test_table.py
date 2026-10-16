@@ -1,7 +1,7 @@
 """자막 목록: 선택·키보드 이동·텍스트/시간 편집·추가·삭제·복사·붙여넣기·나누기·병합·실행 취소·검색·스크롤."""
 import time
 
-from harness import (Ev, app_key, click_row, col_x, ctx, eq, expect, flat, key, load_sample, near, pump, slot_of,
+from harness import (steps, Ev, app_key, click_row, col_x, ctx, eq, expect, flat, key, load_sample, near, pump, slot_of,
                      tap, test, wait_until)
 
 
@@ -24,7 +24,6 @@ def finish_edit(app, ent):
 
 
 # ───────── 선택 ─────────
-@test
 def click_selects_single_row(app):
     load_sample(app)
     click_row(app, 3)
@@ -33,7 +32,6 @@ def click_selects_single_row(app):
     eq((app._selected_row_idx, app._selected_rows), (7, {7}), "다른 줄을 누르면 앞 선택은 풀려야 해요")
 
 
-@test
 def ctrl_click_toggles_and_shift_click_ranges(app):
     load_sample(app)
     click_row(app, 1)
@@ -45,7 +43,6 @@ def ctrl_click_toggles_and_shift_click_ranges(app):
     eq(app._selected_rows, set(range(1, 9)), "Shift+클릭은 기준 줄부터 범위")
 
 
-@test
 def drag_selects_range_and_autoscrolls(app):
     load_sample(app, n=60)
     c = app.canvas
@@ -58,7 +55,6 @@ def drag_selects_range_and_autoscrolls(app):
     eq(app._selected_rows, set(range(2, 7)), "마우스를 뗀 뒤에는 선택이 안 바뀌어야 해요")
 
 
-@test
 def keyboard_navigation(app):
     load_sample(app, n=60)
     click_row(app, 0)
@@ -80,7 +76,6 @@ def keyboard_navigation(app):
     eq(app._selected_row_idx, 0, "맨 위에서 위로 가도 그대로")
 
 
-@test
 def shift_arrows_extend_and_escape_collapses(app):
     load_sample(app)
     click_row(app, 5)
@@ -93,7 +88,6 @@ def shift_arrows_extend_and_escape_collapses(app):
     eq(len(app._selected_rows), 1, "Esc는 여러 줄 선택을 하나로")
 
 
-@test
 def select_all(app):
     load_sample(app)
     click_row(app, 2)
@@ -102,7 +96,6 @@ def select_all(app):
 
 
 # ───────── 편집 ─────────
-@test
 def edit_text_commits_with_enter_and_undo_redo(app):
     load_sample(app)
     old = app.subtitles[2]["text"]
@@ -119,7 +112,6 @@ def edit_text_commits_with_enter_and_undo_redo(app):
     eq(app.subtitles[2]["text"], "새로 고친 자막", "다시 실행")
 
 
-@test
 def edit_text_commits_when_clicking_another_row(app):
     load_sample(app)
     ent = begin_text_edit(app, 2)
@@ -131,7 +123,6 @@ def edit_text_commits_when_clicking_another_row(app):
     eq(app._selected_row_idx, 4)
 
 
-@test
 def edit_text_keeps_long_and_special_text(app):
     load_sample(app)
     long = "아주 긴 자막 " * 40 + "끝"
@@ -149,7 +140,6 @@ def edit_text_keeps_long_and_special_text(app):
     eq(app.subtitles[1]["text"], long, "열었다 닫아도 그대로")
 
 
-@test
 def edit_time_valid_updates_cache_and_invalid_is_rejected(app):
     load_sample(app)
     app._select_row(3, seek=False)
@@ -174,7 +164,6 @@ def edit_time_valid_updates_cache_and_invalid_is_rejected(app):
     eq(app.subtitles[3]["timestamp"], "00:00:07,100 --> 00:00:08,900", "잘못된 값은 저장되면 안 돼요")
 
 
-@test
 def double_click_time_opens_edit_even_if_not_selected(app):
     load_sample(app)
     s = slot_of(app, 5)
@@ -183,7 +172,6 @@ def double_click_time_opens_edit_even_if_not_selected(app):
     expect(app._slot_widgets[s]["_ts_editing"], "더블클릭으로 시간 편집")
 
 
-@test
 def only_one_edit_open_at_a_time(app):
     load_sample(app)
     begin_text_edit(app, 2)
@@ -193,7 +181,6 @@ def only_one_edit_open_at_a_time(app):
 
 
 # ───────── 추가·삭제·복사 ─────────
-@test
 def add_row_after_selected_with_undo(app):
     load_sample(app)
     prev_end = app.subtitles[2]["timestamp"].split("-->")[1].strip()
@@ -206,7 +193,6 @@ def add_row_after_selected_with_undo(app):
     eq(len(app.subtitles), 24, "실행 취소")
 
 
-@test
 def add_row_at_time_keeps_time_order_and_limits_length(app):
     load_sample(app)
     app.add_row_at_time(6.0, duration=5.0)   # 자막 2(5.0~7.0)와 자막 3(7.5~) 사이: 6.0에 시작하면 3번 앞
@@ -219,7 +205,6 @@ def add_row_at_time_keeps_time_order_and_limits_length(app):
     eq(starts, sorted(starts), "시간 순서")
 
 
-@test
 def add_subtitle_here_without_media_uses_selected_row(app):
     load_sample(app)
     click_row(app, 4)
@@ -228,7 +213,6 @@ def add_subtitle_here_without_media_uses_selected_row(app):
     eq(app._selected_row_idx, 5, "선택한 줄 다음에 추가")
 
 
-@test
 def delete_selected_rows_with_undo(app):
     load_sample(app)
     click_row(app, 3)
@@ -244,7 +228,6 @@ def delete_selected_rows_with_undo(app):
     eq([s["text"] for s in app.subtitles], texts, "실행 취소로 복구")
 
 
-@test
 def delete_ignored_while_typing(app):
     load_sample(app)
     ent = begin_text_edit(app, 2)
@@ -253,7 +236,6 @@ def delete_ignored_while_typing(app):
     eq(len(app.subtitles), 24, "글자를 입력하는 중에는 Delete가 줄을 지우면 안 돼요")
 
 
-@test
 def copy_paste_cut(app):
     load_sample(app)
     click_row(app, 1)
@@ -276,7 +258,6 @@ def copy_paste_cut(app):
     eq(len(app.subtitles), 24, "잘라낸 것을 붙여넣기")
 
 
-@test
 def paste_with_empty_clipboard_does_nothing(app):
     load_sample(app)
     click_row(app, 2)
@@ -285,7 +266,6 @@ def paste_with_empty_clipboard_does_nothing(app):
 
 
 # ───────── 나누기·병합 ─────────
-@test
 def split_subtitle_at_position(app):
     load_sample(app)
     # 자막 2: 5.0 ~ 7.0
@@ -304,7 +284,6 @@ def split_subtitle_at_position(app):
     eq(len(app.subtitles), 24)
 
 
-@test
 def split_keeps_layer_of_original(app):
     load_sample(app)
     app._wf_add_layer()      # 레이어가 2개 이상이어야 1번 레이어가 유효해요
@@ -313,7 +292,6 @@ def split_keeps_layer_of_original(app):
     eq(app.subtitles[3].get("_lane"), 1, "뒷부분도 같은 레이어")
 
 
-@test
 def split_time_never_produces_invalid_timestamp(app):
     load_sample(app)
     import re
@@ -323,7 +301,6 @@ def split_time_never_produces_invalid_timestamp(app):
         expect(re.fullmatch(r"\d\d:\d\d:\d\d,\d{3} --> \d\d:\d\d:\d\d,\d{3}", s["timestamp"]), s["timestamp"])
 
 
-@test
 def merge_selected_rows(app):
     load_sample(app)
     # 0(민지) 1(준호) 2(민지) 선택 → 민지가 더 오래 말함
@@ -340,7 +317,6 @@ def merge_selected_rows(app):
     eq([app.subtitles[i]["text"] for i in range(3)], texts, "실행 취소로 복구")
 
 
-@test
 def merge_single_selection_merges_with_next_and_last_row_is_ignored(app):
     load_sample(app)
     click_row(app, 4)
@@ -408,7 +384,6 @@ def row_text_is_selected_row_highlighted_and_playing_rows_follow_position(app):
 
 
 # ───────── 열 너비 ─────────
-@test
 def header_drag_resizes_columns_within_limits(app):
     load_sample(app)
     before = dict(app._col_w)
@@ -432,7 +407,6 @@ def header_drag_resizes_columns_within_limits(app):
 
 
 # ───────── 실행 취소 ─────────
-@test
 def undo_stack_is_capped_and_redo_cleared_by_new_edit(app):
     load_sample(app)
     for i in range(60):
@@ -446,7 +420,6 @@ def undo_stack_is_capped_and_redo_cleared_by_new_edit(app):
     eq(app._redo_stack, [], "새로 편집하면 다시 실행 기록은 비워짐")
 
 
-@test
 def undo_redo_on_empty_stacks_is_safe(app):
     load_sample(app)
     app._undo()
@@ -455,7 +428,6 @@ def undo_redo_on_empty_stacks_is_safe(app):
 
 
 # ───────── 검색 ─────────
-@test
 def search_finds_text_and_speaker_and_wraps(app):
     load_sample(app)
     app._open_search()
@@ -484,7 +456,6 @@ def search_finds_text_and_speaker_and_wraps(app):
     expect(not app._search_bar.winfo_ismapped(), "검색 막대가 닫혀야 해요")
 
 
-@test
 def search_is_case_insensitive_and_handles_regex_chars(app):
     load_sample(app)
     app.subtitles[4]["text"] = "Hello (World) [x] 20% a.b"
@@ -502,7 +473,6 @@ def search_is_case_insensitive_and_handles_regex_chars(app):
 
 
 # ───────── 큰 파일·스크롤 ─────────
-@test
 def large_file_virtual_scroll(app):
     t0 = time.time()
     load_sample(app, n=3000)
@@ -524,7 +494,6 @@ def large_file_virtual_scroll(app):
     expect((time.time() - t0) / 60 < 0.15, f"스크롤 한 번에 {(time.time() - t0) / 60 * 1000:.0f}ms")
 
 
-@test
 def scrollbar_thumb_tracks_position(app):
     load_sample(app, n=300)
     app._vscroll_to(0)
@@ -537,7 +506,6 @@ def scrollbar_thumb_tracks_position(app):
     near(app.vsb.get()[0], top1, 1e-9)
 
 
-@test
 def window_resize_keeps_rows_filled(app):
     load_sample(app, n=100)
     app.geometry("1000x600")
@@ -551,7 +519,6 @@ def window_resize_keeps_rows_filled(app):
     eq(sorted(d for d in app._slot_data if d >= 0), list(range(first, last + 1)), "줄이 빈틈없이 이어져야 해요")
 
 
-@test
 def empty_state_has_no_errors(app):
     app._update_count()
     app._pb_redraw()
@@ -565,7 +532,6 @@ def empty_state_has_no_errors(app):
     eq(len(app.subtitles), 1, "빈 상태에서 줄 추가")
 
 
-@test
 def line_break_mark_acts_like_one_char(app):
     load_sample(app)
     s = slot_of(app, 2)
@@ -591,3 +557,48 @@ def line_break_mark_acts_like_one_char(app):
     eq(ent.get(), "가나", "Delete 한 번에 줄바꿈 지움")
     ent.event_generate("<BackSpace>")
     eq(ent.get(), "나", "평소 글자는 그대로 한 글자씩")
+
+
+@test
+def row_selection(app):
+    steps(click_selects_single_row, ctrl_click_toggles_and_shift_click_ranges, drag_selects_range_and_autoscrolls, keyboard_navigation, shift_arrows_extend_and_escape_collapses, select_all)
+
+
+@test
+def text_editing(app):
+    steps(edit_text_commits_with_enter_and_undo_redo, edit_text_commits_when_clicking_another_row, edit_text_keeps_long_and_special_text, only_one_edit_open_at_a_time, line_break_mark_acts_like_one_char)
+
+
+@test
+def time_editing(app):
+    steps(edit_time_valid_updates_cache_and_invalid_is_rejected, double_click_time_opens_edit_even_if_not_selected)
+
+
+@test
+def add_rows(app):
+    steps(add_row_after_selected_with_undo, add_row_at_time_keeps_time_order_and_limits_length, add_subtitle_here_without_media_uses_selected_row)
+
+
+@test
+def delete_copy_paste(app):
+    steps(delete_selected_rows_with_undo, delete_ignored_while_typing, copy_paste_cut, paste_with_empty_clipboard_does_nothing)
+
+
+@test
+def split_and_merge(app):
+    steps(split_subtitle_at_position, split_keeps_layer_of_original, split_time_never_produces_invalid_timestamp, merge_selected_rows, merge_single_selection_merges_with_next_and_last_row_is_ignored)
+
+
+@test
+def undo_limits(app):
+    steps(undo_stack_is_capped_and_redo_cleared_by_new_edit, undo_redo_on_empty_stacks_is_safe)
+
+
+@test
+def search(app):
+    steps(search_finds_text_and_speaker_and_wraps, search_is_case_insensitive_and_handles_regex_chars)
+
+
+@test
+def scrolling_and_sizes(app):
+    steps(large_file_virtual_scroll, scrollbar_thumb_tracks_position, window_resize_keeps_rows_filled, empty_state_has_no_errors, header_drag_resizes_columns_within_limits)

@@ -1,7 +1,7 @@
 """타임라인: 레이어·이동(seek)·자막 블록 드래그와 크기 조절·확대·볼륨·재생."""
 import re
 
-from harness import (Ev, Skip, app_key, cfg, ctx, eq, expect, fresh_dir, load_sample, near, pump, sample_subs, test,
+from harness import (steps, Ev, Skip, app_key, cfg, ctx, eq, expect, fresh_dir, load_sample, near, pump, sample_subs, test,
                      wait_until, write_srt_file)
 
 
@@ -38,7 +38,6 @@ def secs(ts_text):
 
 
 # ───────── 레이어 ─────────
-@test
 def layers_add_remove_limits(app):
     load_sample(app)
     eq(app._wf_manual_lanes, 1)
@@ -50,7 +49,6 @@ def layers_add_remove_limits(app):
     eq(app._wf_manual_lanes, 1, "레이어는 최소 1개")
 
 
-@test
 def layers_assigned_for_overlapping_subtitles(app):
     d = fresh_dir()
     subs = [{"timestamp": "00:00:01,000 --> 00:00:05,000", "text": "a", "speaker": ""},
@@ -74,7 +72,6 @@ def layers_assigned_for_overlapping_subtitles(app):
     eq(set(lanes.values()), {0}, "레이어가 1개면 모두 같은 레이어(겹쳐 그려짐)")
 
 
-@test
 def layers_saved_in_file_and_restored(app):
     p = load_sample(app)
     app._wf_add_layer()
@@ -94,7 +91,6 @@ def layers_saved_in_file_and_restored(app):
 
 
 # ───────── 이동(seek) ─────────
-@test
 def seek_updates_position_selection_and_highlight(app):
     with_media(app)
     app._do_seek(5.5)             # 자막 2 (5.0~7.0)
@@ -110,7 +106,6 @@ def seek_updates_position_selection_and_highlight(app):
     eq(app.lbl_dur.cget("text"), "0:00:40", "전체 길이 표시")
 
 
-@test
 def click_empty_timeline_scrubs_playhead(app):
     with_media(app)
     pb = app._pb_canvas
@@ -122,7 +117,6 @@ def click_empty_timeline_scrubs_playhead(app):
     near(app.media_progress_var.get(), 10.0, 1.0, "전체의 1/4 지점")
 
 
-@test
 def seek_without_media_is_ignored_safely(app):
     load_sample(app)
     pb = app._pb_canvas
@@ -134,7 +128,6 @@ def seek_without_media_is_ignored_safely(app):
 
 
 # ───────── 자막 블록 드래그 ─────────
-@test
 def drag_body_moves_subtitle_keeps_length_and_undo(app):
     with_media(app)
     old = app.subtitles[2]["timestamp"]
@@ -152,7 +145,6 @@ def drag_body_moves_subtitle_keeps_length_and_undo(app):
     eq(app.subtitles[2]["timestamp"], old, "실행 취소로 원래 시간")
 
 
-@test
 def click_on_subtitle_selects_without_changing_time(app):
     with_media(app)
     old = app.subtitles[3]["timestamp"]
@@ -165,7 +157,6 @@ def click_on_subtitle_selects_without_changing_time(app):
     expect(not app._unsaved, "클릭만으로 수정 표시가 되면 안 돼요")
 
 
-@test
 def shift_click_on_timeline_selects_range(app):
     with_media(app)
     x, y = pb_xy(app, 2)
@@ -178,7 +169,6 @@ def shift_click_on_timeline_selects_range(app):
     expect(not app._unsaved, "선택만으로 수정 표시가 되면 안 돼요")
 
 
-@test
 def resize_handles_respect_minimum_length(app):
     with_media(app)
     s0, e0 = secs(app.subtitles[4]["timestamp"])
@@ -195,7 +185,6 @@ def resize_handles_respect_minimum_length(app):
     expect(e2 - s2 >= app._MIN_SUB_DURATION - 0.002, f"최소 길이 유지: {e2 - s2}")
 
 
-@test
 def lock_timeline_option_blocks_dragging(app):
     with_media(app)
     app._set_opt("lock_timeline", True)
@@ -206,7 +195,6 @@ def lock_timeline_option_blocks_dragging(app):
     eq(app._undo_stack, [], "실행 취소 기록도 없어야 해요")
 
 
-@test
 def shift_drag_changes_layer_only(app):
     with_media(app)
     app._wf_add_layer()
@@ -220,7 +208,6 @@ def shift_drag_changes_layer_only(app):
     expect(app.subtitles[2].get("_lane", 0) == 0, "실행 취소로 원래 레이어")
 
 
-@test
 def drag_works_without_media_using_subtitle_span(app):
     """미디어 없이 자막만 열어도 타임라인에서 자막 시간을 조절할 수 있어야 해요 (그리기·클릭은 이미 그렇게 동작)."""
     load_sample(app)
@@ -235,7 +222,6 @@ def drag_works_without_media_using_subtitle_span(app):
     expect(app.subtitles[2]["timestamp"] != old, "미디어가 없을 때 드래그가 무시됨")
 
 
-@test
 def overlapping_subtitles_cycle_selection_on_repeated_click(app):
     d = fresh_dir()
     subs = [{"timestamp": "00:00:01,000 --> 00:00:09,000", "text": "a", "speaker": ""},
@@ -252,7 +238,6 @@ def overlapping_subtitles_cycle_selection_on_repeated_click(app):
     eq(picks, [1, 0, 1], "같은 자리를 계속 누르면 겹친 자막을 돌아가며 선택")
 
 
-@test
 def timeline_right_click_opens_subtitle_menu(app):
     from srt_editor.widgets import PopupMenu
     with_media(app)
@@ -266,7 +251,6 @@ def timeline_right_click_opens_subtitle_menu(app):
 
 
 # ───────── 확대·축소 ─────────
-@test
 def zoom_in_out_and_view_range(app):
     with_media(app)
     eq(app._wf_zoom, 1.0)
@@ -289,7 +273,6 @@ def zoom_in_out_and_view_range(app):
     expect(app.lbl_zoom.cget("text").endswith("×"), "확대 배율 표시")
 
 
-@test
 def zoomed_view_converts_x_and_ratio_consistently(app):
     with_media(app)
     for _ in range(4):
@@ -302,7 +285,6 @@ def zoomed_view_converts_x_and_ratio_consistently(app):
 
 
 # ───────── 볼륨 ─────────
-@test
 def volume_set_mute_clamp_and_persist(app):
     app._set_volume(30)
     eq(app.player._volume, 30)
@@ -322,7 +304,6 @@ def volume_set_mute_clamp_and_persist(app):
     app_key("<Control-m>")
 
 
-@test
 def volume_slider_drag(app):
     c = app._vol_canvas
     w = c.winfo_width()
@@ -338,7 +319,6 @@ def _audio_or_skip(app):
         raise Skip("오디오 장치를 초기화하지 못했어요")
 
 
-@test
 def play_pause_and_seek_keys(app):
     _audio_or_skip(app)
     with_media(app)
@@ -362,7 +342,6 @@ def play_pause_and_seek_keys(app):
     eq(app._playing_rows, set())
 
 
-@test
 def space_key_toggles_playback_but_not_while_typing(app):
     _audio_or_skip(app)
     with_media(app)
@@ -398,7 +377,6 @@ def add_and_split_at_playhead(app):
     eq(len(app.subtitles), before, "자막이 없는 위치에서는 나누지 않음")
 
 
-@test
 def playhead_move_does_not_relayout_window(app):
     """재생 중 매 프레임 호출되는 다시 그리기가 창 전체 배치를 다시 하면 재생바가 심하게 느려져요."""
     with_media(app)
@@ -418,7 +396,6 @@ def playhead_move_does_not_relayout_window(app):
     eq(int(float(app._pb_canvas.cget("height"))), app._PB_BASE_CANVAS_H + app._WF_LANE_H, "레이어를 늘리면 높이도 늘어남")
 
 
-@test
 def key_hint_badges_cover_timeline_buttons(app):
     app._apply_key_hints(True)
     pump(0.2)
@@ -431,7 +408,6 @@ def key_hint_badges_cover_timeline_buttons(app):
     eq(app._key_badges, [], "끄면 모두 사라짐")
 
 
-@test
 def redraw_variants_do_not_fail(app):
     app._pb_redraw()                              # 아무것도 없음
     load_sample(app)
@@ -450,7 +426,6 @@ def redraw_variants_do_not_fail(app):
     pump(0.3)
 
 
-@test
 def media_label_shows_file_name(app):
     p = with_media(app)
     expect("sample.wav" in str(app.lbl_media.cget("text")) or app._media_label_text == "sample.wav" if hasattr(app, "_media_label_text") else True)
@@ -458,7 +433,6 @@ def media_label_shows_file_name(app):
     eq(app.lbl_dur.cget("text") in ("…", "0:00:00", "-:--:--", "0:00") or True, True)
 
 
-@test
 def edited_text_shows_on_timeline_right_away(app):
     from harness import slot_of
     load_sample(app, with_wav=True)
@@ -472,3 +446,43 @@ def edited_text_shows_on_timeline_right_away(app):
     app._slot_save_text(s)
     pump(0.1)
     expect(app._wf_img_cache[0] != key, "글자 바꾸자마자 타임라인 이미지 다시 그림")
+
+
+@test
+def layers(app):
+    steps(layers_add_remove_limits, layers_assigned_for_overlapping_subtitles, layers_saved_in_file_and_restored)
+
+
+@test
+def seek_and_scrub(app):
+    steps(seek_updates_position_selection_and_highlight, click_empty_timeline_scrubs_playhead, seek_without_media_is_ignored_safely)
+
+
+@test
+def drag_subtitles(app):
+    steps(drag_body_moves_subtitle_keeps_length_and_undo, resize_handles_respect_minimum_length, lock_timeline_option_blocks_dragging, shift_drag_changes_layer_only, drag_works_without_media_using_subtitle_span)
+
+
+@test
+def click_subtitles(app):
+    steps(click_on_subtitle_selects_without_changing_time, shift_click_on_timeline_selects_range, overlapping_subtitles_cycle_selection_on_repeated_click, timeline_right_click_opens_subtitle_menu)
+
+
+@test
+def zoom(app):
+    steps(zoom_in_out_and_view_range, zoomed_view_converts_x_and_ratio_consistently)
+
+
+@test
+def volume(app):
+    steps(volume_set_mute_clamp_and_persist, volume_slider_drag)
+
+
+@test
+def playback_keys(app):
+    steps(play_pause_and_seek_keys, space_key_toggles_playback_but_not_while_typing)
+
+
+@test
+def drawing(app):
+    steps(playhead_move_does_not_relayout_window, key_hint_badges_cover_timeline_buttons, redraw_variants_do_not_fail, media_label_shows_file_name, edited_text_shows_on_timeline_right_away)

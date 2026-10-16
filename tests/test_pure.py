@@ -3,7 +3,7 @@ import json
 import random
 import re
 
-from harness import eq, expect, fresh_dir, near, test, write_srt_file, ts, sample_subs
+from harness import steps, eq, expect, fresh_dir, near, test, write_srt_file, ts, sample_subs
 
 
 # ───────── SRT 읽기·쓰기 ─────────
@@ -12,7 +12,6 @@ def _write(path, text, enc="utf-8"):
     return path
 
 
-@test
 def srtio_parse_basic():
     from srt_editor import srt_io
     p = write_srt_file(fresh_dir() / "a.srt", sample_subs(3))
@@ -24,7 +23,6 @@ def srtio_parse_basic():
     expect("[" not in subs[0]["text"], "화자 태그가 글자에 남음")
 
 
-@test
 def srtio_parse_bom_and_crlf():
     from srt_editor import srt_io
     d = fresh_dir()
@@ -33,7 +31,6 @@ def srtio_parse_bom_and_crlf():
     eq(srt_io.parse_srt(str(p2)), srt_io.parse_srt(str(p1)), "CRLF+BOM 파일이 일반 파일과 달라요")
 
 
-@test
 def srtio_parse_multiline_text():
     from srt_editor import srt_io
     p = _write(fresh_dir() / "m.srt", "1\n00:00:01,000 --> 00:00:03,000\n[민지] 첫 줄\n둘째 줄\n\n2\n00:00:04,000 --> 00:00:05,000\n끝\n")
@@ -42,7 +39,6 @@ def srtio_parse_multiline_text():
     eq(subs[1]["speaker"], "", "태그 없는 자막")
 
 
-@test
 def srtio_parse_speaker_tag_variants():
     from srt_editor import srt_io
     p = _write(fresh_dir() / "t.srt",
@@ -55,7 +51,6 @@ def srtio_parse_speaker_tag_variants():
     eq((subs[2]["speaker"], subs[2]["text"]), ("민지", "붙여 쓴 내용"))
 
 
-@test
 def srtio_parse_custom_pattern():
     from srt_editor import srt_io
     pat = srt_io.display_to_regex("(%): &")
@@ -64,7 +59,6 @@ def srtio_parse_custom_pattern():
     eq((subs[0]["speaker"], subs[0]["text"]), ("민지", "안녕"))
 
 
-@test
 def srtio_display_pattern_needs_speaker_marker():
     from srt_editor import srt_io
     try:
@@ -74,7 +68,6 @@ def srtio_display_pattern_needs_speaker_marker():
     raise AssertionError("% 가 없는 패턴인데 오류가 안 났어요")
 
 
-@test
 def srtio_empty_text_subtitle_survives_reload():
     """텍스트가 빈 자막 줄도 저장 후 다시 열면 그대로 있어야 해요 (조용히 사라지면 데이터 손실)."""
     from srt_editor import srt_io
@@ -89,7 +82,6 @@ def srtio_empty_text_subtitle_survives_reload():
     eq([s["text"] for s in back], ["첫째", "", "셋째"])
 
 
-@test
 def srtio_tagged_roundtrip_with_meta():
     from srt_editor import srt_io
     d = fresh_dir()
@@ -101,7 +93,6 @@ def srtio_tagged_roundtrip_with_meta():
     eq(srt_io.read_srt_meta(str(p)), meta, "메타")
 
 
-@test
 def srtio_plain_write_has_no_tags_or_meta():
     from srt_editor import srt_io
     p = fresh_dir() / "plain.srt"
@@ -110,7 +101,6 @@ def srtio_plain_write_has_no_tags_or_meta():
     expect("[" not in body and "SRT_META" not in body, "내보내기 파일에 태그나 메타가 들어갔어요")
 
 
-@test
 def srtio_meta_corrupt_is_ignored():
     from srt_editor import srt_io
     p = _write(fresh_dir() / "bad.srt", "1\n00:00:01,000 --> 00:00:02,000\n안녕\n\n; SRT_META {깨진 json\n")
@@ -120,7 +110,6 @@ def srtio_meta_corrupt_is_ignored():
 
 
 # ───────── 시간 변환 ─────────
-@test
 def time_format_boundaries():
     from srt_editor.srt_io import format_srt_time as f
     eq(f(0), "00:00:00,000")
@@ -133,7 +122,6 @@ def time_format_boundaries():
     eq(f(3599.9996), "01:00:00,000")
 
 
-@test
 def time_format_always_valid_and_close():
     from srt_editor.srt_io import format_srt_time, parse_srt_time
     rnd = random.Random(7)
@@ -144,7 +132,6 @@ def time_format_always_valid_and_close():
         near(parse_srt_time(s), x, 0.0006, f"{x} → {s}")
 
 
-@test
 def time_parse_forms():
     from srt_editor.srt_io import parse_srt_time as p
     near(p("00:01:02,345"), 62.345)
@@ -155,7 +142,6 @@ def time_parse_forms():
 
 
 # ───────── 설정 파일 ─────────
-@test
 def config_roundtrip_missing_and_corrupt():
     import srt_editor.config as c
     from harness import ctx
@@ -172,7 +158,6 @@ def config_roundtrip_missing_and_corrupt():
         c._CONFIG_CANDIDATES[:] = saved
 
 
-@test
 def config_recent_tokens_dedupe_and_limit():
     import srt_editor.config as c
     cfg = {}
@@ -191,7 +176,6 @@ _FIX_TEXTS = ["루파가 왔어요", "루파는 어디 갔어요", "루파한테
               "루팍이 먼저 갔어요", "그래서 루파도 같이", "오늘은 루파가 이겼어요"]
 
 
-@test
 def correction_suggest_and_apply_with_josa():
     from srt_editor import correction as cr
     fixes = cr.suggest(_FIX_TEXTS, proper_nouns=["루파"])
@@ -201,7 +185,6 @@ def correction_suggest_and_apply_with_josa():
     eq(out[:4] + out[5:], _FIX_TEXTS[:4] + _FIX_TEXTS[5:], "다른 줄은 그대로")
 
 
-@test
 def correction_no_false_positives_on_plain_text():
     from srt_editor import correction as cr
     from harness import TEXTS
@@ -209,7 +192,6 @@ def correction_no_false_positives_on_plain_text():
     eq(cr.suggest([]), [], "빈 목록")
 
 
-@test
 def correction_split_josa():
     from srt_editor.correction import split_josa
     eq(split_josa("루파가"), ("루파", "가"))
@@ -219,7 +201,6 @@ def correction_split_josa():
 
 
 # ───────── 음성 처리 보조 ─────────
-@test
 def speech_assign_speakers_by_overlap():
     from srt_editor.speech import _assign_speakers_by_overlap as a
     turns = [(0.0, 5.0, "A"), (5.0, 10.0, "B")]
@@ -229,7 +210,6 @@ def speech_assign_speakers_by_overlap():
     eq(a([(1.0, 2.0)], []), [None], "화자 구간이 없을 때")
 
 
-@test
 def speech_split_segments_by_speaker():
     from srt_editor.speech import _split_segments_by_speaker as sp
 
@@ -262,7 +242,6 @@ class _FakeDiar:
         self.model = _FakePipeline(clustering)
 
 
-@test
 def speech_diarize_sensitivity_scales_fa_or_threshold():
     from srt_editor.speech import _apply_diarize_sensitivity as ap
     d = _FakeDiar({"Fa": 0.07})
@@ -279,7 +258,6 @@ def speech_diarize_sensitivity_scales_fa_or_threshold():
     ap(object(), 80)   # 모델이 없어도 오류 없이 넘어가야 함
 
 
-@test
 def speech_friendly_errors():
     from srt_editor.speech import _friendly_transcribe_error as fe
     expect("GPU 메모리" in fe("CUDA out of memory. Tried to allocate"), "메모리 부족 안내")
@@ -288,7 +266,6 @@ def speech_friendly_errors():
     eq(fe("알 수 없는 오류"), "알 수 없는 오류", "모르는 오류는 그대로")
 
 
-@test
 def speech_asr_modes_complete():
     from srt_editor import speech
     for m in ("fast", "balanced", "accurate", "best"):
@@ -298,7 +275,6 @@ def speech_asr_modes_complete():
 
 
 # ───────── 버전 비교 ─────────
-@test
 def version_pick_latest_is_numeric_not_alphabetical():
     from srt_editor.version import is_newer, pick_latest
     eq(pick_latest(["1.9.0", "1.10.0", "1.2.0"]), "1.10.0", "문자열 순서로 고르면 1.9.0이 됨")
@@ -310,7 +286,6 @@ def version_pick_latest_is_numeric_not_alphabetical():
     expect(not is_newer("1.0.9", "1.1.0"), "낮은 버전")
 
 
-@test
 def media_extension_lists_consistent():
     from srt_editor.media import MEDIA_EXTS, MEDIA_PATTERN
     for e in MEDIA_EXTS:
@@ -319,10 +294,44 @@ def media_extension_lists_consistent():
     expect(".wav" in MEDIA_EXTS and ".mp4" in MEDIA_EXTS, "기본 형식")
 
 
-@test
 def safe_filename_rules():
     from srt_editor.ui.files import _safe_filename as sf
     eq(sf('a/b:c*?"<>|d'), "abcd", "쓸 수 없는 문자 제거")
     eq(sf("  끝에 점.. "), "끝에 점", "공백·점 정리")
     eq(sf("CON"), "_CON", "윈도우 예약어")
     eq(sf("민지"), "민지")
+
+
+@test
+def srtio_parse():
+    steps(srtio_parse_basic, srtio_parse_bom_and_crlf, srtio_parse_multiline_text, srtio_parse_speaker_tag_variants, srtio_parse_custom_pattern, srtio_display_pattern_needs_speaker_marker)
+
+
+@test
+def srtio_write_and_meta():
+    steps(srtio_empty_text_subtitle_survives_reload, srtio_tagged_roundtrip_with_meta, srtio_plain_write_has_no_tags_or_meta, srtio_meta_corrupt_is_ignored)
+
+
+@test
+def time_format_and_parse():
+    steps(time_format_boundaries, time_format_always_valid_and_close, time_parse_forms)
+
+
+@test
+def config_files():
+    steps(config_roundtrip_missing_and_corrupt, config_recent_tokens_dedupe_and_limit)
+
+
+@test
+def correction_rules():
+    steps(correction_suggest_and_apply_with_josa, correction_no_false_positives_on_plain_text, correction_split_josa)
+
+
+@test
+def speech_helpers():
+    steps(speech_assign_speakers_by_overlap, speech_split_segments_by_speaker, speech_diarize_sensitivity_scales_fa_or_threshold, speech_friendly_errors, speech_asr_modes_complete)
+
+
+@test
+def misc_rules():
+    steps(version_pick_latest_is_numeric_not_alphabetical, media_extension_lists_consistent, safe_filename_rules)

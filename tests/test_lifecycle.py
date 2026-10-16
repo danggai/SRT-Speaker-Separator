@@ -1,10 +1,9 @@
 """종료·닫기·시작 흐름과 주요 창(설정·단축키·교정·화자 분석·자막 생성)."""
-from harness import (app_key, cfg, ctx, eq, expect, find, flat, fresh_dir, load_sample, new_app, press, pump,
+from harness import (steps, app_key, cfg, ctx, eq, expect, find, flat, fresh_dir, load_sample, new_app, press, pump,
                      test, toplevels, wait_until, write_config)
 
 
 # ───────── 종료·닫기 ─────────
-@test
 def close_clean_document_destroys_without_asking(app):
     load_sample(app)
     app._on_close()
@@ -18,7 +17,6 @@ def close_clean_document_destroys_without_asking(app):
     new_app()
 
 
-@test
 def close_cancel_keeps_app_and_changes(app):
     load_sample(app)
     app._unsaved = True
@@ -28,7 +26,6 @@ def close_cancel_keeps_app_and_changes(app):
     expect(app._unsaved, "변경 상태 유지")
 
 
-@test
 def close_yes_saves_then_closes(app):
     p = load_sample(app)
     app.subtitles[0]["text"] = "저장되는 글"
@@ -39,7 +36,6 @@ def close_yes_saves_then_closes(app):
     new_app()
 
 
-@test
 def close_yes_but_save_cancelled_keeps_app(app):
     """저장 위치 선택을 취소하면 종료하지 않고 변경도 지키지 않아야 해요."""
     from srt_editor.ui.options import BACKUP_DIR  # noqa: F401  (격리 확인용)
@@ -54,7 +50,6 @@ def close_yes_but_save_cancelled_keeps_app(app):
     expect(app._unsaved, "저장 안 된 상태가 유지돼야 해요")
 
 
-@test
 def close_no_discards_and_clears_backup(app):
     load_sample(app)
     app._unsaved = True
@@ -66,7 +61,6 @@ def close_no_discards_and_clears_backup(app):
     expect(not bak.exists(), "버린 변경의 백업은 지워져야 해요")
     new_app()
 
-@test
 def close_to_home_asks_when_unsaved(app):
     load_sample(app)
     app._unsaved = True
@@ -91,7 +85,6 @@ def close_remembers_view_and_window_options(app):
 
 
 # ───────── 시작 ─────────
-@test
 def startup_restores_volume_and_recent_files(app):
     p = load_sample(app)
     app._set_volume(55)
@@ -102,7 +95,6 @@ def startup_restores_volume_and_recent_files(app):
            "최근 파일 목록에 있어야 해요")
 
 
-@test
 def startup_with_corrupt_config_still_opens(app):
     ctx.cfg_path.write_text("{ 깨진 json", encoding="utf-8")
     app2 = new_app()
@@ -111,7 +103,6 @@ def startup_with_corrupt_config_still_opens(app):
     new_app()
 
 
-@test
 def startup_shows_home_overlay_when_empty(app):
     app2 = new_app()
     expect(getattr(app2, "_overlay", None) is not None or app2.subtitles == [], "빈 상태 홈")
@@ -125,7 +116,6 @@ def _only_toplevel():
     return wins[-1]
 
 
-@test
 def settings_window_opens_all_tabs_and_closes(app):
     for tab in range(4):
         try:
@@ -139,7 +129,6 @@ def settings_window_opens_all_tabs_and_closes(app):
     eq(ctx.tk_errors, [], "설정창 오류")
 
 
-@test
 def settings_window_is_reused_not_duplicated(app):
     app._open_settings()
     pump(0.3)
@@ -148,7 +137,6 @@ def settings_window_is_reused_not_duplicated(app):
     eq(len([w for w in toplevels() if w.winfo_viewable()]), 1, "설정창은 하나만")
 
 
-@test
 def shortcuts_window_opens_via_f1_and_escape_closes(app):
     app._show_shortcuts()
     win = _only_toplevel()
@@ -158,7 +146,6 @@ def shortcuts_window_opens_via_f1_and_escape_closes(app):
     eq(ctx.tk_errors, [])
 
 
-@test
 def correction_dialog_warns_without_subtitles_and_informs_when_nothing_to_fix(app):
     app._open_correction_dialog()
     eq(ctx.msgs[-1][0], "showwarning", "자막이 없으면 안내")
@@ -167,7 +154,6 @@ def correction_dialog_warns_without_subtitles_and_informs_when_nothing_to_fix(ap
     expect(ctx.msgs[-1][0] == "showinfo" or toplevels(), "고칠 게 없으면 안내, 있으면 교정 창")
     eq(ctx.tk_errors, [])
 
-@test
 def diarize_dialog_opens_and_cancels(app):
     load_sample(app, with_wav=True)
     app._open_diarize_dialog()
@@ -177,7 +163,6 @@ def diarize_dialog_opens_and_cancels(app):
     eq(ctx.tk_errors, [])
 
 
-@test
 def wheel_over_dialog_does_not_scroll_table_behind(app):
     from harness import Ev
     load_sample(app, n=60, with_wav=True)
@@ -196,7 +181,6 @@ def wheel_over_dialog_does_not_scroll_table_behind(app):
     expect(app._vscroll_top > 0, "창을 닫으면 다시 스크롤돼야 해요")
 
 
-@test
 def dialogs_are_positioned_inside_screen(app):
     load_sample(app, with_wav=True)
     for opener in (app._open_settings, app._show_shortcuts, app._open_diarize_dialog):
@@ -211,7 +195,6 @@ def dialogs_are_positioned_inside_screen(app):
         pump(0.1)
 
 
-@test
 def present_dialog_handles_window_without_explicit_size(app):
     import tkinter as tk
     from srt_editor.widgets import present_dialog
@@ -223,3 +206,23 @@ def present_dialog_handles_window_without_explicit_size(app):
     expect(win.winfo_width() > 50 and win.winfo_height() > 30, f"크기 {win.winfo_width()}x{win.winfo_height()}")
     expect(win.winfo_rootx() > -50, "화면 왼쪽 밖으로 나가면 안 돼요")
     win.destroy()
+
+
+@test
+def close_app_flows(app):
+    steps(close_clean_document_destroys_without_asking, close_cancel_keeps_app_and_changes, close_yes_saves_then_closes, close_yes_but_save_cancelled_keeps_app, close_no_discards_and_clears_backup, close_to_home_asks_when_unsaved)
+
+
+@test
+def startup_states(app):
+    steps(startup_restores_volume_and_recent_files, startup_with_corrupt_config_still_opens, startup_shows_home_overlay_when_empty)
+
+
+@test
+def settings_and_shortcuts_windows(app):
+    steps(settings_window_opens_all_tabs_and_closes, settings_window_is_reused_not_duplicated, shortcuts_window_opens_via_f1_and_escape_closes)
+
+
+@test
+def dialogs_behave(app):
+    steps(correction_dialog_warns_without_subtitles_and_informs_when_nothing_to_fix, diarize_dialog_opens_and_cancels, wheel_over_dialog_does_not_scroll_table_behind, dialogs_are_positioned_inside_screen, present_dialog_handles_window_without_explicit_size)

@@ -1,7 +1,7 @@
 """자동 자막: 인식 결과를 자막 줄로 나누기·다듬기와 불러오기."""
 import os
 
-from harness import ctx, eq, expect, fresh_dir, load_sample, test, wait_until
+from harness import steps, ctx, eq, expect, fresh_dir, load_sample, test, wait_until
 
 
 def _tp():
@@ -9,7 +9,6 @@ def _tp():
     return transcript_post
 
 
-@test
 def split_uses_word_times_and_interpolates_missing_ones():
     T = _tp()
     seg = {"start": 10.0, "end": 16.0, "text": "오늘은 새로 나온 게임을 같이 해 볼 거예요 정말 재밌을 것 같아요",
@@ -28,7 +27,6 @@ def split_uses_word_times_and_interpolates_missing_ones():
         expect(a["end"] < 16.0, "단어 시간을 못 찾아도 문장 전체 시간을 받지 않음")
 
 
-@test
 def char_split_leaves_no_short_tail_and_balances_lines():
     T = _tp()
     eq(T.split_by_chars("자 얘들아 내가 또 꿈에서 우리의 사업체를", 20), ["자 얘들아 내가 또 꿈에서 우리의 사업체를"],
@@ -41,7 +39,6 @@ def char_split_leaves_no_short_tail_and_balances_lines():
     expect(all(len(l) <= 25 for l in lines) and max(map(len, lines)) - min(map(len, lines)) <= 4, f"{lines}")
 
 
-@test
 def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
     T = _tp()
     seg = {"start": 0.0, "end": 4.0, "text": "아 그냥 딱 봤는데! 이쁘다 진짜",
@@ -58,7 +55,6 @@ def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
        "4자 이상이면 0.25초 넘는 쉼에서 나눔")
 
 
-@test
 def hallucinations_and_repeats_are_removed():
     T = _tp()
     segs = [{"start": 0, "end": 2, "text": "안녕하세요 여러분"},
@@ -73,7 +69,6 @@ def hallucinations_and_repeats_are_removed():
     eq((lines[2]["start"], lines[2]["end"]), (8, 12), "반복 줄은 하나로 합치고 시간은 이어 붙임")
 
 
-@test
 def timing_fix_removes_overlap_and_stretches_tiny_lines():
     T = _tp()
     lines = T.fix_timing([{"start": 0.0, "end": 2.5, "text": "a"}, {"start": 2.0, "end": 2.05, "text": "b"},
@@ -81,7 +76,6 @@ def timing_fix_removes_overlap_and_stretches_tiny_lines():
     eq([(l["start"], l["end"]) for l in lines], [(0.0, 2.0), (2.0, 2.3), (5.0, 6.0)])
 
 
-@test
 def short_gaps_between_lines_are_filled():
     T = _tp()
     lines = T.build_lines([{"start": 0.0, "end": 1.0, "text": "첫 번째 줄이에요"},
@@ -91,7 +85,6 @@ def short_gaps_between_lines_are_filled():
        "1초 미만 빈틈은 앞 줄을 늘려 메우고, 긴 쉼은 그대로")
 
 
-@test
 def period_option_adds_or_strips_whisper_period():
     T = _tp()
     eq(T.finish_text("안녕하세요.", False), "안녕하세요")
@@ -135,8 +128,8 @@ def playback_speed_renders_audio_and_keeps_media_time(app):
     load_sample(app, n=6, with_wav=True)
     src = app.player._filepath
     app._set_play_speed(2.0)
-    wait_until(lambda: app.player.speed == 2.0, 15, lambda: app._speed_btn.itemcget("label", "text"))
-    eq(app._speed_btn.itemcget("label", "text"), "2배속")
+    wait_until(lambda: app.player.speed == 2.0 and app._speed_btn.itemcget("label", "text") == "2배속", 15,
+               lambda: app._speed_btn.itemcget("label", "text"))
     expect(stretch.cache_path(src, 2.0).exists(), "배속 소리를 만들어 둠")
     app._do_seek(4.0)
     app._media_play_pause()
@@ -158,7 +151,6 @@ def playback_speed_renders_audio_and_keeps_media_time(app):
     expect(not stretch.cache_path(src, 2.0).exists() or app.player._filepath == src, "다른 파일의 배속 소리는 지움")
 
 
-@test
 def toolbar_button_asks_before_replacing_and_opens_options(app):
     from harness import toplevels, pump
     load_sample(app, n=4, with_wav=True)
@@ -173,7 +165,6 @@ def toolbar_button_asks_before_replacing_and_opens_options(app):
     expect([w for w in toplevels() if w.title() == "자막 자동 생성"], "확인하면 생성 창")
 
 
-@test
 def slide_opens_and_closes_sections_smoothly(app):
     import tkinter as tk
     import srt_editor.widgets as W
@@ -208,7 +199,6 @@ def slide_opens_and_closes_sections_smoothly(app):
         W.ANIMATE = False
         win.destroy()
 
-@test
 def narrow_window_hides_shortcut_buttons_and_restores_them(app):
     from harness import pump
     load_sample(app, n=4)
@@ -243,7 +233,6 @@ def auto_transcribe_loads_lines_and_removes_temp_file(app):
     expect(app.save_path.endswith(".srt") and app._unsaved, "미디어 이름으로 저장 대기")
 
 
-@test
 def whisper_repeat_loops_are_found_and_retried():
     from srt_editor import speech, ai_worker
 
@@ -276,3 +265,13 @@ def whisper_repeat_loops_are_found_and_retried():
         eq(len(ai_worker._retry_loops(bad, [0.0] * 160000, segs, 8, "ko")), len(segs), "다시 해도 반복이면 원래대로")
     finally:
         ai_worker.status = status
+
+
+@test
+def line_building():
+    steps(split_uses_word_times_and_interpolates_missing_ones, char_split_leaves_no_short_tail_and_balances_lines, short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces, hallucinations_and_repeats_are_removed, timing_fix_removes_overlap_and_stretches_tiny_lines, short_gaps_between_lines_are_filled, period_option_adds_or_strips_whisper_period, whisper_repeat_loops_are_found_and_retried)
+
+
+@test
+def toolbar_layout(app):
+    steps(toolbar_button_asks_before_replacing_and_opens_options, slide_opens_and_closes_sections_smoothly, narrow_window_hides_shortcut_buttons_and_restores_them)

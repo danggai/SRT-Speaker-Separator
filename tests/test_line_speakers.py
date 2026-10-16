@@ -1,7 +1,7 @@
 """줄 단위 화자 구분: 임베딩 군집·선지정 분류와 결과 적용."""
 import numpy as np
 
-from harness import ctx, eq, expect, load_sample, test, wait_until
+from harness import steps, ctx, eq, expect, load_sample, test, wait_until
 
 
 def _fake(n_per=30, k=4, dim=32, noise=0.35, seed=0):
@@ -21,7 +21,6 @@ def _acc_cluster(lab, y):
     return np.mean([mp.get(l) == t for l, t in zip(lab, y)])
 
 
-@test
 def cluster_lines_recovers_separated_speakers():
     from srt_editor import line_speakers as L
     x, y = _fake()
@@ -31,7 +30,6 @@ def cluster_lines_recovers_separated_speakers():
     expect(_acc_cluster(lab, y) > 0.95, f"분리된 4명은 거의 맞혀야 해요: {_acc_cluster(lab, y):.2f}")
 
 
-@test
 def cluster_lines_skips_lines_without_embedding_and_small_inputs():
     from srt_editor import line_speakers as L
     x, _ = _fake(n_per=5, k=2)
@@ -43,7 +41,6 @@ def cluster_lines_skips_lines_without_embedding_and_small_inputs():
     eq(list(L.cluster_lines(x[:1], 3)[0]), [0], "줄이 모자라면 군집 수를 줄임")
 
 
-@test
 def seed_speakers_requires_enough_labeled_lines():
     from srt_editor import line_speakers as L
     eq(L.seed_speakers(["", "", ""]), {}, "지정 없음")
@@ -53,7 +50,6 @@ def seed_speakers_requires_enough_labeled_lines():
     eq(len(seeds), 7)
 
 
-@test
 def assign_from_seeds_labels_all_lines_and_handles_missing_embedding():
     from srt_editor import line_speakers as L
     x, y = _fake(noise=0.6)
@@ -73,7 +69,6 @@ def _start_button(win):
     return find(win, "FlatButton", "화자 분석 시작")[0]
 
 
-@test
 def diarize_start_without_seeds_asks_and_ok_closes_dialog(app):
     from harness import ctx, press, pump, toplevels
     load_sample(app, with_wav=True)
@@ -92,7 +87,6 @@ def diarize_start_without_seeds_asks_and_ok_closes_dialog(app):
     expect(not [w for w in toplevels() if w.winfo_exists()], "지정하러 가기는 분석 창을 닫음")
 
 
-@test
 def diarize_start_without_seeds_cancel_runs_analysis(app):
     from harness import ctx, press, pump, toplevels
     load_sample(app, with_wav=True)
@@ -110,7 +104,6 @@ def diarize_start_without_seeds_cancel_runs_analysis(app):
     expect(win.winfo_exists(), "분석 창은 그대로")
 
 
-@test
 def diarize_start_with_seeds_skips_notice(app):
     from harness import ctx, press, pump, toplevels
     load_sample(app, n=12, with_wav=True, tagged_every=1)
@@ -125,7 +118,6 @@ def diarize_start_with_seeds_skips_notice(app):
     expect(not any(m[0] == "ask_choice" for m in ctx.msgs), "안내가 뜨면 안 돼요")
 
 
-@test
 def apply_line_speakers_seeded_fills_only_unassigned_with_undo(app):
     load_sample(app, n=12, tagged_every=3)
     before = [s.get("speaker", "") for s in app.subtitles]
@@ -142,7 +134,6 @@ def apply_line_speakers_seeded_fills_only_unassigned_with_undo(app):
     eq([s.get("speaker", "") for s in app.subtitles], before, "실행 취소로 원래대로")
 
 
-@test
 def apply_line_speakers_clusters_adds_new_speakers(app):
     load_sample(app, n=10, tagged_every=0)
     for s in app.subtitles:
@@ -159,7 +150,6 @@ def apply_line_speakers_clusters_adds_new_speakers(app):
     eq(app.speakers, [], "실행 취소하면 새 화자도 사라짐")
 
 
-@test
 def cluster_lines_estimates_speaker_count_when_zero():
     from srt_editor import line_speakers as L
     x, y = _fake(n_per=25, k=5, noise=0.3)
@@ -169,7 +159,6 @@ def cluster_lines_estimates_speaker_count_when_zero():
     expect(len(set(lab)) <= 3, "최대 인원을 넘지 않음")
 
 
-@test
 def unsure_mask_flags_lowest_confidence_auto_lines_only():
     from srt_editor import line_speakers as L
     conf = [0.9, 0.1, 0.5, 0.05, 0.8, 0.95, 0.7, 0.6, 0.4, 0.3]
@@ -179,7 +168,6 @@ def unsure_mask_flags_lowest_confidence_auto_lines_only():
     eq(list(L.unsure_mask(conf, [False] * 10)), [False] * 10, "자동 줄이 없으면 표시 없음")
 
 
-@test
 def rerun_reassigns_auto_lines_but_keeps_user_lines(app):
     load_sample(app, n=24, tagged_every=1)
     for i, s in enumerate(app.subtitles):
@@ -208,7 +196,6 @@ def _analyzed_with_checks(app, n=120):
     return [i for i, s in enumerate(app.subtitles) if s.get("_check")]
 
 
-@test
 def diarize_button_turns_into_check_only_and_glows_after_fixes(app):
     from harness import pump
     btn = app._tb_btns["화자 분석"]
@@ -229,7 +216,6 @@ def diarize_button_turns_into_check_only_and_glows_after_fixes(app):
     expect(not app._diarize_glow)
 
 
-@test
 def check_only_rerun_changes_only_check_lines_and_keeps_unsure_ones(app):
     import srt_editor.ui.diarize as dz
     checks = _analyzed_with_checks(app)
@@ -267,7 +253,6 @@ def check_only_rerun_changes_only_check_lines_and_keeps_unsure_ones(app):
     eq([s["speaker"] for s in app.subtitles], before, "실행 취소")
 
 
-@test
 def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
     from harness import pump
     load_sample(app, n=20, tagged_every=0)
@@ -301,7 +286,6 @@ def check_marks_show_counter_navigate_and_clear_on_manual_assign(app):
     eq(app.lbl_check.cget("text"), "?  확인 필요 3줄", "실행 취소하면 표시도 돌아옴")
 
 
-@test
 def diarize_dialog_closes_when_analysis_starts(app):
     import srt_editor.ui.diarize as dz
     from harness import pump, toplevels
@@ -333,7 +317,6 @@ def diarize_dialog_closes_when_analysis_starts(app):
     expect(not [w for w in toplevels() if w.title() == "화자 자동 분석"], "분석 창은 닫힘")
 
 
-@test
 def f_key_plays_next_check_line_and_number_key_moves_on(app):
     from types import SimpleNamespace as NS
     from harness import pump
@@ -461,7 +444,6 @@ def auto_and_check_flags_survive_save_and_reopen(app):
     expect(app.lbl_check.winfo_ismapped(), "다시 열어도 확인 필요 숫자가 보임")
 
 
-@test
 def ask_choice_dialog_returns_button_result(app):
     import importlib
     import srt_editor.widgets as W
@@ -476,3 +458,23 @@ def ask_choice_dialog_returns_button_result(app):
     app.after(300, lambda: [w.destroy() for w in toplevels() if w.title() == "질문"])
     eq(real(app, "질문", "내용", "진행", "지정하러 가기"), None, "닫으면 None")
     W.ask_choice = __import__("srt_editor.ui.diarize", fromlist=["x"]).ask_choice
+
+
+@test
+def clustering_math():
+    steps(cluster_lines_recovers_separated_speakers, cluster_lines_skips_lines_without_embedding_and_small_inputs, seed_speakers_requires_enough_labeled_lines, assign_from_seeds_labels_all_lines_and_handles_missing_embedding, cluster_lines_estimates_speaker_count_when_zero, unsure_mask_flags_lowest_confidence_auto_lines_only)
+
+
+@test
+def diarize_start_dialog(app):
+    steps(diarize_start_without_seeds_asks_and_ok_closes_dialog, diarize_start_without_seeds_cancel_runs_analysis, diarize_start_with_seeds_skips_notice, diarize_dialog_closes_when_analysis_starts, ask_choice_dialog_returns_button_result)
+
+
+@test
+def apply_results(app):
+    steps(apply_line_speakers_seeded_fills_only_unassigned_with_undo, apply_line_speakers_clusters_adds_new_speakers, rerun_reassigns_auto_lines_but_keeps_user_lines)
+
+
+@test
+def check_lines(app):
+    steps(diarize_button_turns_into_check_only_and_glows_after_fixes, check_only_rerun_changes_only_check_lines_and_keeps_unsure_ones, check_marks_show_counter_navigate_and_clear_on_manual_assign, f_key_plays_next_check_line_and_number_key_moves_on)

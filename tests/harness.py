@@ -30,6 +30,23 @@ def test(fn):
     return fn
 
 
+def steps(*fns):
+    """비슷한 확인 여러 개를 한 테스트로 묶어 차례로 실행 (사이마다 앱 초기화). 실패하면 어느 단계인지 붙여 알림."""
+    import inspect
+    for k, fn in enumerate(fns):
+        try:
+            if "app" in inspect.signature(fn).parameters:
+                if k:
+                    reset_app()
+                fn(ctx.app)
+            else:
+                fn()
+        except Skip:
+            raise
+        except Exception as e:
+            raise AssertionError(f"[{fn.__name__}] {e}") from e
+
+
 def expect(cond, msg="조건이 거짓이에요"):
     if not cond:
         raise AssertionError(msg)
@@ -304,7 +321,7 @@ def wait_until(cond, timeout=10.0, what=""):
     """cond()가 참이 될 때까지 기다린다. what은 문자열 또는 '지금 상태'를 돌려주는 함수 (실패 메시지에 붙음)."""
     end = time.time() + timeout
     while time.time() < end:
-        pump(0.05)
+        pump(0.02)
         if cond():
             return True
     state = what() if callable(what) else what
@@ -346,7 +363,7 @@ def flat(root, text):
 
 
 # ───────── 입력 흉내 ─────────
-def tap(w, x=6, y=6, wait=0.12):
+def tap(w, x=6, y=6, wait=0.05):
     """실제 클릭처럼 누르고 뗀다 (누르기만 하면 Tk가 그 창을 '눌린 채'로 보고 이후 뗌을 가로챔)."""
     w.event_generate("<Enter>")
     w.event_generate("<ButtonPress-1>", x=x, y=y)
@@ -358,7 +375,7 @@ def press(btn):
     tap(btn, 4, 4)
 
 
-def key(widget, seq, wait=0.1):
+def key(widget, seq, wait=0.05):
     """키 이벤트는 포커스가 있는 창에만 가므로 포커스를 준 뒤 보낸다."""
     for _ in range(5):
         widget.focus_force()
@@ -369,11 +386,11 @@ def key(widget, seq, wait=0.1):
     pump(wait)
 
 
-def app_key(seq, wait=0.1):
+def app_key(seq, wait=0.05):
     """앱 전역 단축키 (입력칸 밖에서)."""
     ctx.app.focus_force()
     ctx.app.focus_set()
-    pump(0.05)
+    pump(0.02)
     ctx.app.event_generate(seq)
     pump(wait)
 
@@ -498,7 +515,7 @@ def load_sample(app, n=24, with_wav=False, tagged_every=1, name="sample"):
         paths["wav"] = write_wav(d / f"{name}.wav")
     app._open_paths([str(srt)] + ([str(paths["wav"])] if with_wav else []))
     wait_until(lambda: len(app.subtitles) == n and app._slot_data and app._slot_data[0] == 0, 5, "자막 열기")
-    pump(0.2)
+    pump(0.05)
     return paths
 
 
