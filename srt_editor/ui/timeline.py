@@ -408,7 +408,8 @@ class TimelineMixin:
                      id(getattr(self, "_waveform", None)),
                      tuple((s.get("speaker",""), s.get("timestamp",""), s.get("text",""))
                             for s in (self.subtitles or [])),
-                     round(dur_, 2))
+                     round(dur_, 2),
+                     self._wf_drag_key())   # 드래그 중엔 블록도 새 위치로 다시 그림
 
         cached = getattr(self, "_wf_img_cache", None)
         cache_hit = bool(cached and cached[0] == cache_key)
@@ -949,6 +950,13 @@ class TimelineMixin:
         self._pb_sub_click_idx = idx
         self._pb_canvas.configure(cursor="fleur")
         self._pb_redraw()   # 마우스를 움직이기 전에도 즉시 미리보기(흰 박스)가 보이도록
+
+    def _wf_drag_key(self):
+        drag = getattr(self, "_wf_sub_drag", None)
+        if not drag:
+            return None
+        return (drag["mode"], drag["idx"], round(drag.get("t_s") or 0, 3), round(drag.get("t_e") or 0, 3),
+                drag.get("target_lane"), drag.get("link"), drag.get("shift_lock"))
 
     @staticmethod
     def _wf_drag_pos(drag, i, t_s, t_e, lane):

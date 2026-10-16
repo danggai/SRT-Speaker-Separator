@@ -147,6 +147,7 @@ def dragging_shared_edge_separates_but_ctrl_drag_moves_neighbor(app):
     pump(0.05)
     eq(len(pb.find_withtag("link_bar")), 2, "Ctrl+드래그 중에도 두 막대")
     expect(pb.find_withtag("link_delta"), "옮긴 시간 표시")
+    expect(app._wf_img_cache[0][-1] is not None, "드래그 중 블록(배경)도 새 위치로 다시 그림")
     app._pb_release(Ev(pb, x, y, 0x0004))
     drag(0x0004)
     near(times(app, 3)[1], times(app, 4)[0], 0.002, "Ctrl+드래그: 맞닿은 두 줄이 같이 움직임")
