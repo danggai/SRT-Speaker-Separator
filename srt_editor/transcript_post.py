@@ -6,6 +6,13 @@ DEFAULT_MAX_CHARS = 20   # 줄당 글자 수 기본값 (직접 만든 자막: �
 MIN_RATIO = 0.45    # 줄이 이만큼 찼을 때만 문장 경계에서 일찍 끊음
 OVERFLOW_CHARS = 5  # 이만큼 넘치는 건 한 줄로 둠 (짧은 꼬리 줄 방지, 직접 고친 자막도 10%가 20자 초과)
 CLAUSE_BONUS = 8    # 고르게 나눌 때 문장 경계에서 끊는 쪽을 우대하는 정도
+DANGLING_PENALTY = 30   # 조사로 줄이 끝나는 걸 피하는 정도, 꾸미는 말은 두 배 (직접 고친 자막은 1~4%만 이렇게 끝남)
+
+# 뒤에 오는 말과 이어져야 하는 어절 (여기서 줄을 끊으면 어색함)
+_DANGLING_WORDS = {
+    "무슨", "어떤", "어느", "이런", "그런", "저런", "몇", "모든", "그", "이", "저", "새", "각", "한", "두", "세", "네",
+    "우리", "내", "제", "막", "좀", "또", "엄청", "너무", "되게", "진짜", "완전", "그냥", "지금", "약간", "아주", "더", "잘", "안", "못",
+}
 PAUSE_SPLIT = 0.25   # 단어 사이 쉼이 이 이상이면 글자 수와 상관없이 줄을 나눔 (초)
 FILL_GAP = 1.0      # 줄 사이 빈틈이 이보다 짧으면 앞 줄을 늘려 메움 (초)
 MIN_PIECE_CHARS = 4  # 이보다 짧은 조각은 쉼이 있어도 앞뒤와 붙여 둠
@@ -49,6 +56,16 @@ def clause_break_score(word):
     return 1 if any(core.endswith(e) for e in _KOR_SENTENCE_ENDERS) else 0
 
 
+def dangling_word(word):
+    """다음 어절과 붙어야 하는 정도: 2=꾸미는 말(무슨·무서운·우리의), 1=조사(~을·를·가·에·는), 0=아님."""
+    w = word.rstrip("\"'”’)],")
+    if w.endswith(("다가", "면은", "서는", "고는")):   # 이어 주는 말이라 끊기 좋음
+        return 0
+    if w in _DANGLING_WORDS or (len(w) > 1 and w[-1] in "의운한된던할될"):
+        return 2
+    return 1 if len(w) > 1 and w[-1] in "을는은를가에이" else 0
+
+
 def split_by_chars(text, max_chars, overflow=None):
     """몇 글자만 넘치면 한 줄로, 넘으면 줄 수는 최소·길이는 고르게 (문장 경계 우대)."""
     overflow = OVERFLOW_CHARS if overflow is None else overflow
@@ -77,6 +94,8 @@ def split_by_chars(text, max_chars, overflow=None):
                         c = cost[j - 1][s] + (width - target) ** 2
                         if e < n and clause_break_score(words[e - 1]):
                             c -= CLAUSE_BONUS
+                        elif e < n:
+                            c += DANGLING_PENALTY * dangling_word(words[e - 1])
                         if c < cost[j][e]:
                             cost[j][e], back[j][e] = c, s
             if cost[k][n] < inf:

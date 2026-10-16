@@ -35,6 +35,8 @@ def char_split_leaves_no_short_tail_and_balances_lines():
        "몇 글자 넘치는 건 꼬리('사업체를')를 떼지 않고 한 줄")
     eq(T.split_by_chars("자 얘들아 내가 또 꿈에서 우리의 사업체를 어떻게 이끌어가면 좋을지 생각을 해왔거든", 20),
        ["자 얘들아 내가 또 꿈에서 우리의 사업체를", "어떻게 이끌어가면 좋을지 생각을 해왔거든"], "넘으면 고르게 나눔")
+    lines = T.split_by_chars("모르겠어요 저 근데 엄청 무서운 사람이 갑자기 나타나서 막 쫓아왔어요", 20)
+    expect(not any(T.dangling_word(l.split()[-1]) == 2 for l in lines[:-1]), f"꾸미는 말로 줄이 끝나지 않음: {lines}")
     lines = T.split_by_chars("가나다 " * 20, 20)
     expect(all(len(l) <= 25 for l in lines) and max(map(len, lines)) - min(map(len, lines)) <= 4, f"{lines}")
 
