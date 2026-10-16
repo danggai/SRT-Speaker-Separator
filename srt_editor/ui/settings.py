@@ -548,7 +548,7 @@ class SettingsMixin:
                                       "파형에서 자막을 끌어 옮기지 못하게")
         self._opt_toggle(right, "lock_timeline")
         _, right = self._settings_row(card, "⇹", "붙은 경계 함께 옮기기",
-                                      "앞뒤 줄이 맞닿아 있으면 한쪽을 옮길 때 같이")
+                                      "Q/W·Alt+←/→, 경계 Ctrl+드래그 때 맞닿은 옆 줄도 같이")
         self._opt_toggle(right, "link_edges")
 
     # ── 섹션: 자동 자막 ───────────────────────

@@ -813,7 +813,13 @@ class TimelineMixin:
         hit = self._wf_hit_test(x, y)
         self._pb_ctrl_click = False
 
-        if hit["type"] in ("handle", "body") and event.state & 0x0004:   # Ctrl+클릭: 선택 추가/해제
+        if hit["type"] == "handle" and event.state & 0x0004:   # Ctrl+드래그: 붙은 옆 줄 경계도 함께 (클릭이면 선택 추가)
+            self._start_handle_drag(hit["mode"], hit["idx"], link=True)
+            self._wf_sub_drag["locked"] = self._opt("lock_timeline")
+            self._wf_sub_drag["ctrl"] = True
+            return
+
+        if hit["type"] == "body" and event.state & 0x0004:   # Ctrl+클릭: 선택 추가/해제
             self._wf_sub_drag = None
             self._pb_dragging = False
             self._pb_ctrl_click = True
@@ -841,7 +847,7 @@ class TimelineMixin:
         self.lbl_pos.configure(text=self._fmt_time(pos))
         self._pb_redraw()
 
-    def _start_handle_drag(self, mode, idx):
+    def _start_handle_drag(self, mode, idx, link=False):
         """리사이즈 핸들 드래그 상태 초기화. 변경 전 상태를 여기서 찍어 두고,
         실제로 바뀐 경우에만 release에서 실행 취소 기록으로 확정한다."""
         cache = getattr(self, "_ts_cache", [])
@@ -850,7 +856,7 @@ class TimelineMixin:
             "mode": mode, "idx": idx,
             "t_s": cache[idx][0],
             "t_e": cache[idx][1],
-            "link": self._linked_edge(idx, "s" if mode == "head_start" else "e"),   # 붙은 옆 줄도 함께
+            "link": self._linked_edge(idx, "s" if mode == "head_start" else "e") if link else None,   # Ctrl: 붙은 옆 줄도 함께
         }
         self._pb_dragging = False
         self._pb_sub_click_idx = None
@@ -1059,7 +1065,11 @@ class TimelineMixin:
             # 거의 안 움직였으면 → 클릭으로 판정 (타임스탬프/레이어 변경 없음)
             if moved <= CLICK_THR:
                 self._wf_sub_drag = None
-                if drag["mode"] == "move" and event.state & 0x0001:   # Shift+클릭: 범위 선택
+                if drag.get("ctrl"):   # 경계 Ctrl+클릭: 선택 추가/해제
+                    self._pb_ctrl_click = True
+                    self._toggle_select(idx)
+                    self._pb_redraw()
+                elif drag["mode"] == "move" and event.state & 0x0001:   # Shift+클릭: 범위 선택
                     self._shift_select(idx)
                     self._pb_redraw()
                 elif drag["mode"] == "move":

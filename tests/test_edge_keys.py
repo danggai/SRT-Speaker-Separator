@@ -106,7 +106,7 @@ def touching_edges_move_together(app):
 
 
 @test
-def dragging_shared_edge_on_timeline_moves_neighbor(app):
+def dragging_shared_edge_separates_but_ctrl_drag_moves_neighbor(app):
     from harness import ts, Ev
     load_sample(app, with_wav=True)
     app.subtitles[3]["timestamp"] = f"{ts(7.5)} --> {ts(10.0)}"
@@ -122,11 +122,25 @@ def dragging_shared_edge_on_timeline_moves_neighbor(app):
     hit = app._wf_hit_test(x, y)
     eq(hit["type"], "handle", f"경계 핸들 판정 {hit}")
     x2 = app._wf_ratio_to_x(10.6 / dur, cw)
-    app._pb_press(Ev(pb, x, y))
-    for k in range(1, 5):
-        app._pb_drag(Ev(pb, x + (x2 - x) * k // 4, y))
-    app._pb_release(Ev(pb, x2, y))
-    pump(0.1)
+
+    def drag(state):
+        app._pb_press(Ev(pb, x, y, state))
+        for k in range(1, 5):
+            app._pb_drag(Ev(pb, x + (x2 - x) * k // 4, y, state))
+        app._pb_release(Ev(pb, x2, y, state))
+        pump(0.1)
+
+    drag(0)
     moved = times(app, 4)[0] if hit["idx"] == 4 else times(app, 3)[1]
     expect(abs(moved - 10.0) > 0.3, f"끈 경계가 움직임 ({times(app, 3)}, {times(app, 4)})")
-    near(times(app, 3)[1], times(app, 4)[0], 0.002, "맞닿은 두 줄이 계속 붙어 있음")
+    other = times(app, 3)[1] if hit["idx"] == 4 else times(app, 4)[0]
+    near(other, 10.0, 0.002, "그냥 드래그: 옆 줄은 그대로 (떨어짐)")
+    app._undo()
+    drag(0x0004)
+    near(times(app, 3)[1], times(app, 4)[0], 0.002, "Ctrl+드래그: 맞닿은 두 줄이 같이 움직임")
+    expect(abs(times(app, 3)[1] - 10.0) > 0.3, "Ctrl+드래그로 경계가 움직임")
+    app._undo()
+    app._select_row(0, seek=False)
+    app._pb_press(Ev(pb, x, y, 0x0004))
+    app._pb_release(Ev(pb, x, y, 0x0004))
+    eq(app._selected_rows, {0, hit["idx"]}, "경계 Ctrl+클릭은 선택 추가")
