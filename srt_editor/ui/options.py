@@ -17,6 +17,7 @@ OPTION_DEFAULTS = {
     "advance_to_check": True,     # ? 줄을 지정하면 다음 ? 줄로
     "seek_step": 0.5,             # ←/→ 이동 간격 (초)
     "seek_step_shift": 5,         # Shift+←/→ 이동 간격 (초)
+    "seek_step_ctrl": 0.1,        # Ctrl+←/→ 이동 간격 (초)
     "new_sub_len": 5.0,           # 새 자막 기본 길이 (초)
     "split_text": True,           # 나누기 할 때 내용도 단어 단위로 나누기
     "click_seek": True,           # 자막 클릭 시 재생 위치 이동

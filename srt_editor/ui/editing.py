@@ -368,7 +368,7 @@ class EditingMixin:
         return "break"
 
     def _nudge_edge(self, which, delta, event=None):
-        """Ctrl+←/→: 시작을 0.1초씩 (Alt: 0.05초), Shift를 더하면 끝을 옮김."""
+        """Alt+←/→: 시작을, Alt+Shift+←/→: 끝을 0.05초씩 옮김."""
         idx = self._edge_key_target()
         if idx is None:
             return

@@ -14,7 +14,7 @@ _LEARNED = 99
 # 마우스 동작 → 알림 문구
 TIPS = {
     "edge": "재생하면서 Q·W로 시작·끝을 바로 찍을 수 있어요",
-    "nudge": "Ctrl+←/→로 시작을 0.1초씩 옮길 수 있어요 (Shift: 끝)",
+    "nudge": "Alt+←/→로 시작을 0.05초씩 옮길 수 있어요 (Shift: 끝)",
     "split": "S 키로도 나눌 수 있어요",
     "merge": "M 키로도 합칠 수 있어요",
     "add": "Ctrl+A로도 자막을 추가할 수 있어요",
@@ -55,7 +55,7 @@ class TipsMixin:
             return []
         mods = getattr(self, "_ctx_mods", ())
         if "ctrl" in mods:
-            return [("Ctrl+Z", "실행 취소"), ("Ctrl+←→", "시작 0.1초"), ("Ctrl+클릭", "여러 줄 고르기"),
+            return [("Ctrl+Z", "실행 취소"), ("Ctrl+←→", "0.1초 이동"), ("Ctrl+클릭", "여러 줄 고르기"),
                     ("Ctrl+경계 드래그", "옆 줄도 같이"), ("Ctrl+F·H", "검색·바꾸기")]
         if "shift" in mods:
             return [("Shift+↑↓", "여러 줄 고르기"), ("Shift+클릭", "범위 고르기"), ("Shift+←→", "5초 이동"),

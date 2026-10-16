@@ -237,11 +237,12 @@ class SRTEditor(
         self.bind("F", self._review_next_check)
         for _k, _w in (("q", "s"), ("Q", "s"), ("w", "e"), ("W", "e")):   # 재생 위치로 시작·끝 찍기
             self.bind(_k, lambda e, w=_w: self._mark_edge(w, e))
-        for _m, _step in (("Control", 2), ("Alt", 1)):   # Ctrl: 0.1초, Alt: 0.05초 (Shift: 끝)
-            self.bind(f"<{_m}-Left>",        lambda e, s=_step: self._nudge_edge("s", -s, e))
-            self.bind(f"<{_m}-Right>",       lambda e, s=_step: self._nudge_edge("s", s, e))
-            self.bind(f"<{_m}-Shift-Left>",  lambda e, s=_step: self._nudge_edge("e", -s, e))
-            self.bind(f"<{_m}-Shift-Right>", lambda e, s=_step: self._nudge_edge("e", s, e))
+        self.bind("<Alt-Left>",        lambda e: self._nudge_edge("s", -1, e))
+        self.bind("<Alt-Right>",       lambda e: self._nudge_edge("s", 1, e))
+        self.bind("<Alt-Shift-Left>",  lambda e: self._nudge_edge("e", -1, e))
+        self.bind("<Alt-Shift-Right>", lambda e: self._nudge_edge("e", 1, e))
+        self.bind("<Control-Left>",  self._on_left_key)    # 재생 위치 0.1초 이동
+        self.bind("<Control-Right>", self._on_right_key)
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)

@@ -24,18 +24,21 @@ class PlaybackMixin:
         self._media_play_pause()
         return "break"
 
+    def _seek_step_for(self, event):
+        if event.state & 0x4:   # Ctrl: 미세 이동
+            return self._opt("seek_step_ctrl")
+        return self._opt("seek_step_shift") if (event.state & 0x1) else self._opt("seek_step")
+
     def _on_left_key(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        step = self._opt("seek_step_shift") if (event.state & 0x1) else self._opt("seek_step")
-        self._media_seek(-step)
+        self._media_seek(-self._seek_step_for(event))
         return "break"
 
     def _on_right_key(self, event):
         if isinstance(self.focus_get(), tk.Entry):
             return
-        step = self._opt("seek_step_shift") if (event.state & 0x1) else self._opt("seek_step")
-        self._media_seek(+step)
+        self._media_seek(+self._seek_step_for(event))
         return "break"
 
     def _extend_selection(self, delta):

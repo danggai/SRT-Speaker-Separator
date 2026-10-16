@@ -198,7 +198,7 @@ class SettingsMixin:
 
     _SECTION_OPTS = {
         "general": ("startup_open_last", "update_check", "context_keys", "key_tips"),
-        "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "click_seek",
+        "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "seek_step_ctrl", "click_seek",
                  "new_sub_len", "split_text", "lock_timeline", "link_edges"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
@@ -533,6 +533,7 @@ class SettingsMixin:
         _, right = self._settings_row(card, "↔", "←/→ 이동 간격", None)
         self._opt_number(right, "seek_step", "초", 0.1, 60, is_float=True)
         self._opt_number(right, "seek_step_shift", "초", 0.1, 300, is_float=True, label="Shift")
+        self._opt_number(right, "seek_step_ctrl", "초", 0.01, 10, is_float=True, label="Ctrl")
         _, right = self._settings_row(card, "▸", "자막 클릭 시 재생 위치 이동",
                                       None)
         self._opt_toggle(right, "click_seek")
@@ -548,7 +549,7 @@ class SettingsMixin:
                                       "파형에서 자막을 끌어 옮기지 못하게")
         self._opt_toggle(right, "lock_timeline")
         _, right = self._settings_row(card, "⇹", "붙은 경계 함께 옮기기",
-                                      "Q/W·Ctrl+←/→, 경계 Ctrl+드래그 때 맞닿은 옆 줄도 같이")
+                                      "Q/W·Alt+←/→, 경계 Ctrl+드래그 때 맞닿은 옆 줄도 같이")
         self._opt_toggle(right, "link_edges")
 
     # ── 섹션: 자동 자막 ───────────────────────
