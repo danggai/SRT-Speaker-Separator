@@ -571,6 +571,8 @@ def line_break_mark_acts_like_one_char(app):
     s = slot_of(app, 2)
     app._txt_edit_start(s)
     ent = app._slot_widgets[s]["content"]
+    ent.focus_force()
+    pump(0.05)
     ent.delete(0, "end")
     ent.insert(0, "가나")
     ent.icursor(1)

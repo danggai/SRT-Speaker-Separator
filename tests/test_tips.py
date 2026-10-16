@@ -21,7 +21,7 @@ def context_keys_follow_what_you_are_doing(app):
     app._select_row(5, seek=False)
     app_key("<Return>")
     expect(app.focus_get() is app._slot_widgets[slot_of(app, 5)]["content"], "편집 시작")
-    eq(shown(app), ["Tab", "Ctrl+Space", "Enter", "Esc"], "편집 중")
+    eq(shown(app), ["↑↓", "Ctrl+Space", "Enter", "Esc"], "편집 중")
     ent = app._slot_widgets[slot_of(app, 5)]["content"]
     ent.event_generate("<KeyPress-Shift_L>")
     eq(shown(app), ["Shift+Enter", "Shift+Tab"], "편집 중 Shift 누름")

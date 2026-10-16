@@ -48,7 +48,7 @@ class TipsMixin:
                     return [("Ctrl+Space", "다시 듣기"), ("Ctrl+Enter", "저장하고 다음 줄"), ("Ctrl+Z", "되돌리기")]
                 if "shift" in mods:
                     return [("Shift+Enter", "줄바꿈"), ("Shift+Tab", "이전 줄")]
-                return [("Tab", "다음 줄"), ("Ctrl+Space", "다시 듣기"), ("Enter", "저장"), ("Esc", "취소")]
+                return [("↑↓", "옆 줄 고치기"), ("Ctrl+Space", "다시 듣기"), ("Enter", "저장"), ("Esc", "취소")]
             if focus in (wi["ts_s"], wi["ts_e"]):
                 return [("Enter", "저장")]
         if isinstance(focus, tk.Entry):

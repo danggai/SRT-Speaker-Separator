@@ -296,6 +296,8 @@ class SubtitleTableMixin:
         txt_e.bind("<Tab>",           lambda e, s=slot_idx: self._txt_jump(s, 1))
         txt_e.bind("<Control-Return>", lambda e, s=slot_idx: self._txt_jump(s, 1))
         txt_e.bind("<Shift-Tab>",     lambda e, s=slot_idx: self._txt_jump(s, -1))
+        txt_e.bind("<Down>",          lambda e, s=slot_idx: self._txt_jump(s, 1, True))
+        txt_e.bind("<Up>",            lambda e, s=slot_idx: self._txt_jump(s, -1, True))
         txt_e.bind("<Shift-Return>", lambda e: self._txt_insert_br(e.widget))
         for key in ("BackSpace", "Delete", "Left", "Right"):   # 줄바꿈 표시(3글자)를 한 글자처럼
             txt_e.bind(f"<{key}>", lambda e, k=key: None if e.state & 0x0005 else self._txt_br_key(e.widget, k))
@@ -466,9 +468,11 @@ class SubtitleTableMixin:
             self._play_line(di)
         return "break"
 
-    def _txt_jump(self, slot_idx, delta):
-        """편집 중 Tab·Ctrl+Enter(다음), Shift+Tab(이전): 저장하고 옆 줄 편집으로 넘어가 그 줄을 재생."""
+    def _txt_jump(self, slot_idx, delta, keep_at_edge=False):
+        """편집 중 Tab·↓·Ctrl+Enter(다음), Shift+Tab·↑(이전): 저장하고 옆 줄 편집으로 넘어가 그 줄을 재생."""
         di = self._txt_editing_idx(slot_idx)
+        if keep_at_edge and not (0 <= di + delta < len(self.subtitles)):   # 첫·끝 줄에서 ↑↓는 편집 유지
+            return "break"
         self._slot_save_text(slot_idx)
         self._txt_edit_end(slot_idx)
         nxt = di + delta
