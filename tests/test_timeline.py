@@ -456,3 +456,19 @@ def media_label_shows_file_name(app):
     expect("sample.wav" in str(app.lbl_media.cget("text")) or app._media_label_text == "sample.wav" if hasattr(app, "_media_label_text") else True)
     app._close_to_home()
     eq(app.lbl_dur.cget("text") in ("…", "0:00:00", "-:--:--", "0:00") or True, True)
+
+
+@test
+def edited_text_shows_on_timeline_right_away(app):
+    from harness import slot_of
+    load_sample(app, with_wav=True)
+    app._wf_img_cache = None
+    app._pb_redraw()
+    pump(0.2)
+    key = app._wf_img_cache[0]
+    s = slot_of(app, 2)
+    app._slot_widgets[s]["txt_var"].set("바뀐 글자")
+    app._slot_widgets[s]["_edit_di"] = 2
+    app._slot_save_text(s)
+    pump(0.1)
+    expect(app._wf_img_cache[0] != key, "글자 바꾸자마자 타임라인 이미지 다시 그림")

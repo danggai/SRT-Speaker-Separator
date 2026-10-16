@@ -406,7 +406,7 @@ class TimelineMixin:
         # ── 캐시 키 ───────────────────────────
         cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
                      id(getattr(self, "_waveform", None)),
-                     tuple((s.get("speaker",""), s.get("timestamp",""))
+                     tuple((s.get("speaker",""), s.get("timestamp",""), s.get("text",""))
                             for s in (self.subtitles or [])),
                      round(dur_, 2))
 
