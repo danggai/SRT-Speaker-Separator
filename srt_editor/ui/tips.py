@@ -54,12 +54,18 @@ class TipsMixin:
         if isinstance(focus, tk.Entry):
             return []
         mods = getattr(self, "_ctx_mods", ())
+        on_timeline = focus is getattr(self, "_pb_canvas", None)   # 타임라인과 자막 줄은 같은 키도 동작이 다름
         if "ctrl" in mods:
-            return [("Ctrl+Z", "실행 취소"), ("Ctrl+←→", "0.1초 이동"), ("Ctrl+클릭", "여러 줄 고르기"),
-                    ("Ctrl+경계 드래그", "옆 줄도 같이"), ("Ctrl+F·H", "검색·바꾸기")]
+            if on_timeline:
+                return [("Ctrl+경계 드래그", "옆 줄도 같이"), ("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "0.1초 이동"),
+                        ("Ctrl+휠", "확대·축소"), ("Ctrl+Z", "실행 취소")]
+            return [("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "0.1초 이동"), ("Ctrl+C·V", "복사·붙여넣기"),
+                    ("Ctrl+F·H", "검색·바꾸기"), ("Ctrl+Z", "실행 취소")]
         if "shift" in mods:
-            return [("Shift+↑↓", "여러 줄 고르기"), ("Shift+클릭", "범위 고르기"), ("Shift+←→", "5초 이동"),
-                    ("Shift+드래그", "레이어만 옮기기")]
+            if on_timeline:
+                return [("Shift+↑↓", "이전·다음 경계로"), ("Shift+클릭", "범위 고르기"), ("Shift+드래그", "레이어만 옮기기"),
+                        ("Shift+←→", "5초 이동")]
+            return [("Shift+↑↓", "여러 줄 고르기"), ("Shift+클릭", "범위 고르기"), ("Shift+←→", "5초 이동")]
         if len(getattr(self, "_selected_rows", ())) > 1:
             return [("M", "합치기"), ("1~9", "화자"), ("Ctrl+D", "삭제"), ("Esc", "선택 해제")]
         if getattr(self, "_selected_row_idx", None) is None:
