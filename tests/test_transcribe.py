@@ -29,6 +29,17 @@ def split_uses_word_times_and_interpolates_missing_ones():
 
 
 @test
+def char_split_leaves_no_short_tail_and_balances_lines():
+    T = _tp()
+    eq(T.split_by_chars("자 얘들아 내가 또 꿈에서 우리의 사업체를", 20), ["자 얘들아 내가 또 꿈에서 우리의 사업체를"],
+       "몇 글자 넘치는 건 꼬리('사업체를')를 떼지 않고 한 줄")
+    eq(T.split_by_chars("자 얘들아 내가 또 꿈에서 우리의 사업체를 어떻게 이끌어가면 좋을지 생각을 해왔거든", 20),
+       ["자 얘들아 내가 또 꿈에서 우리의 사업체를", "어떻게 이끌어가면 좋을지 생각을 해왔거든"], "넘으면 고르게 나눔")
+    lines = T.split_by_chars("가나다 " * 20, 20)
+    expect(all(len(l) <= 25 for l in lines) and max(map(len, lines)) - min(map(len, lines)) <= 4, f"{lines}")
+
+
+@test
 def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
     T = _tp()
     seg = {"start": 0.0, "end": 4.0, "text": "아 그냥 딱 봤는데! 이쁘다 진짜",

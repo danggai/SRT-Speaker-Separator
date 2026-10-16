@@ -4,6 +4,8 @@ import re
 MIN_DUR = 0.3       # 이보다 짧은 줄은 늘림 (초)
 DEFAULT_MAX_CHARS = 20   # 줄당 글자 수 기본값 (직접 만든 자막: 중앙값 10자, 90%가 19자 이하)
 MIN_RATIO = 0.45    # 줄이 이만큼 찼을 때만 문장 경계에서 일찍 끊음
+OVERFLOW_CHARS = 5  # 이만큼 넘치는 건 한 줄로 둠 (짧은 꼬리 줄 방지, 직접 고친 자막도 10%가 20자 초과)
+CLAUSE_BONUS = 8    # 고르게 나눌 때 문장 경계에서 끊는 쪽을 우대하는 정도
 PAUSE_SPLIT = 0.25   # 단어 사이 쉼이 이 이상이면 글자 수와 상관없이 줄을 나눔 (초)
 FILL_GAP = 1.0      # 줄 사이 빈틈이 이보다 짧으면 앞 줄을 늘려 메움 (초)
 MIN_PIECE_CHARS = 4  # 이보다 짧은 조각은 쉼이 있어도 앞뒤와 붙여 둠
@@ -47,13 +49,43 @@ def clause_break_score(word):
     return 1 if any(core.endswith(e) for e in _KOR_SENTENCE_ENDERS) else 0
 
 
-def split_by_chars(text, max_chars):
-    """글자 수 제한 안에서, 문장 경계가 있으면 거기서 먼저 끊는다."""
-    if len(text) <= max_chars:
+def split_by_chars(text, max_chars, overflow=None):
+    """몇 글자만 넘치면 한 줄로, 넘으면 줄 수는 최소·길이는 고르게 (문장 경계 우대)."""
+    overflow = OVERFLOW_CHARS if overflow is None else overflow
+    limit = max_chars + overflow
+    if len(text) <= limit:
         return [text]
     words = text.split()
     if not words:
         return [text]
+    if max(len(w) for w in words) <= limit:
+        n, inf = len(words), float("inf")
+        for k in range(max(2, -(-len(text) // limit)), n + 1):
+            target = len(text) / k
+            cost = [[inf] * (n + 1) for _ in range(k + 1)]
+            back = [[0] * (n + 1) for _ in range(k + 1)]
+            cost[0][0] = 0
+            for j in range(1, k + 1):
+                for e in range(1, n + 1):
+                    width = -1
+                    for s in range(e - 1, -1, -1):
+                        width += len(words[s]) + 1
+                        if width > limit:
+                            break
+                        if cost[j - 1][s] == inf:
+                            continue
+                        c = cost[j - 1][s] + (width - target) ** 2
+                        if e < n and clause_break_score(words[e - 1]):
+                            c -= CLAUSE_BONUS
+                        if c < cost[j][e]:
+                            cost[j][e], back[j][e] = c, s
+            if cost[k][n] < inf:
+                lines, e = [], n
+                for j in range(k, 0, -1):
+                    s = back[j][e]
+                    lines.append(" ".join(words[s:e]))
+                    e = s
+                return lines[::-1]
     lines, start, n = [], 0, len(words)
     while start < n:
         cur_len, end, last_good = 0, -1, -1
