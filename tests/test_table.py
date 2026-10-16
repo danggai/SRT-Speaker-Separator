@@ -563,3 +563,29 @@ def empty_state_has_no_errors(app):
     app.merge_selected()
     app.add_row()
     eq(len(app.subtitles), 1, "빈 상태에서 줄 추가")
+
+
+@test
+def line_break_mark_acts_like_one_char(app):
+    load_sample(app)
+    s = slot_of(app, 2)
+    app._txt_edit_start(s)
+    ent = app._slot_widgets[s]["content"]
+    ent.delete(0, "end")
+    ent.insert(0, "가나")
+    ent.icursor(1)
+    ent.event_generate("<Shift-Return>")
+    eq(ent.get(), "가 ↵ 나", "Shift+Enter: 줄바꿈 표시")
+    ent.event_generate("<Left>")
+    eq(ent.index("insert"), 1, "← 한 번에 표시 앞으로")
+    ent.event_generate("<Right>")
+    eq(ent.index("insert"), 4, "→ 한 번에 표시 뒤로")
+    ent.event_generate("<BackSpace>")
+    eq(ent.get(), "가나", "Backspace 한 번에 줄바꿈 지움")
+    ent.icursor(1)
+    ent.event_generate("<Shift-Return>")
+    ent.icursor(1)
+    ent.event_generate("<Delete>")
+    eq(ent.get(), "가나", "Delete 한 번에 줄바꿈 지움")
+    ent.event_generate("<BackSpace>")
+    eq(ent.get(), "나", "평소 글자는 그대로 한 글자씩")

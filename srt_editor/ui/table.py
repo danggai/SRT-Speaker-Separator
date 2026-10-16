@@ -297,6 +297,8 @@ class SubtitleTableMixin:
         txt_e.bind("<Control-Return>", lambda e, s=slot_idx: self._txt_jump(s, 1))
         txt_e.bind("<Shift-Tab>",     lambda e, s=slot_idx: self._txt_jump(s, -1))
         txt_e.bind("<Shift-Return>", lambda e: self._txt_insert_br(e.widget))
+        for key in ("BackSpace", "Delete", "Left", "Right"):   # 줄바꿈 표시(3글자)를 한 글자처럼
+            txt_e.bind(f"<{key}>", lambda e, k=key: None if e.state & 0x0005 else self._txt_br_key(e.widget, k))
         txt_e.bind("<Escape>",       lambda e, s=slot_idx: self._txt_cancel(s))
         txt_e.bind("<FocusIn>",  lambda e, s=slot_idx: self._slot_focus_in(s))
 
@@ -432,6 +434,26 @@ class SubtitleTableMixin:
             ent.delete("sel.first", "sel.last")
         ent.insert("insert", _BR)
         return "break"
+
+    @staticmethod
+    def _txt_br_key(ent, key):
+        """커서가 줄바꿈 표시에 닿아 있으면 통째로 지우거나 건너뜀."""
+        if ent.selection_present():
+            return None
+        text, pos = ent.get(), ent.index("insert")
+        for m in re.finditer(re.escape(_BR), text):
+            a, b = m.start(), m.end()
+            if key == "BackSpace" and a < pos <= b or key == "Delete" and a <= pos < b:
+                ent.delete(a, b)
+                ent.icursor(a)
+                return "break"
+            if key == "Left" and a < pos <= b:
+                ent.icursor(a)
+                return "break"
+            if key == "Right" and a <= pos < b:
+                ent.icursor(b)
+                return "break"
+        return None
 
     def _txt_editing_idx(self, slot_idx):
         di = self._slot_widgets[slot_idx].get("_edit_di")
