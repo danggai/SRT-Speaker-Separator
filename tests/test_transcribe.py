@@ -116,7 +116,10 @@ def find_and_replace_one_and_all_with_single_undo(app):
     eq(app.subtitles[0]["text"], "마무의 방송", "바꾸기: 지금 줄만")
     eq(app.subtitles[1]["text"], "오늘 마모가 왔어요")
     eq(app._selected_row_idx, 1, "다음 일치로 이동")
-    app._replace_all()
+    app._replace_entry.focus_force()
+    pump(0.05)
+    app._replace_entry.event_generate("<Shift-Return>")   # 바꿀 말 칸에서 Shift+Enter = 모두 바꾸기
+    pump(0.05)
     eq([s["text"] for s in app.subtitles], ["마무의 방송", "오늘 마무가 왔어요", "평범한 줄", "MAMO 마무", "끝", "마무"])
     app._undo()
     eq([s["text"] for s in app.subtitles][:2], ["마무의 방송", "오늘 마모가 왔어요"], "모두 바꾸기는 실행 취소 한 번에")

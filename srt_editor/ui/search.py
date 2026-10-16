@@ -47,7 +47,7 @@ class SearchMixin:
         rep.pack(side="left", ipady=3, pady=6)
         self._replace_entry = rep
         for text, cmd, tip in (("바꾸기", self._replace_one, "이 줄만 바꾸고 다음으로  [Enter]"),
-                               ("모두 바꾸기", self._replace_all, "일치하는 곳 모두  [Ctrl+Enter]")):
+                               ("모두 바꾸기", self._replace_all, "일치하는 곳 모두  [Shift+Enter]")):
             b = flat_button(bar, text, cmd, bg=BG3, hover="#33333C", padx=10, pady=2)
             b.pack(side="left", padx=(6, 0))
             Tooltip(b, tip, delay=400)
@@ -57,7 +57,8 @@ class SearchMixin:
         ent.bind("<KP_Enter>", lambda e: (self._search_step(1), "break")[1])
         ent.bind("<Shift-Return>", lambda e: (self._search_step(-1), "break")[1])
         rep.bind("<Return>", lambda e: (self._replace_one(), "break")[1])
-        rep.bind("<Control-Return>", lambda e: (self._replace_all(), "break")[1])
+        for seq in ("<Control-Return>", "<Shift-Return>"):
+            rep.bind(seq, lambda e: (self._replace_all(), "break")[1])
         for w in (ent, rep):
             w.bind("<Escape>", lambda e: (self._close_search(), "break")[1])
 
