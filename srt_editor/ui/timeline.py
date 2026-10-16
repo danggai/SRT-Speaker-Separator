@@ -588,7 +588,7 @@ class TimelineMixin:
         # 옮긴다. 재생 중 초당 수십 번 호출되는 이 함수에서 매번 delete("all")
         # 후 전체 아이템을 재생성하는 것이 가장 큰 렉의 원인이었다.
         drag_active = getattr(self, "_wf_sub_drag", None) is not None
-        overlay_key = frozenset(getattr(self, "_selected_rows", ()))
+        overlay_key = (frozenset(getattr(self, "_selected_rows", ())), getattr(self, "_wf_link_hover", None))
         fast_path = (cache_hit and not drag_active
                      and getattr(self, "_wf_last_img", None) is img_tk
                      and getattr(self, "_wf_overlay_key", None) == overlay_key
@@ -618,9 +618,17 @@ class TimelineMixin:
             sel  = getattr(self, "_selected_rows", set())
             # 표시할 건 선택·드래그 중인 자막뿐 (나머지는 배경 이미지에 있음) — 전부 돌면 줄 이동마다 느려짐
             todo = set(sel)
+            link_pair = ()   # 같이 움직이는 경계: [(줄, 'head_start'|'head_end')]
             if drag:
                 todo.add(drag["idx"])
                 todo.update(drag.get("group", {}))
+                if drag["mode"] != "move" and drag.get("link") is not None:
+                    other = "head_end" if drag["mode"] == "head_start" else "head_start"
+                    link_pair = ((drag["idx"], drag["mode"]), (drag["link"], other))
+            elif getattr(self, "_wf_link_hover", None):
+                link_pair = self._wf_link_hover
+            todo.update(i for i, _ in link_pair)
+            link_idx = {i for i, _ in link_pair}
             for i in sorted(j for j in todo if 0 <= j < len(cache)):
                 t_s, t_e = cache[i]
                 if t_s is None or t_e is None:
@@ -640,6 +648,20 @@ class TimelineMixin:
                 moving    = drag and drag["mode"] == "move" and i in drag.get("group", {})
                 ln_top = ln * LANE_H
                 ln_bot = ln_top + LANE_H
+                if i in link_idx:   # 같이 움직이는 두 줄: 보라 테두리 + 맞닿은 경계에 보라 막대
+                    c.create_rectangle(x1, ln_top+1, x2, ln_bot-1, outline=ACCENT, width=1)
+                    bx = x1 if dict(link_pair)[i] == "head_start" else x2
+                    c.create_rectangle(bx - 4, ln_top, bx + 5, ln_bot, fill=ACCENT, outline="", tags="link_bar")
+                    if drag and drag["idx"] == i:
+                        t0 = drag["t_s"] if drag["mode"] == "head_start" else drag["t_e"]
+                        org = cache[i][0] if drag["mode"] == "head_start" else cache[i][1]
+                        if abs(t0 - org) >= 0.005:   # 줄 바로 아래 보라 꼬리표로 옮긴 시간
+                            tid = c.create_text(bx, ln_bot + 3, text=f"{t0 - org:+.2f}초", anchor="n",
+                                                fill="#FFFFFF", font=(theme.FONT_FAMILY, 8), tags="link_delta")
+                            bx0, by0, bx1, by1 = c.bbox(tid)
+                            c.tag_lower(c.create_rectangle(bx0 - 4, by0 - 1, bx1 + 4, by1 + 1, fill=ACCENT,
+                                                           outline="", tags="link_delta"), tid)
+                    continue
                 if not (moving or snapped_s or snapped_e or i in sel):
                     continue   # 나머지는 배경 이미지에 이미 그려짐
                 if moving:
@@ -780,9 +802,34 @@ class TimelineMixin:
         self._wf_last_click_idx   = next_idx
         return next_idx
 
+    def _wf_update_link_hover(self, hit, ctrl):
+        """Ctrl을 누른 채 붙은 경계 위에 있으면 같이 움직일 두 경계를 미리 보여 줌."""
+        pair = None
+        if ctrl and hit["type"] == "handle" and not getattr(self, "_wf_sub_drag", None):
+            j = self._linked_edge(hit["idx"], "s" if hit["mode"] == "head_start" else "e")
+            if j is not None:
+                other = "head_end" if hit["mode"] == "head_start" else "head_start"
+                pair = ((hit["idx"], hit["mode"]), (j, other))
+        if pair != getattr(self, "_wf_link_hover", None):
+            self._wf_link_hover = pair
+            self._pb_redraw()
+
+    def _on_ctrl_key_change(self, pressed):
+        """마우스를 움직이지 않고 Ctrl만 눌렀다 떼도 연결 표시를 바로 갱신."""
+        pos = getattr(self, "_wf_last_motion", None)
+        pb = getattr(self, "_pb_canvas", None)
+        if not pos or pb is None or pb.winfo_containing(*pb.winfo_pointerxy()) is not pb:
+            if not pressed and getattr(self, "_wf_link_hover", None):
+                self._wf_link_hover = None
+                self._pb_redraw()
+            return
+        self._wf_update_link_hover(self._wf_hit_test(*pos), pressed)
+
     def _wf_on_motion(self, event):
         """마우스 위치에 따라 커서 변경 + hover 자막 추적."""
         hit = self._wf_hit_test(event.x, event.y)
+        self._wf_last_motion = (event.x, event.y)
+        self._wf_update_link_hover(hit, bool(event.state & 0x0004))
         if hit["type"] == "handle":
             self._wf_hovered_idx = hit["idx"]
             self._pb_canvas.configure(cursor="sb_h_double_arrow")
