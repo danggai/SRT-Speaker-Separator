@@ -371,8 +371,10 @@ def f_key_plays_next_check_line_and_number_key_moves_on(app):
 @test
 def text_edit_tab_saves_moves_to_next_line_and_plays(app):
     from types import SimpleNamespace as NS
-    from harness import pump, slot_of
+    from harness import pump, slot_of, wait_until
     load_sample(app, n=12, with_wav=True)
+    app.focus_force()   # 앞 테스트 창이 포커스를 가져갔을 수 있음
+    pump(0.05)
     app._select_row(2)
     app._edit_selected_text()
     pump(0.1)
@@ -384,7 +386,7 @@ def text_edit_tab_saves_moves_to_next_line_and_plays(app):
     eq(app.subtitles[2]["text"], "고친 문장", "Tab: 지금 줄 저장")
     eq(app._selected_row_idx, 3, "다음 줄로 이동")
     s3 = slot_of(app, 3)
-    expect(app.focus_get() is app._slot_widgets[s3]["content"], "다음 줄 편집 칸에 커서")
+    wait_until(lambda: app.focus_get() is app._slot_widgets[s3]["content"], 2, "다음 줄 편집 칸에 커서")
     expect(app.player.is_playing and app._review_stop_at == app._ts_cache[3][1] + 0.15, "다음 줄만 재생")
     app._media_play_pause()
     app._slot_widgets[s3]["content"].insert("end", "!")
