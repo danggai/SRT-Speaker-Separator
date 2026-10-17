@@ -235,6 +235,27 @@ def auto_transcribe_loads_lines_and_removes_temp_file(app):
     left = [f for f in set(os.listdir(tempfile.gettempdir())) - before if f.endswith(".srt")]
     eq(left, [], "임시 SRT는 지움")
     expect(app.save_path.endswith(".srt") and app._unsaved, "미디어 이름으로 저장 대기")
+    # 직접 두 번 고친 말은 다음 자동 자막에 바로 반영
+    app.subtitles[0]["text"], app.subtitles[1]["text"] = "지아야 안녕", "지아씨 방송"
+    app._open_replace()
+    app._search_var.set("지아"); app._replace_var.set("지하")
+    app._replace_all()
+    segs[2]["text"] = "지아야 방송 끝"
+    app._auto_transcribe(str(p["wav"]))
+    wait_until(lambda: app.subtitles[-1]["text"] == "지하야 방송 끝", 10, lambda: [s["text"] for s in app.subtitles])
+
+def learned_fixes_need_two_same_fixes_and_skip_kept_words():
+    from srt_editor import learned_fixes as LF
+    store = {}
+    LF.learn(store, "야 지아야 너 뭐해", "야 지하야 너 뭐해")
+    eq(LF.rules(store), {}, "한 번 고친 건 아직 적용 안 함")
+    LF.learn(store, "지아씨가 다 불었어", "지하씨가 다 불었어")
+    eq(LF.rules(store), {"지아": "지하"}, "두 번 똑같이 고치면 적용")
+    eq(LF.apply("고맙다 지아야 지아씨는?", LF.rules(store)), ("고맙다 지하야 지하씨는?", 2), "조사·호칭은 그대로")
+    LF.learn(store, "손해를 봤어", "순해를 봤어")
+    LF.learn(store, "손해야 왔어", "순해야 왔어")
+    LF.learn(store, "그건 손해가 크다 진짜", "그건 손해가 크다 정말")
+    expect("손해" not in LF.rules(store), "고친 줄에서 그대로 둔 적 있는 말(진짜 단어)은 적용 안 함")
 
 
 def whisper_repeat_loops_are_found_and_retried():
@@ -273,7 +294,7 @@ def whisper_repeat_loops_are_found_and_retried():
 
 @test
 def line_building():
-    steps(split_uses_word_times_and_interpolates_missing_ones, char_split_leaves_no_short_tail_and_balances_lines, short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces, hallucinations_and_repeats_are_removed, timing_fix_removes_overlap_and_stretches_tiny_lines, short_gaps_between_lines_are_filled, period_option_adds_or_strips_whisper_period, whisper_repeat_loops_are_found_and_retried)
+    steps(split_uses_word_times_and_interpolates_missing_ones, char_split_leaves_no_short_tail_and_balances_lines, short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces, hallucinations_and_repeats_are_removed, timing_fix_removes_overlap_and_stretches_tiny_lines, short_gaps_between_lines_are_filled, period_option_adds_or_strips_whisper_period, whisper_repeat_loops_are_found_and_retried, learned_fixes_need_two_same_fixes_and_skip_kept_words)
 
 
 @test

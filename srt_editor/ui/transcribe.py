@@ -3,17 +3,38 @@ import os
 import tkinter as tk
 from .. import dialogs as messagebox
 
-from .. import theme, transcript_post
+from .. import learned_fixes, theme, transcript_post
 from ..config import _add_recent_token, _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..speech import _DEFAULT_ASR_MODE, _friendly_transcribe_error
 from ..theme import ACCENT, BG, BG2, BG3, BORDER, FG, FG_DIM, FG_HINT, _apply_dark_titlebar
 from ..widgets import (DarkScrollbar, DimOverlay, PurpleSlider, Segmented, ToggleSwitch, _gradient_bar_rows,
-                       _watch, flat_button, present_dialog, slide)
+                       _watch, flat_button, present_dialog, show_toast, slide)
 
 
 class TranscribeMixin:
     """자막 자동 생성(음성 인식)과 고유명사 사전."""
+
+    def _learn_fixes(self, pairs):
+        """직접 고친 줄들 [(전, 후)]에서 자주 틀리는 말을 배움 (설정: 고친 말 배우기)."""
+        if not self._opt("learn_fixes"):
+            return
+        cfg = _load_config()
+        store = cfg.get("learned_fixes") or {}
+        if any([learned_fixes.learn(store, a, b) for a, b in pairs if a != b]):
+            cfg["learned_fixes"] = store
+            _save_config(cfg)
+
+    def _apply_learned_fixes(self, lines):
+        """자동 자막 줄에 배운 고침 적용. 바꾼 곳 수."""
+        if not self._opt("learn_fixes"):
+            return 0
+        rule = learned_fixes.rules(_load_config().get("learned_fixes"))
+        total = 0
+        for ln in lines if rule else ():
+            ln["text"], n = learned_fixes.apply(ln["text"], rule)
+            total += n
+        return total
 
     def _open_auto_transcribe(self):
         """툴바 '자동 자막': 열린 미디어로 자막을 새로 만든다 (있던 자막은 바뀜)."""
@@ -274,6 +295,7 @@ class TranscribeMixin:
                 self.after(0, lambda: _set("자막 줄 나누는 중...", 72 if with_diarize else 92))
                 split_segs = transcript_post.build_lines(
                     segments, getattr(self, "_transcribe_max_chars", transcript_post.DEFAULT_MAX_CHARS), getattr(self, "_transcribe_period", False))
+                _fixed = self._apply_learned_fixes(split_segs)
 
                 _auto = None
                 if with_diarize and split_segs:
@@ -332,6 +354,8 @@ class TranscribeMixin:
                     self.filepath  = self.save_path
                     self._unsaved  = True
                     self._set_doc_title(_base)
+                    if _fixed:
+                        show_toast(self, f"자주 고친 말 {_fixed}곳을 바로잡았어요", duration_ms=3000)
                 self.after(0, _done)
 
             except Exception as e:

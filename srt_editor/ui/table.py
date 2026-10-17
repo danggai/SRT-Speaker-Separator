@@ -769,6 +769,7 @@ class SubtitleTableMixin:
         val = trim_text(re.sub(r" ?↵ ?", "\n", wi["txt_var"].get()))
         if self.subtitles[di].get("text", "") != val:
             self._push_undo()   # 실제로 바뀐 경우에만 undo 스냅샷 기록
+            self._learn_fixes([(self.subtitles[di].get("text", ""), val)])
             self.subtitles[di]["text"] = val
             self._unsaved = True
             if hasattr(self, "_pb_redraw"):

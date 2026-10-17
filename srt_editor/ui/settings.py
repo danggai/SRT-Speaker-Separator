@@ -202,6 +202,7 @@ class SettingsMixin:
                  "new_sub_len", "split_text", "lock_timeline", "link_edges"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
+        "transcribe": ("learn_fixes",),
     }
 
     def _reset_settings_section(self, section):
@@ -475,7 +476,7 @@ class SettingsMixin:
     def _settings_keys():
         """내보내기·불러오기 대상 설정 키."""
         return set(OPTION_DEFAULTS) | {
-            "show_key_hints", "speaker_colors", "proper_nouns", "proper_nouns_enabled",
+            "show_key_hints", "speaker_colors", "proper_nouns", "proper_nouns_enabled", "learned_fixes",
             "transcribe_max_chars", "transcribe_period",
             "transcribe_language", "diarize_mode", "diarize_device", "diarize_batch",
             "diarize_sensitivity", "diarize_sens_scale", "diarize_spk_exact", "num_speakers",
@@ -637,6 +638,29 @@ class SettingsMixin:
         def _refresh_pn():
             btn.configure(text=f"{len(self._proper_nouns or [])}개  ·  관리")
         _refresh_pn()
+
+        # 고친 말 배우기
+        _, right = self._settings_row(card, "✎", "고친 말 배우기",
+                                      "두 번 이상 고친 말은 다음 자동 자막에 반영")
+        lf_btn = flat_button(right, "", lambda: _clear_lf(), bg=BG3, hover="#33333C",
+                             font=(theme.FONT_FAMILY, 9), padx=10, pady=4)
+        lf_btn.pack(side="left", padx=(0, 10))
+        lf_var = tk.BooleanVar(value=bool(self._opt("learn_fixes")))
+        ToggleSwitch(right, lf_var, lambda: self._set_opt("learn_fixes", bool(lf_var.get()))).pack(side="left")
+
+        def _refresh_lf():
+            from .. import learned_fixes
+            lf_btn.configure(text=f"{len(learned_fixes.rules(_load_config().get('learned_fixes')))}개  ·  지우기")
+
+        def _clear_lf():
+            if not messagebox.askyesno("고친 말 지우기", "배운 고친 말을 모두 지울까요?", parent=self._settings_win,
+                                       yes="지우기", no="취소"):
+                return
+            cfg = _load_config()
+            cfg.pop("learned_fixes", None)
+            _save_config(cfg)
+            _refresh_lf()
+        _refresh_lf()
 
     # ── 섹션: 화자 ────────────────────────────
     def _build_speaker_section(self, parent):

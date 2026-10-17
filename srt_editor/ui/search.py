@@ -95,6 +95,7 @@ class SearchMixin:
         new = trim_text(rx.sub(lambda m: self._replace_var.get(), sub.get("text", "")))
         if new != sub.get("text", ""):
             self._push_undo()
+            self._learn_fixes([(sub.get("text", ""), new)])
             sub["text"] = new
             self._after_replace([idx])
         else:
@@ -106,17 +107,19 @@ class SearchMixin:
         if rx is None:
             return
         rep = self._replace_var.get()
-        changed, count = [], 0
+        changed, count, pairs = [], 0, []
         for i, s in enumerate(self.subtitles):
             new, n = rx.subn(lambda m: rep, s.get("text", ""))
             new = trim_text(new)
             if n:
                 if not changed:
                     self._push_undo()
+                pairs.append((s.get("text", ""), new))
                 s["text"] = new
                 changed.append(i)
                 count += n
         if changed:
+            self._learn_fixes(pairs)
             self._after_replace(changed)
         show_toast(self, f"{count}곳을 바꿨어요" if count else "바꿀 곳이 없어요")
 
