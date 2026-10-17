@@ -1,7 +1,7 @@
 """자동 자막: 인식 결과를 자막 줄로 나누기·다듬기와 불러오기."""
 import os
 
-from harness import steps, ctx, eq, expect, fresh_dir, load_sample, test, wait_until
+from harness import steps, ctx, eq, expect, fresh_dir, load_sample, near, test, wait_until
 
 
 def _tp():
@@ -48,7 +48,10 @@ def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
     lines = T.build_lines([seg], 20)
     eq([l["text"] for l in lines], ["아 그냥 딱 봤는데!", "이쁘다 진짜"],
        "20자 안이어도 문장부호에서 나누고, 4자 미만 조각('아', '이쁘다')은 쉼이 있어도 붙여 둠")
-    eq(lines[1]["start"], 1.8)
+    near(lines[1]["start"], 1.75, 1e-6, "단어 시작보다 0.05초 일찍 시작")
+    near(lines[0]["start"], 0.0, 1e-6, "0초보다 앞으로는 안 감")
+    lines = T.lead_in([{"start": 1.0, "end": 2.0}, {"start": 2.02, "end": 3.0}, {"start": 3.0, "end": 4.0}])
+    eq([round(l["start"], 3) for l in lines], [0.95, 2.0, 3.0], "앞 줄 끝보다 앞으로는 안 감, 붙은 줄은 그대로")
     seg2 = dict(seg, words=[dict(w) for w in seg["words"]])
     seg2["words"][4]["word"] = "정말이쁘다"
     eq([l["text"] for l in T.build_lines([seg2], 20)], ["아 그냥 딱 봤는데!", "정말이쁘다", "진짜"],
@@ -66,7 +69,8 @@ def hallucinations_and_repeats_are_removed():
     lines = T.build_lines(segs, 25)
     eq([l["text"] for l in lines], ["안녕하세요 여러분", "감사합니다", "아 진짜", "MBC 뉴스 김철수입니다"],
        "지어낸 문장은 빼고, 실제로 말할 법한 '감사합니다'와 긴 문장은 남김")
-    eq((lines[2]["start"], lines[2]["end"]), (8, 12), "반복 줄은 하나로 합치고 시간은 이어 붙임")
+    eq((round(lines[2]["start"], 3), round(lines[2]["end"], 3)), (7.95, 12.95),
+       "반복 줄은 하나로 합치고 시간은 이어 붙임 (시작 0.05초 앞당김, 끝은 다음 줄까지 메움)")
 
 
 def timing_fix_removes_overlap_and_stretches_tiny_lines():
@@ -81,8 +85,8 @@ def short_gaps_between_lines_are_filled():
     lines = T.build_lines([{"start": 0.0, "end": 1.0, "text": "첫 번째 줄이에요"},
                            {"start": 1.4, "end": 2.0, "text": "두 번째 줄이에요"},
                            {"start": 4.0, "end": 5.0, "text": "한참 뒤 줄이에요"}])
-    eq([(l["start"], l["end"]) for l in lines], [(0.0, 1.4), (1.4, 2.0), (4.0, 5.0)],
-       "1초 미만 빈틈은 앞 줄을 늘려 메우고, 긴 쉼은 그대로")
+    eq([(round(l["start"], 3), round(l["end"], 3)) for l in lines], [(0.0, 1.35), (1.35, 2.0), (3.95, 5.0)],
+       "1초 미만 빈틈은 앞 줄을 늘려 메우고, 긴 쉼은 그대로 (시작은 0.05초 앞당김)")
 
 
 def period_option_adds_or_strips_whisper_period():

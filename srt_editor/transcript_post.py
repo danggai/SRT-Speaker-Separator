@@ -15,6 +15,7 @@ _DANGLING_WORDS = {
 }
 PAUSE_SPLIT = 0.25   # 단어 사이 쉼이 이 이상이면 글자 수와 상관없이 줄을 나눔 (초)
 FILL_GAP = 1.0      # 줄 사이 빈틈이 이보다 짧으면 앞 줄을 늘려 메움 (초)
+LEAD_IN = 0.05      # 줄 시작을 이만큼 앞당김 (초)
 MIN_PIECE_CHARS = 4  # 이보다 짧은 조각은 쉼이 있어도 앞뒤와 붙여 둠
 
 # 한국어 종결어미 (문장·절 경계를 대략 판단)
@@ -238,6 +239,16 @@ def fix_timing(lines, min_dur=MIN_DUR):
     return lines
 
 
+def lead_in(lines, lead=None):
+    """줄 시작을 조금 앞당김 (앞 줄 끝보다 앞으로는 안 감). 직접 고친 자막은 말보다 살짝 일찍 시작."""
+    lead = LEAD_IN if lead is None else lead
+    prev_end = 0.0
+    for l in lines:
+        l["start"] = max(prev_end, l["start"] - lead, 0.0) if prev_end < l["start"] else l["start"]
+        prev_end = l["end"]
+    return lines
+
+
 def fill_gaps(lines, max_gap=None):
     """다음 줄과 사이가 max_gap초보다 짧으면 앞 줄 끝을 다음 줄 시작까지 늘린다 (자막이 깜빡이지 않게)."""
     max_gap = FILL_GAP if max_gap is None else max_gap
@@ -258,4 +269,4 @@ def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False):
                 l["text"] = finish_text(l["text"], add_period)
                 if l["text"] and not is_hallucination(l["text"]):
                     lines.append(l)
-    return fill_gaps(fix_timing(drop_repeats(lines)))
+    return fill_gaps(lead_in(fix_timing(drop_repeats(lines))))
