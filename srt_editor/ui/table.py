@@ -1400,6 +1400,8 @@ class SubtitleTableMixin:
         """단독 선택 — 다중 선택 해제 후 idx만 선택. defer_seek: 재생 위치 이동을 잠시 미룸 (키 연타용)."""
         prev       = getattr(self, "_selected_row_idx", None)
         old_multi  = set(getattr(self, "_selected_rows", set()))
+        if not (0 <= idx < len(self.subtitles)) or self.subtitles[idx] is not getattr(self, "_just_split", None):
+            self._just_split = None
         self._selected_row_idx = idx
         self._last_focused_idx = idx
         self._selected_rows    = {idx}

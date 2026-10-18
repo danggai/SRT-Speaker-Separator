@@ -243,6 +243,8 @@ class SRTEditor(
         self.bind("<Alt-Right>",       lambda e: self._nudge_edge("s", 1, e))
         self.bind("<Alt-Shift-Left>",  lambda e: self._nudge_edge("e", -1, e))
         self.bind("<Alt-Shift-Right>", lambda e: self._nudge_edge("e", 1, e))
+        self.bind("<Alt-Up>",   lambda e: self._move_boundary_word(True))    # 윗줄과 단어 하나 주고받기
+        self.bind("<Alt-Down>", lambda e: self._move_boundary_word(False))
         self.bind("<Control-Left>",  self._on_left_key)    # 재생 위치 0.1초 이동
         self.bind("<Control-Right>", self._on_right_key)
         try:

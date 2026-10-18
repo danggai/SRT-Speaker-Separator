@@ -70,6 +70,9 @@ class TipsMixin:
             return [("M", "합치기"), ("1~9", "화자"), ("Ctrl+D", "삭제"), ("Esc", "선택 해제")]
         if getattr(self, "_selected_row_idx", None) is None:
             return [("↑↓", "줄 고르기"), ("Space", "재생")]
+        sel = self._selected_row_idx
+        if getattr(self, "_just_split", None) is not None and sel < len(self.subtitles) and self.subtitles[sel] is self._just_split:
+            return [("Alt+↑", "첫 단어 윗줄로"), ("Alt+↓", "윗줄 끝 단어 가져오기"), ("Enter", "글자 고치기"), ("Ctrl+Z", "나누기 취소")]
         if self.player.is_playing:
             return [("Q", "시작 찍기"), ("W", "끝 찍고 다음 줄"), ("S", "여기서 나누기"), ("Space", "멈춤")]
         pairs = [("Space", "재생"), ("Enter", "글자 고치기"), ("Q·W", "시간 찍기"), ("1~9", "화자")]

@@ -284,6 +284,7 @@ class EditingMixin:
         if "_lane" in sub:
             new_sub["_lane"] = sub["_lane"]
         self.subtitles.insert(idx + 1, new_sub)
+        self._just_split = new_sub   # 아래 단축키 줄에 단어 옮기기 안내
 
         self._rebuild_ts_cache()
         self._renumber_rows(idx)
@@ -295,6 +296,31 @@ class EditingMixin:
         self._wf_img_cache = None
         self._pb_redraw()
         return True
+
+    def _move_boundary_word(self, up):
+        """Alt+↑: 이 줄 첫 단어를 윗줄 끝으로, Alt+↓: 윗줄 마지막 단어를 이 줄 앞으로 (나누기가 한 단어 어긋났을 때)."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        idx = getattr(self, "_selected_row_idx", None)
+        if idx is None or not (1 <= idx < len(self.subtitles)):
+            return "break"
+        prev, cur = self.subtitles[idx - 1], self.subtitles[idx]
+        a, b = prev.get("text", "").split(" "), cur.get("text", "").split(" ")
+        src, dst = (b, a) if up else (a, b)
+        if len([w for w in src if w]) < 2:   # 한 줄을 비우지는 않음
+            return "break"
+        self._push_undo()
+        if up:
+            a.append(b.pop(0))
+        else:
+            b.insert(0, a.pop())
+        prev["text"], cur["text"] = " ".join(a).strip(), " ".join(b).strip()
+        self._unsaved = True
+        for j in (idx - 1, idx):
+            self._redraw_slot_for(j)
+        self._wf_img_cache = None
+        self._pb_redraw()
+        return "break"
 
     # ── 키보드로 시간 맞추기 ───────────────────
     _NUDGE_SEC = 0.05

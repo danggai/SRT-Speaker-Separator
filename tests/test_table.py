@@ -284,6 +284,27 @@ def split_subtitle_at_position(app):
     eq(len(app.subtitles), 24)
 
 
+def alt_arrows_move_one_word_across_split(app):
+    from harness import app_key
+    load_sample(app)
+    app.subtitles[2]["text"] = "하나 둘 셋 넷 다섯 여섯"
+    app._rebuild_ts_cache()
+    app.split_subtitle_at(2, 6.0)
+    eq(app._selected_row_idx, 3, "나누면 뒷줄 선택")
+    expect(("Alt+↑", "첫 단어 윗줄로") in (app._ctx_key_pairs() or []), "나눈 직후 단축키 줄에 안내")
+    front, back = app.subtitles[2]["text"], app.subtitles[3]["text"]
+    app_key("<Alt-Up>")
+    eq((app.subtitles[2]["text"], app.subtitles[3]["text"]), (front + " " + back.split()[0], " ".join(back.split()[1:])),
+       "Alt+↑: 첫 단어를 윗줄 끝으로")
+    app._undo()
+    eq((app.subtitles[2]["text"], app.subtitles[3]["text"]), (front, back), "실행 취소 한 번에 되돌림")
+    app_key("<Alt-Down>")
+    eq(app.subtitles[3]["text"].split()[0], front.split()[-1], "Alt+↓: 윗줄 끝 단어를 가져옴")
+    app.subtitles[2]["text"] = "하나"
+    app_key("<Alt-Down>")
+    eq(app.subtitles[2]["text"], "하나", "한 줄을 비우지는 않음")
+
+
 def split_keeps_layer_of_original(app):
     load_sample(app)
     app._wf_add_layer()      # 레이어가 2개 이상이어야 1번 레이어가 유효해요
@@ -586,7 +607,7 @@ def delete_copy_paste(app):
 
 @test
 def split_and_merge(app):
-    steps(split_subtitle_at_position, split_keeps_layer_of_original, split_time_never_produces_invalid_timestamp, merge_selected_rows, merge_single_selection_merges_with_next_and_last_row_is_ignored)
+    steps(split_subtitle_at_position, alt_arrows_move_one_word_across_split, split_keeps_layer_of_original, split_time_never_produces_invalid_timestamp, merge_selected_rows, merge_single_selection_merges_with_next_and_last_row_is_ignored)
 
 
 @test
