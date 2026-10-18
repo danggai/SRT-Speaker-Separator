@@ -15,13 +15,14 @@ _KEY_FG    = "#C9C9D4"   # 단축키 숫자
 from ..widgets import (DarkScrollbar, PopupMenu, Tooltip, _ColorPickerDialog, _circle_image,
                        rounded_rect_image, show_toast)
 
-# Shift+1~9 키 이름 (10~18번째 화자)
-SHIFT_DIGITS = ("exclam", "at", "numbersign", "dollar", "percent", "asciicircum", "ampersand", "asterisk", "parenleft")
+# Shift+1~0 키 이름 (11~20번째 화자)
+SHIFT_DIGITS = ("exclam", "at", "numbersign", "dollar", "percent", "asciicircum", "ampersand", "asterisk", "parenleft",
+                "parenright")
 
 
 def speaker_key_label(i):
-    """i번째(0부터) 화자의 단축키 표시: 1~9, ⇧1~⇧9, 그 뒤는 없음."""
-    return str(i + 1) if i < 9 else f"⇧{i - 8}" if i < 18 else ""
+    """i번째(0부터) 화자의 단축키 표시: 1~9·0, ⇧1~⇧0, 그 뒤는 없음."""
+    return str((i + 1) % 10) if i < 10 else f"⇧{(i - 9) % 10}" if i < 20 else ""
 
 
 def _draw_key_badge(badge, label):
@@ -543,15 +544,15 @@ class SpeakerMixin:
         self._fill_slots(self._vscroll_top)
 
     def _on_speaker_key(self, event):
-        """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자, Shift+1~9 → 10~18번째. 선택한 줄에 적용."""
+        """화자 지정 단축키: ` → (없음), 1~9·0 → 1~10번째 화자, Shift+1~0 → 11~20번째. 선택한 줄에 적용."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         self._tip_learned("speaker")
         key = event.keysym
         if key == "grave":
             val = ""
-        elif (key.isdigit() and key != "0") or key in SHIFT_DIGITS:
-            spk_idx = int(key) - 1 if key.isdigit() else 9 + SHIFT_DIGITS.index(key)
+        elif key.isdigit() or key in SHIFT_DIGITS:
+            spk_idx = (int(key) - 1) % 10 if key.isdigit() else 10 + SHIFT_DIGITS.index(key)
             if spk_idx >= len(self.speakers):
                 return
             val = self.speakers[spk_idx]

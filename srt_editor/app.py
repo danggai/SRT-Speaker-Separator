@@ -225,9 +225,9 @@ class SRTEditor(
         self.bind("<Prior>",     self._on_page_up)     # Page Up
         self.bind("<Next>",      self._on_page_down)   # Page Down
         self.bind("<grave>",     self._on_speaker_key)
-        for _k in "123456789":
+        for _k in "1234567890":
             self.bind(_k, self._on_speaker_key)
-        for _k in SHIFT_DIGITS:   # Shift+1~9: 10~18번째 화자
+        for _k in SHIFT_DIGITS:   # Shift+1~0: 11~20번째 화자
             self.bind(f"<{_k}>", self._on_speaker_key)
         self.bind("m", self.merge_selected)
         self.bind("M", self.merge_selected)

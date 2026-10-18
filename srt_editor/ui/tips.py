@@ -19,7 +19,7 @@ TIPS = {
     "merge": "M 키로도 합칠 수 있어요",
     "add": "Ctrl+A로도 자막을 추가할 수 있어요",
     "delete": "Delete·Ctrl+D로도 지울 수 있어요",
-    "speaker": "숫자키 1~9로도 화자를 정할 수 있어요",
+    "speaker": "숫자키 1~0으로도 화자를 정할 수 있어요",
     "play": "Space로 재생·멈춤",
 }
 
@@ -67,7 +67,7 @@ class TipsMixin:
                         ("Shift+←→", "5초 이동")]
             return [("Shift+↑↓", "여러 줄 고르기"), ("Shift+클릭", "범위 고르기"), ("Shift+←→", "5초 이동")]
         if len(getattr(self, "_selected_rows", ())) > 1:
-            return [("M", "합치기"), ("1~9", "화자"), ("Ctrl+D", "삭제"), ("Esc", "선택 해제")]
+            return [("M", "합치기"), ("1~0", "화자"), ("Ctrl+D", "삭제"), ("Esc", "선택 해제")]
         if getattr(self, "_selected_row_idx", None) is None:
             return [("↑↓", "줄 고르기"), ("Space", "재생")]
         sel = self._selected_row_idx
@@ -75,7 +75,7 @@ class TipsMixin:
             return [("Alt+↑", "첫 단어 윗줄로"), ("Alt+↓", "윗줄 끝 단어 가져오기"), ("Enter", "글자 고치기"), ("Ctrl+Z", "나누기 취소")]
         if self.player.is_playing:
             return [("Q", "시작 찍기"), ("W", "끝 찍고 다음 줄"), ("S", "여기서 나누기"), ("Space", "멈춤")]
-        pairs = [("Space", "재생"), ("Enter", "글자 고치기"), ("Q·W", "시간 찍기"), ("1~9", "화자")]
+        pairs = [("Space", "재생"), ("Enter", "글자 고치기"), ("Q·W", "시간 찍기"), ("1~0", "화자")]
         if any(s.get("_check") for s in self.subtitles):
             pairs.append(("F", "? 줄 듣기"))
         return pairs

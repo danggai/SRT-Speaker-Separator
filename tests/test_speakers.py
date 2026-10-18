@@ -394,27 +394,30 @@ def sidebar_list_and_click(app):
     steps(sidebar_lists_speakers_in_order_with_counts, sidebar_empty_state, sidebar_click_assigns_to_all_selected_rows, sidebar_click_single_row_and_no_selection)
 
 
-def shift_number_keys_assign_10th_to_18th_speaker(app):
+def number_keys_0_and_shift_assign_10th_to_20th_speaker(app):
     from harness import app_key, pump
     from srt_editor.ui.speakers import speaker_key_label
     load_sample(app)
     app.speakers[:] = [f"화자{k}" for k in range(1, 16)]
     app._render_speakers()
     pump(0.1)
+    app._select_row(1, seek=False)
+    app_key("0")
+    eq(app.subtitles[1]["speaker"], "화자10", "0 = 10번째 화자")
     app._select_row(2, seek=False)
     app_key("<exclam>")
-    eq(app.subtitles[2]["speaker"], "화자10", "Shift+1 = 10번째 화자")
+    eq(app.subtitles[2]["speaker"], "화자11", "Shift+1 = 11번째 화자")
     app._select_row(3, seek=False)
     before = app.subtitles[3]["speaker"]
     app_key("<asterisk>")
-    eq(app.subtitles[3]["speaker"], before, "Shift+8 = 17번째 화자가 없으면 그대로")
-    eq([speaker_key_label(i) for i in (0, 8, 9, 17, 18)], ["1", "9", "⇧1", "⇧9", ""], "목록 배지")
+    eq(app.subtitles[3]["speaker"], before, "Shift+8 = 18번째 화자가 없으면 그대로")
+    eq([speaker_key_label(i) for i in (0, 8, 9, 10, 19, 20)], ["1", "9", "0", "⇧1", "⇧0", ""], "목록 배지")
 
 
 @test
 def number_keys_assign(app):
     steps(number_keys_assign_selection_and_backtick_clears, number_key_ignored_while_typing, advance_after_assign_option,
-          shift_number_keys_assign_10th_to_18th_speaker)
+          number_keys_0_and_shift_assign_10th_to_20th_speaker)
 
 
 @test
