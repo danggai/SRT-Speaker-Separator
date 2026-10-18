@@ -486,3 +486,66 @@ def playback_keys(app):
 @test
 def drawing(app):
     steps(playhead_move_does_not_relayout_window, key_hint_badges_cover_timeline_buttons, redraw_variants_do_not_fail, media_label_shows_file_name, edited_text_shows_on_timeline_right_away)
+
+
+def _write_multitrack(path, seconds=20):
+    """오디오 트랙 3개(이름 포함)짜리 영상 파일: 트랙마다 소리 나는 구간이 다름."""
+    import av
+    import numpy as np
+    rate = 16000
+    with av.open(str(path), "w") as c:
+        streams = []
+        for name in ("전체", "마이크", "디스코드"):
+            s = c.add_stream("pcm_s16le", rate=rate, layout="mono")
+            s.metadata["title"] = name
+            streams.append(s)
+        t = np.arange(seconds * rate) / rate
+        for k, s in enumerate(streams):
+            on = ((t // 2) % 3 == k) | (k == 0)
+            sig = (np.sin(2 * np.pi * 440 * t) * 0.5 * on * 32767).astype(np.int16)
+            for i in range(0, len(sig), rate):
+                fr = av.AudioFrame.from_ndarray(sig[None, i:i + rate], format="s16", layout="mono")
+                fr.rate = rate
+                for p in s.encode(fr):
+                    c.mux(p)
+            for p in s.encode(None):
+                c.mux(p)
+    return path
+
+
+@test
+def multitrack_video_shows_track_rows_and_saves_choice(app):
+    from harness import ctx, write_srt_file, sample_subs
+    d = fresh_dir()
+    vid = _write_multitrack(d / "방송.mkv")
+    srt = write_srt_file(d / "방송.srt", sample_subs(6))
+    app._open_paths([str(srt), str(vid)])
+    wait_until(lambda: len(app._wf_tracks) == 3 and set(app._wf_stats) >= {1, 2}, 60,
+               lambda: (app._wf_tracks, list(app._wf_stats), app._wf_loading))
+    eq(app._wf_row_tracks(), [0, 1, 2], "트랙이 여러 개면 처음부터 3줄")
+    eq(app._wf_tracks, ["전체", "마이크", "디스코드"], "OBS 트랙 이름")
+    pump(0.2)
+    labels = [app._pb_canvas.itemcget(i, "text") for i in app._pb_canvas.find_withtag("wf_track")]
+    eq(labels, ["트랙 1 · 전체", "트랙 2 · 마이크", "트랙 3 · 디스코드"], "줄마다 트랙 이름")
+    import numpy as np
+    m1, m2 = app._wf_stats[1][0], app._wf_stats[2][0]
+    expect(m1[250:350].max() > 0.3 and m1[50:150].max() < 0.01, "트랙 2는 2~4초에만 소리 (트랙마다 따로 읽음)")
+    expect(m2[450:550].max() > 0.3 and m2[250:350].max() < 0.01, "트랙 3은 4~6초에 소리")
+    app._wf_set_rows([0, 2])   # 우클릭 '이 줄 빼기'와 같은 동작
+    eq(app._wf_row_tracks(), [0, 2])
+    app._unsaved = True
+    app._do_write_srt(str(srt))
+    app._close_to_home()
+    pump(0.2)
+    app._open_paths([str(srt), str(vid)])
+    wait_until(lambda: len(app._wf_tracks) == 3 and app._wf_row_tracks() == [0, 2], 60,
+               lambda: (app._wf_tracks, app._wf_row_tracks()))
+    expect(not ctx.tk_errors, f"Tk 오류 {ctx.tk_errors[:1]}")
+
+
+@test
+def single_track_media_keeps_one_waveform_row(app):
+    load_sample(app, with_wav=True)
+    wait_until(lambda: app._waveform is not None, 20)
+    eq(app._wf_row_tracks(), [0], "트랙이 하나면 지금처럼 한 줄")
+    eq(app._pb_canvas.find_withtag("wf_track"), (), "트랙 이름 없음")

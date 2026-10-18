@@ -229,6 +229,8 @@ class FileMixin:
             meta["sub_lanes"] = [s.get("_lane", 0) if isinstance(s.get("_lane"), int) else 0
                                  for s in self.subtitles]
         # 화자 분석이 자동으로 정한 줄·확인 필요 줄 (다시 분석할 때 직접 지정한 줄만 기준으로 쓰도록)
+        if len(getattr(self, "_wf_tracks", ())) > 1:   # 파형 줄별 트랙
+            meta["wave_tracks"] = self._wf_row_tracks()
         auto = [i for i, s in enumerate(self.subtitles) if s.get("_auto")]
         if auto:
             meta["auto_lines"] = auto
@@ -238,6 +240,13 @@ class FileMixin:
         """메타의 레이어 수와 자막별 레이어를 복원."""
         n = meta.get("lanes", 1)
         self._wf_manual_lanes = max(1, min(n, self._WF_ABS_MAX_LANES)) if isinstance(n, int) else 1
+        wt = meta.get("wave_tracks")
+        self._wf_rows_saved = [t for t in wt if isinstance(t, int)] if isinstance(wt, list) else None
+        tracks = getattr(self, "_wf_tracks", ())
+        if self._wf_rows_saved and len(tracks) > 1:   # 미디어를 먼저 열었으면 바로 적용
+            rows = [t for t in self._wf_rows_saved if t < len(tracks)][:self._WF_MAX_ROWS]
+            if rows:
+                self._wf_set_rows(rows)
         sub_lanes = meta.get("sub_lanes")
         if isinstance(sub_lanes, list) and len(sub_lanes) == len(self.subtitles):
             for sub, ln in zip(self.subtitles, sub_lanes):

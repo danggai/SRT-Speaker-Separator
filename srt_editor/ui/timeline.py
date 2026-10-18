@@ -6,7 +6,7 @@ from .. import theme
 from ..config import _load_config, _save_config
 from ..srt_io import format_srt_time
 from ..theme import ACCENT, BG2, FG, FG_DIM, MEDIA_BG
-from ..widgets import IconButton, Tooltip, flat_button
+from ..widgets import IconButton, PopupMenu, Tooltip, flat_button
 
 
 class TimelineMixin:
@@ -63,6 +63,9 @@ class TimelineMixin:
         self._pb_dragging  = False
         self._waveform = None   # 10ms 조각별 (최대값, 제곱평균) 배열 쌍
         self._wf_loading   = False
+        self._wf_tracks = []      # 미디어의 오디오 트랙 이름들 (2개 이상이면 파형을 트랙별 여러 줄로)
+        self._wf_rows = [0]       # 파형 줄마다 보여 줄 트랙 번호
+        self._wf_stats = {}       # 트랙 번호 → 파형 (0번은 _waveform)
 
         # 줌/스크롤 상태: _wf_zoom=1.0~10.0, _wf_offset=0.0~1.0 (좌측 비율)
         self._wf_zoom   = 1.0
@@ -264,6 +267,12 @@ class TimelineMixin:
     _WF_ABS_MAX_LANES = 6   # 수동으로 추가할 수 있는 레인 수의 절대 상한
     _WF_LANE_H    = 22    # 자막 레인(줄) 하나의 높이
     _PB_BASE_CANVAS_H = 100   # 자막 1레인 기준 재생바 캔버스 기본 높이
+    _WF_ROW_EXTRA = 30        # 파형 줄(트랙)이 하나 늘 때마다 늘리는 높이
+    _WF_MAX_ROWS = 3
+
+    def _wf_row_tracks(self):
+        """파형 줄마다 보여 줄 트랙 번호 (트랙이 하나면 [0])."""
+        return list(self._wf_rows) if len(getattr(self, "_wf_tracks", ())) > 1 and self._wf_rows else [0]
     _TRACK_HDR_W = 86         # 재생바 왼쪽 트랙 헤더(레이어 이름·추가·제거) 너비
 
     def _compute_subtitle_lanes(self, cache):
@@ -382,7 +391,8 @@ class TimelineMixin:
         # (그렇지 않으면 파형 영역이 레인 수만큼 눌려서 거의 안 보이게 됨).
         # cache_key를 만들기 전에 확정해야 리사이즈된 높이로 이미지 캐시가
         # 올바르게 갱신된다.
-        target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H
+        wf_rows = self._wf_row_tracks()
+        target_ch = self._PB_BASE_CANVAS_H + (num_lanes - 1) * LANE_H + (len(wf_rows) - 1) * self._WF_ROW_EXTRA
         if int(float(c.cget("height"))) != target_ch:   # winfo_height는 테두리 때문에 항상 조금 달라 매 프레임 재배치됨
             # 재생바·트랙 헤더 높이를 함께 바꾸고 즉시 배치 (깜빡임 방지)
             c.configure(height=target_ch)
@@ -405,7 +415,8 @@ class TimelineMixin:
 
         # ── 캐시 키 ───────────────────────────
         cache_key = (cw, ch, round(self._wf_zoom, 4), round(self._wf_offset, 6),
-                     id(getattr(self, "_waveform", None)),
+                     (id(getattr(self, "_waveform", None)), tuple(wf_rows),
+                      tuple(id(self._wf_stats.get(t)) for t in wf_rows)),
                      tuple((s.get("speaker",""), s.get("timestamp",""), s.get("text",""))
                             for s in (self.subtitles or [])),
                      round(dur_, 2),
@@ -519,20 +530,31 @@ class TimelineMixin:
             if not base_ok:
                 # ── B. 파형 (상단 채널 ↑ + 하단 채널 ↓) ──
                 draw.rectangle([0, wf_top, cw, wf_bot], fill="#0D0D14")
-                # 중앙 분리선
-                draw.line([0, wf_mid, cw, wf_mid], fill="#1A1A28", width=1)
+                row_h = wf_h // len(wf_rows)
+                bands = []   # 줄마다 (위, 아래, 가운데, 파형)
+                for r, t in enumerate(wf_rows):
+                    top = wf_top + r * row_h
+                    bot = wf_bot if r == len(wf_rows) - 1 else top + row_h
+                    mid = (top + bot) // 2
+                    bands.append((top, bot, mid, self._waveform if t == 0 else self._wf_stats.get(t)))
+                    draw.line([0, mid, cw, mid], fill="#1A1A28", width=1)   # 중앙 분리선
+                    if r:
+                        draw.line([0, top, cw, top], fill="#232330", width=1)   # 줄 구분선
 
                 wf = getattr(self, "_waveform", None)
                 if wf is not None:
                     import numpy as np
                     from ..waveform import columns
-                    # 보이는 구간을 초 단위로 잘라 10ms 조각에서 바로 계산 (확대해도 소리와 같은 자리)
-                    col_amp = columns(wf, start_r * dur_, end_r * dur_, cw)
-                    half_h = wf_h // 2 - 2   # 채널 하나의 최대 높이
-                    px = (col_amp * half_h).astype(np.int32)
                     ys = np.arange(wf_top, wf_bot)[:, None]
-                    on = (((ys >= wf_mid - px) & (ys < wf_mid)) |
-                          ((ys >= wf_mid + 1) & (ys < np.minimum(wf_bot, wf_mid + px + 1))))
+                    on = np.zeros((wf_bot - wf_top, cw), bool)
+                    for top, bot, mid, st in bands:
+                        if st is None:
+                            continue
+                        # 보이는 구간을 초 단위로 잘라 10ms 조각에서 바로 계산 (확대해도 소리와 같은 자리)
+                        col_amp = columns(st, start_r * dur_, end_r * dur_, cw)
+                        px = (col_amp * ((bot - top) // 2 - 2)).astype(np.int32)
+                        on |= (((ys >= mid - px) & (ys < mid)) |
+                               ((ys >= mid + 1) & (ys < np.minimum(bot, mid + px + 1))))
                     region = np.asarray(img.crop((0, wf_top, cw, wf_bot))).copy()
                     region_p = region.copy()
                     region[on] = (0x1E, 0x1E, 0x3A)
@@ -611,6 +633,16 @@ class TimelineMixin:
             c.create_line(head_x, 0, head_x, ch, fill="white", width=1, tags=("head", "head_line"))
             c.create_polygon(head_x-5, sub_top, head_x+5, sub_top, head_x, sub_top+7,
                              fill="white", outline="", tags=("head", "head_poly"))
+
+        # 파형 줄별 트랙 이름 (트랙이 여러 개일 때만)
+        self._wf_row_area = (wf_top, wf_bot, len(wf_rows))
+        if len(self._wf_tracks) > 1:
+            row_h = (wf_bot - wf_top) // len(wf_rows)
+            for r, t in enumerate(wf_rows):
+                name = self._wf_tracks[t] if t < len(self._wf_tracks) else ""
+                c.create_text(6, wf_top + r * row_h + 2, anchor="nw", tags="wf_track",
+                              text=f"트랙 {t + 1}" + (f" · {name}" if name else ""),
+                              fill="#8A8AA0", font=(theme.FONT_FAMILY, 8))
 
         # 드래그 핸들 (파형 영역 기준)
         if cache and self.subtitles:
@@ -1196,6 +1228,71 @@ class TimelineMixin:
                 self._select_row(idx)
             self._show_context_menu(event, idx)
             return
+        top, bot, n = getattr(self, "_wf_row_area", (0, 0, 1))
+        if len(self._wf_tracks) > 1 and top <= event.y < bot:
+            self._wf_track_menu(event, min(n - 1, int((event.y - top) // max(1, (bot - top) // n))))
+
+    def _wf_track_menu(self, event, row):
+        """파형 줄 우클릭: 이 줄에 보여 줄 트랙 고르기, 줄 추가·빼기."""
+        rows = self._wf_row_tracks()
+        menu = PopupMenu(self)
+        for t, name in enumerate(self._wf_tracks):
+            label = f"트랙 {t + 1}" + (f" · {name}" if name else "")
+            menu.add_command(label=("✓ " if rows[row] == t else "    ") + label,
+                             command=lambda t=t: self._wf_set_row_track(row, t))
+        menu.add_separator()
+        if len(rows) < min(self._WF_MAX_ROWS, len(self._wf_tracks)):
+            spare = next(t for t in range(len(self._wf_tracks)) if t not in rows)
+            menu.add_command(label="파형 줄 추가", command=lambda: self._wf_set_rows(rows + [spare]))
+        if len(rows) > 1:
+            menu.add_command(label="이 줄 빼기", command=lambda: self._wf_set_rows(rows[:row] + rows[row + 1:]))
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _wf_set_row_track(self, row, track):
+        rows = self._wf_row_tracks()
+        rows[row] = track
+        self._wf_set_rows(rows)
+
+    def _wf_set_rows(self, rows):
+        """파형 줄 구성 바꾸기 (아직 안 읽은 트랙은 뒤에서 읽어 옴)."""
+        self._wf_rows = list(rows)
+        self._wf_img_cache = None
+        self._pb_redraw()
+        missing = [t for t in rows if t and t not in self._wf_stats]
+        if missing and self.media_path:
+            self._wf_load_tracks(self.media_path, missing)
+
+    def _wf_load_tracks(self, path, tracks):
+        """트랙별 파형을 별도 프로세스에서 읽어 옴."""
+        def _worker():
+            from ..waveform import extract_waveform, load_cached, save_cached
+            out = {}
+            try:
+                need = []
+                for t in tracks:
+                    st = load_cached(path, t)
+                    if st is None:
+                        need.append(t)
+                    else:
+                        out[t] = st
+                if need:
+                    from concurrent.futures import ProcessPoolExecutor
+                    import multiprocessing as _mp
+                    with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
+                        for t in need:
+                            out[t] = ex.submit(extract_waveform, path, t).result()
+                            save_cached(path, out[t], t)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+
+            def _apply():
+                if self.media_path == path and out:
+                    self._wf_stats.update(out)
+                    self._wf_img_cache = None
+                    self._pb_redraw()
+            self.after(0, _apply)
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── 트랙 헤더 (재생바 왼쪽: 레이어 이름·추가·제거, 파일명) ──
     def _draw_track_header(self, num_lanes, lane_h, ch):
@@ -1559,15 +1656,17 @@ class TimelineMixin:
 
     def _extract_waveform(self, path, src=None):
         """PyAV로 파형 추출 — UI 블로킹 없음. src: 실제로 읽을 소리 파일 (영상이면 뽑아 둔 mp3)."""
+        is_video = src is not None and src != path
         src = src or path
         self._wf_loading = True
         self._waveform = None
+        self._wf_tracks, self._wf_rows, self._wf_stats = [], [0], {}
         self._pb_redraw()
 
         def _worker():
             import traceback
             try:
-                from ..waveform import extract_waveform, load_cached, save_cached
+                from ..waveform import extract_waveform, load_cached, save_cached, track_names
                 pts = load_cached(src)
                 if pts is None:
                     # 계산은 별도 프로세스에서 해 UI 스레드가 멈추지 않게 함
@@ -1576,11 +1675,21 @@ class TimelineMixin:
                     with ProcessPoolExecutor(1, mp_context=_mp.get_context("spawn")) as ex:
                         pts = ex.submit(extract_waveform, src).result()
                     save_cached(src, pts)
+                names = []
+                if is_video:   # 영상만 트랙 목록 확인 (OBS 다중 트랙)
+                    try:
+                        names = track_names(path)
+                    except Exception:
+                        traceback.print_exc()
 
                 def _apply():
                     if self.media_path == path:
                         self._waveform = pts
                         self._wf_loading   = False
+                        self._wf_tracks = names
+                        if len(names) > 1:
+                            saved = [t for t in (getattr(self, "_wf_rows_saved", None) or []) if 0 <= t < len(names)]
+                            self._wf_set_rows(saved[:self._WF_MAX_ROWS] or list(range(min(self._WF_MAX_ROWS, len(names)))))
                         self._pb_redraw()
                 self.after(0, _apply)
 
