@@ -9,7 +9,7 @@ from .ui.transcribe import TranscribeMixin
 from .ui.diarize import DiarizeMixin
 from .ui.settings import SettingsMixin
 from .ui.timeline import TimelineMixin
-from .ui.speakers import SpeakerMixin
+from .ui.speakers import SHIFT_DIGITS, SpeakerMixin
 from .ui.table import SubtitleTableMixin
 from .ui.editing import EditingMixin
 from .ui.playback import PlaybackMixin
@@ -227,6 +227,8 @@ class SRTEditor(
         self.bind("<grave>",     self._on_speaker_key)
         for _k in "123456789":
             self.bind(_k, self._on_speaker_key)
+        for _k in SHIFT_DIGITS:   # Shift+1~9: 10~18번째 화자
+            self.bind(f"<{_k}>", self._on_speaker_key)
         self.bind("m", self.merge_selected)
         self.bind("M", self.merge_selected)
         self.bind("s", self._split_subtitle_shortcut)

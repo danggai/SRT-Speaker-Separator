@@ -15,6 +15,22 @@ _KEY_FG    = "#C9C9D4"   # 단축키 숫자
 from ..widgets import (DarkScrollbar, PopupMenu, Tooltip, _ColorPickerDialog, _circle_image,
                        rounded_rect_image, show_toast)
 
+# Shift+1~9 키 이름 (10~18번째 화자)
+SHIFT_DIGITS = ("exclam", "at", "numbersign", "dollar", "percent", "asciicircum", "ampersand", "asterisk", "parenleft")
+
+
+def speaker_key_label(i):
+    """i번째(0부터) 화자의 단축키 표시: 1~9, ⇧1~⇧9, 그 뒤는 없음."""
+    return str(i + 1) if i < 9 else f"⇧{i - 8}" if i < 18 else ""
+
+
+def _draw_key_badge(badge, label):
+    w = 20 if len(label) <= 1 else 28
+    badge.configure(width=w)
+    badge.itemconfigure("bg", image=rounded_rect_image(w, 20, 5, _KEY_BG))
+    badge.coords("key", w / 2, 10)
+    badge.itemconfigure("key", text=label)
+
 
 class SpeakerMixin:
     """화자 사이드바, 화자 색상, 화자 추가/이름 변경/삭제."""
@@ -229,11 +245,11 @@ class SpeakerMixin:
         # 단축키 배지·카운트를 right로 먼저 배치 → name_frame이 남은 공간만 차지
         badge = tk.Canvas(row, width=20, height=20, bg=_ROW_BG, highlightthickness=0,
                           cursor="hand2")
-        badge.create_image(0, 0, anchor="nw", image=rounded_rect_image(20, 20, 5, _KEY_BG))
-        badge.create_text(10, 10, text=str(i + 1) if i < 9 else "", fill=_KEY_FG,
-                          font=(theme.FONT_FAMILY, 9, "bold"), tags="key")
+        badge.create_image(0, 0, anchor="nw", tags="bg")
+        badge.create_text(10, 10, fill=_KEY_FG, font=(theme.FONT_FAMILY, 9, "bold"), tags="key")
+        _draw_key_badge(badge, speaker_key_label(i))
         badge.pack(side="right", padx=(6, 8))
-        if i >= 9:
+        if not speaker_key_label(i):
             badge.pack_forget()
         cnt = sum(1 for s in self.subtitles if s["speaker"] == name)
         cnt_lbl = tk.Label(row, text=str(cnt), bg=_ROW_BG, fg=FG_DIM,
@@ -371,7 +387,8 @@ class SpeakerMixin:
 
     def _set_speaker_tips(self, row):
         name, i = row._spk_name, row._spk_idx
-        key_hint = f"  단축키: {i+1}" if i < 9 else ""
+        label = speaker_key_label(i).replace("⇧", "Shift+")
+        key_hint = f"  단축키: {label}" if label else ""
         tip_row, tip_dot = row._tips
         tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}\n우클릭 → 이름·색상 변경, 삭제"
         tip_dot._text = f"클릭 → '{name}' 색상 변경"
@@ -398,8 +415,8 @@ class SpeakerMixin:
         renamed = row._spk_name != name
         row._spk_name, row._spk_idx, row._spk_color = name, i, color
         row._bar.configure(bg=color)
-        row._badge.itemconfigure("key", text=str(i + 1) if i < 9 else "")
-        if i < 9:
+        _draw_key_badge(row._badge, speaker_key_label(i))
+        if speaker_key_label(i):
             row._badge.pack(side="right", padx=(6, 8), before=row._cnt_lbl)
         else:
             row._badge.pack_forget()
@@ -526,15 +543,15 @@ class SpeakerMixin:
         self._fill_slots(self._vscroll_top)
 
     def _on_speaker_key(self, event):
-        """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자. 선택한 줄에 적용."""
+        """화자 지정 단축키: ` → (없음), 1~9 → 해당 번호 화자, Shift+1~9 → 10~18번째. 선택한 줄에 적용."""
         if isinstance(self.focus_get(), tk.Entry):
             return
         self._tip_learned("speaker")
         key = event.keysym
         if key == "grave":
             val = ""
-        elif key.isdigit() and key != "0":
-            spk_idx = int(key) - 1
+        elif (key.isdigit() and key != "0") or key in SHIFT_DIGITS:
+            spk_idx = int(key) - 1 if key.isdigit() else 9 + SHIFT_DIGITS.index(key)
             if spk_idx >= len(self.speakers):
                 return
             val = self.speakers[spk_idx]
