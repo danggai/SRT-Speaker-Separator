@@ -1,5 +1,6 @@
 """재생 제어, 키보드 이동, 재생 위치 하이라이트."""
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 
@@ -368,6 +369,22 @@ class PlaybackMixin:
         self._playing_rows = new_rows
         for idx in changed:
             self._redraw_slot_for(idx)
+        if new_rows and self.player.is_playing:
+            self._follow_playing_row(min(new_rows))
+
+    _FOLLOW_PAUSE_SEC = 3.0   # 직접 목록을 움직이면 이만큼은 따라가지 않음
+
+    def _follow_playing_row(self, idx):
+        """재생 중인 줄이 목록 화면 밖으로 나가면 위에서 두 번째 줄에 오게 넘김."""
+        if not self._opt("follow_playback") or isinstance(self.focus_get(), tk.Entry):
+            return
+        if time.time() - getattr(self, "_user_scrolled_at", 0) < self._FOLLOW_PAUSE_SEC:
+            return
+        visible = max(1, self.canvas.winfo_height() // self.ROW_H)
+        top = self._vscroll_top
+        if top <= idx < top + visible - 1:
+            return
+        self._vscroll_to(max(0, min(idx - 1, len(self.subtitles) - visible)))
 
     def _poll_progress(self):
         if self.player.is_playing:

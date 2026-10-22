@@ -1,5 +1,6 @@
 """자막 표(가상 스크롤 슬롯) 렌더링·선택·열 레이아웃."""
 import re
+import time
 import tkinter as tk
 import tkinter.font as tkfont
 from tkinter import ttk
@@ -129,6 +130,7 @@ class SubtitleTableMixin:
     # ── 가상 스크롤 핵심 ─────────────────────
 
     def _vscroll_cmd(self, *args):
+        self._user_scrolled_at = time.time()
         action = args[0]
         if action == "moveto":
             frac = float(args[1])
@@ -163,6 +165,7 @@ class SubtitleTableMixin:
         except Exception:
             pass
         delta = -1 if event.delta > 0 else 1
+        self._user_scrolled_at = time.time()   # 직접 움직였으면 재생 따라가기를 잠시 멈춤
         self._vscroll_to(self._vscroll_top + delta)
 
     def _vscroll_to(self, first_idx, offset_y=None):

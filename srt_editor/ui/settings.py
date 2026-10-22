@@ -198,7 +198,7 @@ class SettingsMixin:
 
     _SECTION_OPTS = {
         "general": ("startup_open_last", "update_check", "context_keys", "key_tips"),
-        "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "seek_step_ctrl", "click_seek",
+        "edit": ("advance_after_assign", "advance_to_check", "seek_step", "seek_step_shift", "seek_step_ctrl", "click_seek", "follow_playback",
                  "new_sub_len", "split_text", "lock_timeline", "link_edges"),
         "storage": ("backup_enabled", "backup_minutes"),
         "export": ("export_dir_mode", "export_dir", "export_subfolder"),
@@ -538,6 +538,9 @@ class SettingsMixin:
         _, right = self._settings_row(card, "▸", "자막 클릭 시 재생 위치 이동",
                                       None)
         self._opt_toggle(right, "click_seek")
+        _, right = self._settings_row(card, "⇣", "재생 중 자막 목록 따라가기",
+                                      "재생 줄이 화면 밖으로 나가면 넘김")
+        self._opt_toggle(right, "follow_playback")
 
         card = self._settings_card(parent, "자막 추가 · 타임라인")
         _, right = self._settings_row(card, "+", "새 자막 기본 길이",

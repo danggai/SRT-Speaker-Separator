@@ -487,7 +487,8 @@ def volume(app):
 
 @test
 def playback_keys(app):
-    steps(play_pause_and_seek_keys, space_key_toggles_playback_but_not_while_typing, shift_arrows_step_back_through_edges_while_playing)
+    steps(play_pause_and_seek_keys, space_key_toggles_playback_but_not_while_typing, shift_arrows_step_back_through_edges_while_playing,
+          table_follows_playing_row_unless_user_scrolled)
 
 
 @test
@@ -576,3 +577,22 @@ def shift_arrows_step_back_through_edges_while_playing(app):
     app._media_play_pause()
     expect(got[0] > got[1] > got[2], f"하나씩 앞으로 (같은 경계에 갇히지 않음) {got}")
     expect(got[2] < 4.7, f"세 번이면 4.5초 경계까지 {got}")
+
+def table_follows_playing_row_unless_user_scrolled(app):
+    """재생 중인 줄이 목록 밖으로 나가면 따라 넘기고, 방금 직접 휠을 굴렸으면 잠시 그대로."""
+    import time
+    load_sample(app, n=200, with_wav=True)
+    app._vscroll_to(0)
+    app._user_scrolled_at = 0
+    app.player.play()
+    app._update_playback_highlight(60 * 2.5 + 0.5)   # 61번 줄 (2.5초 간격 샘플)
+    top = app._vscroll_top
+    app.player.pause()
+    expect(top <= 60 < top + 10, f"재생 줄이 보이게 넘김 (맨 위 {top})")
+    app._vscroll_to(0)
+    app._user_scrolled_at = time.time()
+    app._playing_rows = set()
+    app.player.play()
+    app._update_playback_highlight(100 * 2.5 + 0.5)
+    app.player.pause()
+    eq(app._vscroll_top, 0, "방금 직접 움직였으면 따라가지 않음")
