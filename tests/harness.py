@@ -276,6 +276,7 @@ def reset_app():
                  if callable(v) and callable(getattr(type(app), k, None))]:
         del app.__dict__[name]
     app.__dict__["_opt_cache"] = {}
+    app.__dict__.pop("_tips_learned", None)   # 앞 테스트가 단축키를 써 본 기록
     app._global_speaker_colors = {}
     app._unsaved = False
     try:
