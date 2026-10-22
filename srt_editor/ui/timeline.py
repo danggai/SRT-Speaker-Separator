@@ -81,6 +81,7 @@ class TimelineMixin:
         self._pb_canvas.bind("<Motion>",          self._wf_on_motion)
         self._pb_canvas.bind("<MouseWheel>",      self._wf_mousewheel)
         self._pb_canvas.bind("<Control-MouseWheel>", self._wf_zoom_wheel)
+        self._pb_canvas.bind("<Alt-MouseWheel>",     self._wf_zoom_wheel)   # 프리미어: Alt+휠 확대·축소
         self._pb_canvas.bind("<Button-3>",           self._pb_right_click)
         # panel 생성 완료 후 모든 자식 위젯에 스크롤 바인딩
         self._pb_configure_job = None

@@ -254,6 +254,13 @@ def timeline_right_click_opens_subtitle_menu(app):
 def zoom_in_out_and_view_range(app):
     with_media(app)
     eq(app._wf_zoom, 1.0)
+    pb = app._pb_canvas
+    pb.event_generate("<Alt-MouseWheel>", delta=120, x=200, y=40)   # 프리미어처럼 Alt+휠 확대
+    pump(0.05)
+    expect(app._wf_zoom > 1.0, f"Alt+휠 확대 {app._wf_zoom}")
+    pb.event_generate("<Alt-MouseWheel>", delta=-120, x=200, y=40)
+    pump(0.05)
+    eq(app._wf_zoom, 1.0, "Alt+휠 축소")
     for _ in range(6):
         app._wf_zoom_in()
     expect(1.0 < app._wf_zoom <= app._wf_max_zoom(), f"확대 {app._wf_zoom}")

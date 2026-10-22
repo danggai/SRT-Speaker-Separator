@@ -56,6 +56,8 @@ class TipsMixin:
         mods = getattr(self, "_ctx_mods", ())
         on_timeline = focus is getattr(self, "_pb_canvas", None)   # 타임라인과 자막 줄은 같은 키도 동작이 다름
         if "alt" in mods:   # Alt+Shift도 Alt 쪽 안내
+            if on_timeline:
+                return [("Alt+휠", "확대·축소"), ("Alt+←→", "시작 0.05초 옮기기"), ("Alt+Shift+←→", "끝 옮기기")]
             return [("Alt+←→", "시작 0.05초 옮기기"), ("Alt+Shift+←→", "끝 옮기기"), ("Alt+↑↓", "윗줄과 단어 주고받기")]
         if "ctrl" in mods:
             if on_timeline:
