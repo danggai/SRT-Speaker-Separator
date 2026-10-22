@@ -185,11 +185,11 @@ class AISetupMixin:
         """AI 작업 실행 (작업 스레드에서 호출). 처리 장치 설정을 채워 넣는다."""
         job = dict(job)
         job.setdefault("device", self._ai_device_pref())
-        if job.get("type") == "diarize" and ai_runtime.missing_extras():
+        if job.get("type") in ("diarize", "transcribe") and ai_runtime.missing_extras():
             def prog(msg, pct):
                 if on_event:
                     on_event({"type": "status", "msg": msg, "step": None, "pct": pct})
-            try:   # 예전 설치본에 두 번째 목소리 모델 부품 채우기 (실패해도 기존 모델로 분석)
+            try:   # 예전 설치본에 나중에 더한 부품 채우기 (실패해도 기존 부품으로 계속)
                 ai_runtime.install_extras(prog, cancelled)
             except ai_runtime.AIError:
                 pass

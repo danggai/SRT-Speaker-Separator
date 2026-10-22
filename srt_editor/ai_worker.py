@@ -229,6 +229,53 @@ def _stage_progress(label, step, lo, hi):
     return cb
 
 
+MMS_PAD = 0.3   # 정렬할 때 조각 앞뒤로 더 보는 길이 (초, 옆 조각을 넘지 않게)
+
+
+def _align_mms(segments, audio, device, progress=None):
+    """다국어 MMS 정렬 모델로 단어 시간 맞추기 (한국어 wav2vec2보다 말 겹침에서 덜 밀림).
+    부품(uroman)이 없으면 None → 기존 정렬을 씀."""
+    try:
+        import torch
+        import torchaudio
+        import uroman
+    except Exception:
+        return None
+    status("정렬 모델 준비 중... (처음 한 번은 내려받아요)", "align", 61)
+    bundle = torchaudio.pipelines.MMS_FA
+    model = bundle.get_model(with_star=False).to(device).eval()
+    tokenizer, aligner = bundle.get_tokenizer(), bundle.get_aligner()
+    vocab = set(bundle.get_dict(star=None)) - {"-"}
+    rom = uroman.Uroman()
+    wav_all = torch.from_numpy(audio)
+    out = []
+    for k, s in enumerate(segments):
+        lo = max(0.0, s["start"] - MMS_PAD, segments[k - 1]["end"] if k else 0.0)
+        hi = min(len(audio) / SR, s["end"] + MMS_PAD, segments[k + 1]["start"] if k + 1 < len(segments) else 1e9)
+        words = (s.get("text") or "").split()
+        romz = ["".join(ch for ch in rom.romanize_string(w).lower() if ch in vocab) for w in words]
+        idx = [i for i, r in enumerate(romz) if r]   # 숫자처럼 읽을 수 없는 단어는 시간 없이 둠 (앞뒤로 보간)
+        ws = [{"word": w} for w in words]
+        if idx and hi > lo:
+            wav = wav_all[int(lo * SR):int(hi * SR)].unsqueeze(0).to(device)
+            try:
+                with torch.inference_mode():
+                    em, _ = model(wav)
+                ratio = wav.shape[1] / em.shape[1] / SR
+                for i, sp in zip(idx, aligner(em[0], tokenizer([romz[i] for i in idx]))):
+                    ws[i].update(start=round(lo + sp[0].start * ratio, 3), end=round(lo + sp[-1].end * ratio, 3),
+                                 score=round(float(sum(t.score for t in sp) / len(sp)), 3))
+            except Exception:   # 소리가 글자보다 짧은 조각 등: 그 조각만 시간 없이
+                pass
+        timed = [w for w in ws if "start" in w]
+        out.append({"start": timed[0]["start"] if timed else s["start"], "end": timed[-1]["end"] if timed else s["end"],
+                    "text": (s.get("text") or "").strip(), "words": ws})
+        if progress:
+            progress(100.0 * (k + 1) / len(segments))
+    del model
+    return out
+
+
 def _retry_loops(model, audio, segments, batch_size, lang):
     """같은 문장만 되풀이한 구간을 짧은 조각으로 다시 인식 (그 사이 실제 대사가 통째로 빠지는 오류)."""
     import speech
@@ -276,6 +323,10 @@ def job_transcribe(job):
     del model
     _free(device)
     status("타임스탬프 정렬 중...", "align", 60)
+    segs = _align_mms(result["segments"], audio, device, _stage_progress("타임스탬프 정렬 중", "align", 64, 99))
+    if segs is not None:
+        _free(device)
+        return {"segments": segs, "language": result.get("language")}
     arepo = model_download.align_repo(result["language"])
     if arepo:
         _fetch(arepo, "정렬 모델", None, 60, 64, "align")

@@ -21,7 +21,7 @@ UV_URL = "https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-pc-
 PYTHON_VERSION = "3.12"
 TORCH_INDEX = {"cuda": "https://download.pytorch.org/whl/cu126", "cpu": "https://download.pytorch.org/whl/cpu"}
 PACKAGES = ["whisperx==3.8.6", "torch==2.8.0", "torchaudio==2.8.0", "torchvision==0.23.0", "scikit-learn"]
-EXTRAS = ["funasr"]   # 나중에 더한 부품 (화자 구분 두 번째 목소리 모델 CAM++). 예전 설치본엔 따로 채움
+EXTRAS = ["funasr", "uroman"]   # 나중에 더한 부품 (CAM++ 목소리 모델, MMS 정렬용 로마자 변환). 예전 설치본엔 따로 채움
 EST_MB = {"cuda": 7000, "cpu": 3700}   # 설치 중 쌓이는 양 (실측, 진행률·용량 안내용)
 WORKER_FILES = ["ai_worker.py", "speech.py", "line_speakers.py", "model_download.py", "correction_audio.py"]
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -198,7 +198,7 @@ def install_extras(progress=None, cancelled=None):
     if not need:
         return
     progress = progress or (lambda msg, pct: None)
-    progress("화자 구분 부품 추가 중... (처음 한 번)", None)
+    progress("AI 부품 추가 중... (처음 한 번)", None)
     log = ROOT / "install.log"
     _run_logged([ROOT / "bin" / "uv.exe", "pip", "install", "--python", _venv_python(), "--link-mode", "copy",
                  "--compile-bytecode", *need], log, cancelled or (lambda: False))
