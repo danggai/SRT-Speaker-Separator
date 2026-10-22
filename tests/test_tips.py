@@ -35,6 +35,10 @@ def context_keys_follow_what_you_are_doing(app):
     expect("Shift+↑↓" in shown(app), f"Shift 누름 ({shown(app)})")
     app_key("<KeyRelease-Shift_L>")
     expect("Shift+↑↓" not in shown(app), "떼면 원래대로")
+    app_key("<KeyPress-Alt_L>")
+    expect("Alt+←→" in shown(app) and "Alt+↑↓" in shown(app), f"Alt 누름 ({shown(app)})")
+    app_key("<KeyRelease-Alt_L>")
+    expect("Alt+←→" not in shown(app), "Alt 떼면 원래대로")
     pb = app._pb_canvas
     pb.focus_force()
     pump(0.05)

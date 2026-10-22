@@ -200,7 +200,7 @@ class SRTEditor(
         for side in ("L", "R"):   # Ctrl만 눌러도 타임라인 붙은 경계 연결 표시 + 아래 단축키 줄
             self.bind(f"<KeyPress-Control_{side}>", lambda e: self._on_ctrl_key_change(True), add="+")
             self.bind(f"<KeyRelease-Control_{side}>", lambda e: self._on_ctrl_key_change(False), add="+")
-            for mod, key in (("ctrl", "Control"), ("shift", "Shift")):
+            for mod, key in (("ctrl", "Control"), ("shift", "Shift"), ("alt", "Alt")):
                 self.bind(f"<KeyPress-{key}_{side}>", lambda e, m=mod: self._ctx_mod_key(m, True), add="+")
                 self.bind(f"<KeyRelease-{key}_{side}>", lambda e, m=mod: self._ctx_mod_key(m, False), add="+")
         self.bind("<FocusOut>", lambda e: self.after_idle(self._ctx_mods_clear), add="+")
