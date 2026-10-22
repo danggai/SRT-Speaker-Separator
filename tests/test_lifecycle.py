@@ -138,8 +138,25 @@ def settings_window_is_reused_not_duplicated(app):
 
 
 def shortcuts_window_opens_via_f1_and_escape_closes(app):
+    load_sample(app)
+    n = len(app.subtitles)
     app._show_shortcuts()
     win = _only_toplevel()
+    kb = win._kb
+    for seq, state, want in (("<KeyPress-q>", 0, ("", "Q", "시작으로")),
+                             ("<KeyPress-a>", 0x4, ("Ctrl", "A", "자막 추가")),
+                             ("<KeyPress-Left>", 0x20000, ("Alt", "Left", "시작 당기기")),
+                             ("<KeyPress-exclam>", 0x1, ("Shift", "1", "화자 지정")),
+                             ("<KeyPress-k>", 0, ("", "K", None))):
+        win.event_generate(seq, state=state)
+        pump(0.05)
+        eq(kb.last, want, seq)
+        expect(bool(kb.demo.find_all()) == bool(want[2]), f"{seq} 시연")
+    eq(len(app.subtitles), n, "안내 창에서 누른 키는 실제로 실행 안 됨")
+    win.event_generate("<KeyPress-Control_L>")
+    expect("Ctrl" in kb.mods(), "Ctrl 누르면 Ctrl 조합 표시")
+    win.event_generate("<KeyRelease-Control_L>")
+    expect(not kb.mods())
     win.event_generate("<Escape>")
     pump(0.3)
     expect(not [w for w in toplevels() if w.winfo_exists() and w.winfo_viewable()] or True)
