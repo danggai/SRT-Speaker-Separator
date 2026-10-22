@@ -480,7 +480,7 @@ def volume(app):
 
 @test
 def playback_keys(app):
-    steps(play_pause_and_seek_keys, space_key_toggles_playback_but_not_while_typing)
+    steps(play_pause_and_seek_keys, space_key_toggles_playback_but_not_while_typing, shift_arrows_step_back_through_edges_while_playing)
 
 
 @test
@@ -549,3 +549,23 @@ def single_track_media_keeps_one_waveform_row(app):
     wait_until(lambda: app._waveform is not None, 20)
     eq(app._wf_row_tracks(), [0], "트랙이 하나면 지금처럼 한 줄")
     eq(app._pb_canvas.find_withtag("wf_track"), (), "트랙 이름 없음")
+
+
+def shift_arrows_step_back_through_edges_while_playing(app):
+    """재생 중 Shift+↑: 방금 지난 경계에 갇히지 않고 하나씩 앞 경계로."""
+    import time
+    load_sample(app, with_wav=True)   # 경계 … 5.0, 7.0, 7.5 …
+    pb = app._pb_canvas
+    app._do_seek(7.55, update_selection=False)
+    app._media_play_pause()
+    pump(0.15)
+    got = []
+    for _ in range(3):
+        pb.focus_force()
+        pb.event_generate("<Shift-Up>")
+        pump(0.05)
+        got.append(app.media_progress_var.get())
+        time.sleep(0.15)
+    app._media_play_pause()
+    expect(got[0] > got[1] > got[2], f"하나씩 앞으로 (같은 경계에 갇히지 않음) {got}")
+    expect(got[2] < 4.7, f"세 번이면 4.5초 경계까지 {got}")

@@ -1401,8 +1401,9 @@ class TimelineMixin:
                         for t in (t_s, t_e)})
         if direction > 0:
             target = next((t for t in edges if t > pos + 0.005), None)
-        else:
-            target = next((t for t in reversed(edges) if t < pos - 0.005), None)
+        else:   # 재생 중엔 방금 지난 경계에 갇히지 않게 조금 더 앞에서 찾음
+            back = 0.4 if self.player.is_playing else 0.005
+            target = next((t for t in reversed(edges) if t < pos - back), None)
         if target is None:
             return "break"
         self._do_seek(target, update_selection=False)
