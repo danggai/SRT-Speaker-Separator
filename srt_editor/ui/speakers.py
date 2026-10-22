@@ -6,7 +6,7 @@ from tkinter import ttk
 
 from .. import theme
 from ..config import _load_config, _save_config
-from ..theme import BG2, BG3, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS, is_hex_color
+from ..theme import ACCENT, BG2, BG3, FG, FG_DIM, FG_FAINT, FG_HINT, SPEAKER_COLORS, is_hex_color
 
 _ROW_BG    = BG2         # 화자 줄 배경
 _ROW_HOVER = "#26262E"   # 마우스를 올렸을 때
@@ -332,14 +332,11 @@ class SpeakerMixin:
                    if getattr(self, "_spk_edit_row", None) is r else None)
         entry.bind("<KeyPress>", _on_entry_key)
 
-        for widget in [row, hl, cnt_lbl, badge]:
-            widget.bind("<Button-1>",
-                lambda e, r=row: self._assign_speaker_from_sidebar(r._spk_name))
-
-        # 드래그 바인딩 (핸들에만)
-        drag_lbl.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_drag_start(e, r))
-        drag_lbl.bind("<B1-Motion>",        self._spk_drag_motion)
-        drag_lbl.bind("<ButtonRelease-1>", self._spk_drag_end)
+        # 줄 어디든: 짧게 누르면 화자 지정, 끌면 순서 변경
+        for widget in (row, hl, cnt_lbl, badge, drag_lbl):
+            widget.bind("<ButtonPress-1>",   lambda e, r=row: self._spk_press(e, r))
+            widget.bind("<B1-Motion>",        self._spk_motion)
+            widget.bind("<ButtonRelease-1>", self._spk_release)
 
         # 우클릭 메뉴 (이름 변경·색상 변경·삭제)
         for widget in (row, hl, drag_lbl, badge, dot_c, name_canvas, cnt_lbl):
@@ -391,7 +388,7 @@ class SpeakerMixin:
         label = speaker_key_label(i).replace("⇧", "Shift+")
         key_hint = f"  단축키: {label}" if label else ""
         tip_row, tip_dot = row._tips
-        tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}\n우클릭 → 이름·색상 변경, 삭제"
+        tip_row._text = f"클릭 → 선택된 자막에 '{name}' 지정{key_hint}\n끌기 → 순서 변경 · 우클릭 → 이름·색상 변경, 삭제"
         tip_dot._text = f"클릭 → '{name}' 색상 변경"
 
     def _speaker_menu(self, event, row):
@@ -490,6 +487,36 @@ class SpeakerMixin:
         return add_row
 
     # ── 화자 드래그 순서 변경 ─────────────────
+    _SPK_DRAG_PX = 5   # 이만큼 움직여야 끌기로 봄 (그 전엔 클릭)
+
+    def _spk_press(self, event, row):
+        self._spk_pressed = (row, event.y_root)
+
+    def _spk_motion(self, event):
+        pressed = getattr(self, "_spk_pressed", None)
+        if pressed and self._spk_drag_src is None and abs(event.y_root - pressed[1]) >= self._SPK_DRAG_PX:
+            self._spk_drag_start(event, pressed[0])
+        if self._spk_drag_src is not None:
+            self._spk_drag_motion(event)
+
+    def _spk_release(self, event):
+        pressed, self._spk_pressed = getattr(self, "_spk_pressed", None), None
+        if self._spk_drag_src is not None:
+            self._spk_drag_end(event)
+        elif pressed:
+            self._assign_speaker_from_sidebar(pressed[0]._spk_name)
+
+    def _spk_drop_index(self, y_root):
+        """놓을 자리 (가장 가까운 화자 줄 번호, 그 줄 위젯)."""
+        best, dst, row = float("inf"), self._spk_drag_src, None
+        for child in self.speaker_inner.winfo_children():
+            if not hasattr(child, "_spk_idx"):
+                continue
+            d = abs(y_root - (child.winfo_rooty() + child.winfo_height() // 2))
+            if d < best:
+                best, dst, row = d, child._spk_idx, child
+        return dst, row
+
     def _spk_drag_start(self, event, row):
         self._spk_drag_src = row._spk_idx
         self._spk_drag_y0  = event.y_root
@@ -510,26 +537,30 @@ class SpeakerMixin:
         if self._spk_drag_ghost:
             self._spk_drag_ghost.geometry(
                 f"+{event.x_root+10}+{event.y_root+10}")
+        # 놓일 자리에 보라색 줄 (위로 옮기면 그 줄 위, 아래로 옮기면 그 줄 아래)
+        dst, row = self._spk_drop_index(event.y_root)
+        line = getattr(self, "_spk_drop_line", None)
+        if line is None or not line.winfo_exists():
+            line = self._spk_drop_line = tk.Frame(self.speaker_inner, bg=ACCENT, height=2)
+        if row is None or dst == self._spk_drag_src:
+            line.place_forget()
+            return
+        y = row.winfo_y() + (row.winfo_height() if dst > self._spk_drag_src else 0)
+        line.place(x=8, y=y - 1, relwidth=1, width=-16, height=2)
+        line.lift()
 
     def _spk_drag_end(self, event):
         if self._spk_drag_ghost:
             self._spk_drag_ghost.destroy()
             self._spk_drag_ghost = None
+        line = getattr(self, "_spk_drop_line", None)
+        if line is not None and line.winfo_exists():
+            line.place_forget()
         if self._spk_drag_src is None:
             return
 
-        # 드롭 위치: speaker_inner 내부 row들 중 y_root와 가장 가까운 것
         src = self._spk_drag_src
-        dst = src
-        best = float("inf")
-        for child in self.speaker_inner.winfo_children():
-            if not hasattr(child, "_spk_idx"):
-                continue
-            cy = child.winfo_rooty() + child.winfo_height() // 2
-            dist = abs(event.y_root - cy)
-            if dist < best:
-                best = dist
-                dst = child._spk_idx
+        dst, _ = self._spk_drop_index(event.y_root)
 
         self._spk_drag_src = None
         if src == dst:

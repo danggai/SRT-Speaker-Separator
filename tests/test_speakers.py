@@ -257,6 +257,27 @@ def reorder_by_dragging_and_undo(app):
     eq(app.speakers[2], "화자2", "같은 자리에 놓으면 그대로")
     app._undo()
     eq(app.speakers, ["화자1", "화자2", "화자3", "화자4", "화자5"], "실행 취소")
+    # 줄 어디든 잡고 끌기 (손잡이가 아니어도)
+    rs = {r._spk_idx: r for r in rows(app)}
+    a, b = rs[0], rs[3]
+    a.event_generate("<ButtonPress-1>", x=40, y=5)
+    for y in (12, 40, b.winfo_rooty() - a.winfo_rooty() + b.winfo_height() // 2):
+        app._spk_motion(Ev(a, 40, y))
+    pump(0.05)
+    line = getattr(app, "_spk_drop_line", None)
+    expect(line is not None and line.winfo_ismapped(), "끄는 동안 놓일 자리 표시")
+    app._spk_release(Ev(a, 40, b.winfo_rooty() - a.winfo_rooty() + b.winfo_height() // 2))
+    pump(0.2)
+    eq(app.speakers, ["화자2", "화자3", "화자4", "화자1", "화자5"], "줄을 끌어 순서 변경")
+    expect(not line.winfo_ismapped(), "놓으면 표시 사라짐")
+    app._undo()
+    if app.subtitles:   # 끌지 않고 누르기만 하면 지금처럼 화자 지정
+        app._select_row(0, seek=False)
+        r = {r._spk_idx: r for r in rows(app)}[1]
+        r.event_generate("<ButtonPress-1>", x=40, y=5)
+        r.event_generate("<ButtonRelease-1>", x=40, y=5)
+        pump(0.05)
+        eq(app.subtitles[0]["speaker"], app.speakers[1], "짧게 누르면 화자 지정")
 
 
 def color_change_applies_persists_and_undo_restores(app):
