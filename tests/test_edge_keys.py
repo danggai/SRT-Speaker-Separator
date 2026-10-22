@@ -24,6 +24,14 @@ def q_w_set_start_and_end_to_playhead_with_undo(app):
     app._do_seek(9.7, update_selection=False)
     app_key("q")
     near(times(app, 3)[0], 7.8, 0.002, "끝보다 뒤면 바꾸지 않음")
+    app._do_seek(9.0, update_selection=False)
+    app_key("w")
+    app._do_seek(9.3, update_selection=False)
+    app_key("w")
+    app_key("<Control-z>")
+    near(times(app, 3)[1], 9.0, 0.002, "W를 다시 찍고 Ctrl+Z: 바로 전에 찍은 자리로 (한 번씩 되돌림)")
+    app_key("<Control-z>")
+    near(times(app, 3)[1], 9.5, 0.002, "한 번 더: 원래대로")
 
 
 def w_while_playing_moves_to_next_line(app):

@@ -339,8 +339,9 @@ class EditingMixin:
                 return j
         return None
 
-    def _set_sub_edge(self, idx, which, t):
-        """idx번 자막의 시작('s') 또는 끝('e')을 t초로 (붙은 옆 줄 경계도 함께). 최소 길이를 못 지키면 False."""
+    def _set_sub_edge(self, idx, which, t, group=False):
+        """idx번 자막의 시작('s') 또는 끝('e')을 t초로 (붙은 옆 줄 경계도 함께). 최소 길이를 못 지키면 False.
+        group: 같은 경계를 연달아 조금씩 옮기면(Alt) 실행 취소를 하나로 묶음."""
         cache = getattr(self, "_ts_cache", [])
         if not (0 <= idx < len(cache)) or cache[idx][0] is None or cache[idx][1] is None:
             return False
@@ -358,10 +359,10 @@ class EditingMixin:
             l_s, l_e = (l_s, t) if which == "s" else (t, l_e)
             if l_e - l_s < self._MIN_SUB_DURATION:   # 옆 줄이 너무 짧아지면 함께 옮기지 않음
                 link = None
-        ref = getattr(self, "_edge_undo_ref", None)   # 같은 쪽을 연달아 움직이면 실행 취소는 한 번으로
-        if not (ref and ref[0] == (idx, which) and self._undo_stack and self._undo_stack[-1] is ref[1]):
+        ref = getattr(self, "_edge_undo_ref", None)
+        if not (group and ref and ref[0] == (idx, which) and self._undo_stack and self._undo_stack[-1] is ref[1]):
             self._push_undo()
-            self._edge_undo_ref = ((idx, which), self._undo_stack[-1])
+            self._edge_undo_ref = ((idx, which), self._undo_stack[-1]) if group else None
         self.subtitles[idx]["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(t_e)}"
         self._ts_cache[idx] = (t_s, t_e)
         if link is not None:
@@ -401,7 +402,7 @@ class EditingMixin:
         self._tip_learned("nudge")
         t_s, t_e = self._ts_cache[idx]
         if t_s is not None:
-            self._set_sub_edge(idx, which, (t_s if which == "s" else t_e) + delta * self._NUDGE_SEC)
+            self._set_sub_edge(idx, which, (t_s if which == "s" else t_e) + delta * self._NUDGE_SEC, group=True)
         return "break"
 
     def merge_selected(self, event=None):
