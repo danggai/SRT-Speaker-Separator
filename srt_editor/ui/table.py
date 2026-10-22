@@ -290,7 +290,7 @@ class SubtitleTableMixin:
             self._txt_edit_end(s)
 
         txt_e.bind("<FocusOut>", _txt_focus_out)
-        txt_e.bind("<Return>",   lambda e: (self.focus_set(), "break")[1])   # 확정 → FocusOut에서 저장
+        txt_e.bind("<Return>",   lambda e, s=slot_idx: self._txt_commit(s))   # 확정: 바로 저장 (이어 누른 키가 먼저 처리돼도 안 사라지게)
         # 교정 흐름: 편집 중에 소리 다시 듣기, 저장하고 다음·이전 줄 편집으로
         txt_e.bind("<Control-space>", lambda e, s=slot_idx: self._txt_replay(s))
         txt_e.bind("<Tab>",           lambda e, s=slot_idx: self._txt_jump(s, 1))
@@ -427,6 +427,14 @@ class SubtitleTableMixin:
             return
         self._txt_edit_start(slot)
         self._slot_widgets[slot]["content"].icursor("end")
+        return "break"
+
+    def _txt_commit(self, slot_idx):
+        """편집 중 Enter: 그 자리에서 저장하고 편집을 끝낸 뒤 포커스를 표로."""
+        if self._slot_widgets[slot_idx].get("_txt_editing"):
+            self._slot_save_text(slot_idx)
+            self._txt_edit_end(slot_idx)
+        self.focus_set()
         return "break"
 
     @staticmethod
@@ -930,7 +938,7 @@ class SubtitleTableMixin:
             ic(wi, t + "tlbl", text="시간 오류", fill="#FF6B8A")
             ic(wi, t + "dur", text="")
 
-        if focus is not wi["content"]:
+        if focus is not wi["content"] and not wi.get("_txt_editing"):   # 편집 중인 칸은 덮어쓰지 않음
             txt = sub.get("text", "").replace("\n", _BR)
             if wi.get("_txt_shown") != txt:
                 wi["txt_var"].set(txt)

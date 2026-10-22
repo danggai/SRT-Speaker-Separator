@@ -562,6 +562,33 @@ def empty_state_has_no_errors(app):
     eq(len(app.subtitles), 1, "빈 상태에서 줄 추가")
 
 
+def typed_text_survives_redraw_before_focus_out(app):
+    """Enter 직후 Space 등으로 표가 먼저 다시 그려져도 입력한 글자가 사라지지 않음."""
+    load_sample(app)
+    s = slot_of(app, 3)
+    app._txt_edit_start(s)
+    ent = app._slot_widgets[s]["content"]
+    ent.focus_force()
+    pump(0.05)
+    had = app.focus_get() is ent
+    ent.delete(0, "end")
+    ent.insert(0, "새로 쓴 글")
+    app.focus_set()                    # 포커스는 빠졌지만 저장 신호(FocusOut)는 아직
+    app._fill_slots(app._vscroll_top)  # 그 사이 재생 등으로 표가 다시 그려짐
+    after_fill = ent.get()
+    pump(0.1)
+    expect(had, "입력칸에 포커스")
+    eq(after_fill, "새로 쓴 글", "다시 그릴 때 입력칸을 덮어쓰지 않음")
+    eq(app.subtitles[3]["text"], "새로 쓴 글", "다시 그려져도 입력한 글자 유지")
+    s = slot_of(app, 5)
+    app._txt_edit_start(s)
+    ent = app._slot_widgets[s]["content"]
+    ent.delete(0, "end")
+    ent.insert(0, "엔터로 확정")
+    app._txt_commit(s)                 # Enter: 그 자리에서 바로 저장
+    eq(app.subtitles[5]["text"], "엔터로 확정", "Enter 누르는 순간 저장")
+
+
 def line_break_mark_acts_like_one_char(app):
     load_sample(app)
     s = slot_of(app, 2)
@@ -596,7 +623,7 @@ def row_selection(app):
 
 @test
 def text_editing(app):
-    steps(edit_text_commits_with_enter_and_undo_redo, edit_text_commits_when_clicking_another_row, edit_text_keeps_long_and_special_text, only_one_edit_open_at_a_time, line_break_mark_acts_like_one_char)
+    steps(edit_text_commits_with_enter_and_undo_redo, edit_text_commits_when_clicking_another_row, edit_text_keeps_long_and_special_text, only_one_edit_open_at_a_time, line_break_mark_acts_like_one_char, typed_text_survives_redraw_before_focus_out)
 
 
 @test
