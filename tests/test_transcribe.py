@@ -258,6 +258,12 @@ def learned_fixes_need_two_same_fixes_and_skip_kept_words():
     expect("손해" not in LF.rules(store), "고친 줄에서 그대로 둔 적 있는 말(진짜 단어)은 적용 안 함")
 
 
+def numbers_and_acronyms_read_aloud_for_alignment():
+    from srt_editor.speech import spoken_form
+    eq([spoken_form(w) for w in ("7030이야", "40만원인데", "100,000원", "1억", "EMS에선", "ATM기", "그냥")],
+       ["칠천삼십이야", "사십만원인데", "십만원", "일억", "이엠에스에선", "에이티엠기", "그냥"], "정렬할 때만 읽는 소리로")
+
+
 def whisper_repeat_loops_are_found_and_retried():
     from srt_editor import speech, ai_worker
 
@@ -294,7 +300,7 @@ def whisper_repeat_loops_are_found_and_retried():
 
 @test
 def line_building():
-    steps(split_uses_word_times_and_interpolates_missing_ones, char_split_leaves_no_short_tail_and_balances_lines, short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces, hallucinations_and_repeats_are_removed, timing_fix_removes_overlap_and_stretches_tiny_lines, short_gaps_between_lines_are_filled, period_option_adds_or_strips_whisper_period, whisper_repeat_loops_are_found_and_retried, learned_fixes_need_two_same_fixes_and_skip_kept_words)
+    steps(split_uses_word_times_and_interpolates_missing_ones, char_split_leaves_no_short_tail_and_balances_lines, short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces, hallucinations_and_repeats_are_removed, timing_fix_removes_overlap_and_stretches_tiny_lines, short_gaps_between_lines_are_filled, period_option_adds_or_strips_whisper_period, whisper_repeat_loops_are_found_and_retried, learned_fixes_need_two_same_fixes_and_skip_kept_words, numbers_and_acronyms_read_aloud_for_alignment)
 
 
 @test

@@ -241,6 +241,7 @@ def _align_mms(segments, audio, device, progress=None):
         import uroman
     except Exception:
         return None
+    import speech
     status("정렬 모델 준비 중... (처음 한 번은 내려받아요)", "align", 61)
     bundle = torchaudio.pipelines.MMS_FA
     model = bundle.get_model(with_star=False).to(device).eval()
@@ -253,8 +254,8 @@ def _align_mms(segments, audio, device, progress=None):
         lo = max(0.0, s["start"] - MMS_PAD, segments[k - 1]["end"] if k else 0.0)
         hi = min(len(audio) / SR, s["end"] + MMS_PAD, segments[k + 1]["start"] if k + 1 < len(segments) else 1e9)
         words = (s.get("text") or "").split()
-        romz = ["".join(ch for ch in rom.romanize_string(w).lower() if ch in vocab) for w in words]
-        idx = [i for i, r in enumerate(romz) if r]   # 숫자처럼 읽을 수 없는 단어는 시간 없이 둠 (앞뒤로 보간)
+        romz = ["".join(ch for ch in rom.romanize_string(speech.spoken_form(w)).lower() if ch in vocab) for w in words]
+        idx = [i for i, r in enumerate(romz) if r]   # 읽을 수 없는 단어는 시간 없이 둠 (앞뒤로 보간)
         ws = [{"word": w} for w in words]
         if idx and hi > lo:
             wav = wav_all[int(lo * SR):int(hi * SR)].unsqueeze(0).to(device)

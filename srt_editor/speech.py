@@ -1,4 +1,5 @@
 """음성 인식(whisperx)·화자 분리(pyannote) 로직. GUI 의존성이 없어 평가 도구에서도 쓴다."""
+import re
 
 
 def _friendly_transcribe_error(err_text: str) -> str:
@@ -58,6 +59,37 @@ def _load_asr_model(whisperx, mode, device, language=None, asr_hint=None):
         vad_options={"vad_onset": onset, "vad_offset": offset},
     )
     return model, wmodel
+
+
+_DIGITS = "영일이삼사오육칠팔구"
+_LETTERS = dict(zip("ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+                    "에이 비 씨 디 이 에프 지 에이치 아이 제이 케이 엘 엠 엔 오 피 큐 알 에스 티 유 브이 더블유 엑스 와이 지".split()))
+
+
+def _sino(n):
+    """정수 → 한자어 읽기 (7030 → 칠천삼십, 120000 → 십이만)."""
+    if n == 0:
+        return "영"
+    out = ""
+    for unit, size in (("억", 10 ** 8), ("만", 10 ** 4), ("", 1)):
+        part, n = divmod(n, size)
+        if not part:
+            continue
+        s = ""
+        for d, u in ((part // 1000 % 10, "천"), (part // 100 % 10, "백"), (part // 10 % 10, "십"), (part % 10, "")):
+            if d:
+                s += ("" if d == 1 and u else _DIGITS[d]) + u
+        out += ("" if s == "일" and unit in ("만",) else s) + unit
+    return out
+
+
+def spoken_form(word):
+    """정렬용 읽는 소리: 숫자는 한자어로, 대문자 줄임말은 알파벳 이름으로 (자막 글자는 그대로 둠)."""
+    def num(m):
+        digits = m.group(0).replace(",", "")
+        return _sino(int(digits)) if len(digits) <= 12 else "".join(_DIGITS[int(c)] for c in digits)
+    w = re.sub(r"\d[\d,]*", num, word)
+    return re.sub(r"[A-Z]{2,}", lambda m: "".join(_LETTERS[c] for c in m.group(0)), w)
 
 
 LOOP_MIN = 4        # 같은 문장이 이만큼 이어지면 Whisper 반복 오류로 봄
