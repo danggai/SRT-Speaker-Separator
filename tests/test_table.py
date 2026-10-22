@@ -91,8 +91,17 @@ def shift_arrows_extend_and_escape_collapses(app):
 def select_all(app):
     load_sample(app)
     click_row(app, 2)
-    app_key("<Control-A>")
+    app_key("<Control-Shift-KeyPress-A>")
     eq(app._selected_rows, set(range(24)), "Ctrl+Shift+A")
+    # Caps Lock이 켜져 대문자로 들어와도 Shift를 안 눌렀으면 원래 동작
+    app._select_row(2, seek=False)
+    n = len(app.subtitles)
+    caps = 0x0004 | 0x0002   # Ctrl + Caps Lock (Shift 없음)
+    app.focus_force(); pump(0.02)
+    app.event_generate("<KeyPress>", keysym="A", state=caps); pump(0.05)
+    eq((len(app.subtitles), len(app._selected_rows)), (n + 1, 1), "Caps Lock + Ctrl+A: 전체 선택이 아니라 자막 추가")
+    app.event_generate("<KeyPress>", keysym="Z", state=caps); pump(0.05)
+    eq(len(app.subtitles), n, "Caps Lock + Ctrl+Z: 다시 실행이 아니라 실행 취소")
 
 
 # ───────── 편집 ─────────

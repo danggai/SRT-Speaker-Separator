@@ -162,9 +162,10 @@ class SRTEditor(
         self._start_backup_timer()
 
         # 단축키
-        self.bind("<Control-s>", lambda e: self.save_file())
-        self.bind("<Control-S>", lambda e: self.save_file_as())
-        self.bind("<Control-o>", lambda e: self.open_file())
+        # Caps Lock이 켜져도 같게: 대소문자가 아니라 Shift를 눌렀는지로 나눔
+        _by_shift = lambda plain, shifted: (lambda e: shifted(e) if e.state & 0x0001 else plain(e))
+        for _k in "sS":
+            self.bind(f"<Control-{_k}>", _by_shift(lambda e: self.save_file(), lambda e: self.save_file_as()))
         self.bind("<Return>",    self._edit_selected_text)
         self.bind("<KP_Enter>",  self._edit_selected_text)
         self.bind("<question>",  self._show_shortcuts)
@@ -174,15 +175,15 @@ class SRTEditor(
         self.bind("<Right>",      self._on_right_key)
         self.bind("<Shift-Left>",  self._on_left_key)
         self.bind("<Shift-Right>", self._on_right_key)
-        self.bind("<Control-z>", lambda e: self._undo())
-        self.bind("<Control-Z>", lambda e: self._redo())
+        for _k in "zZ":
+            self.bind(f"<Control-{_k}>", _by_shift(lambda e: self._undo(), lambda e: self._redo()))
         self.bind("<Control-y>", lambda e: self._redo())   # 다시 실행 버튼 툴팁의 단축키
         self.bind("<Control-Y>", lambda e: self._redo())
-        self.bind("<Control-x>", self._on_cut)
-        self.bind("<Control-c>", self._on_copy)
-        self.bind("<Control-v>", self._on_paste)
+        for _k, _fn in (("x", self._on_cut), ("c", self._on_copy), ("v", self._on_paste), ("d", self._on_delete),
+                        ("o", lambda e: self.open_file())):
+            self.bind(f"<Control-{_k}>", _fn)
+            self.bind(f"<Control-{_k.upper()}>", _fn)   # Caps Lock
         self.bind("<Delete>",    self._on_delete)
-        self.bind("<Control-d>", self._on_delete)
         self.bind("<Up>",        self._on_arrow_up)
         self.bind("<Down>",      self._on_arrow_down)
         self.bind("<Shift-Up>",  self._on_shift_arrow_up)
@@ -214,13 +215,15 @@ class SRTEditor(
         self.bind("<Control-M>", self._mute_shortcut)
         self.bind("<Home>",      self._on_home_key)
         self.bind("<End>",       self._on_end_key)
-        self.bind("<Control-a>", self._add_subtitle_shortcut)
-        self.bind("<Control-A>", self._on_select_all)   # Ctrl+Shift+A
+        for _k in "aA":   # Ctrl+A 자막 추가, Ctrl+Shift+A 전체 선택
+            self.bind(f"<Control-{_k}>", _by_shift(self._add_subtitle_shortcut, self._on_select_all))
         self.bind("<Escape>",    self._on_escape_key)
         self.bind("<F2>",        self._edit_selected_text)
-        self.bind("<Control-e>", lambda e: self.export())
+        for _k in "eE":
+            self.bind(f"<Control-{_k}>", lambda e: self.export())
         self.bind("<Control-comma>", lambda e: self._open_settings())
-        self.bind("<Control-w>", lambda e: self._close_to_home())
+        for _k in "wW":
+            self.bind(f"<Control-{_k}>", lambda e: self._close_to_home())
         self.bind("<Control-plus>",  lambda e: self._on_zoom_key(e, True))
         self.bind("<Control-equal>", lambda e: self._on_zoom_key(e, True))
         self.bind("<Control-minus>", lambda e: self._on_zoom_key(e, False))
