@@ -4,6 +4,7 @@ import os
 import pathlib
 
 SPEEDS = (0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0)
+BOOST = 1.5    # 볼륨 100% 넘길 때 쓰는 키운 소리 (최대 150%)
 RATE = 22050   # 말소리 확인용이라 모노 22kHz로 충분 (파일 크기 절약)
 
 
@@ -25,28 +26,32 @@ def cache_dir():
     return pathlib.Path(waveform.CACHE_DIR).parent / "speed"
 
 
-def cache_path(src, speed):
+def cache_path(src, speed, gain=1.0):
     st = os.stat(src)
     key = hashlib.sha1(f"{os.path.abspath(src)}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8")).hexdigest()[:16]
-    return cache_dir() / f"{key}_{speed:g}.flac"
+    return cache_dir() / f"{key}_{speed:g}{f'_g{gain:g}' if gain != 1.0 else ''}.flac"
 
 
-def render(src, speed, cancelled=None):
-    """src를 speed배로 만든 재생용 FLAC 경로 (이미 있으면 그대로). 취소되면 None."""
+def render(src, speed, cancelled=None, gain=1.0):
+    """src를 speed배·gain배 소리로 만든 재생용 FLAC 경로 (이미 있으면 그대로). 취소되면 None."""
     import av
     from .video import PlayAudioWriter
-    dst = cache_path(src, speed)
+    dst = cache_path(src, speed, gain)
     if dst.exists():
         return dst
     dst.parent.mkdir(parents=True, exist_ok=True)
     part = dst.with_suffix(".part")
-    out = PlayAudioWriter(av, part, RATE)
+    rate = RATE if speed != 1.0 else 44100   # 1배속은 원래 음질로
+    out = PlayAudioWriter(av, part, rate)
     with av.open(str(src)) as inp:
         stream = next(s for s in inp.streams if s.type == "audio")
         graph = av.filter.Graph()
         nodes = [graph.add_abuffer(template=stream)]
-        nodes += [graph.add("atempo", f"{f:.6f}") for f in _factors(speed)]
-        nodes += [graph.add("aresample", str(RATE)), graph.add("aformat", f"sample_fmts=s16:channel_layouts=mono")]
+        if speed != 1.0:
+            nodes += [graph.add("atempo", f"{f:.6f}") for f in _factors(speed)]
+        if gain != 1.0:
+            nodes += [graph.add("volume", f"{gain:g}"), graph.add("alimiter", "limit=0.97")]
+        nodes += [graph.add("aresample", str(rate)), graph.add("aformat", f"sample_fmts=s16:channel_layouts=mono")]
         nodes.append(graph.add("abuffersink"))
         for a, b in zip(nodes, nodes[1:]):
             a.link_to(b)

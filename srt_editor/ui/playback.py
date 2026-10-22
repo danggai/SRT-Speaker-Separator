@@ -228,23 +228,31 @@ class PlaybackMixin:
 
     def _set_play_speed(self, speed):
         """배속 바꾸기. 처음 고른 배속은 소리를 만드는 몇 초 동안 지금 속도로 계속 재생."""
-        from .. import stretch
         self._speed_choice = speed
-        self._speed_token = token = getattr(self, "_speed_token", 0) + 1
         self._update_speed_btn()
+        self._apply_play_source()
+
+    def _apply_play_source(self):
+        """지금 배속·볼륨(100% 초과면 키운 소리)에 맞는 재생 파일로. 만드는 동안은 지금 소리로 계속."""
+        from .. import stretch
+        speed = getattr(self, "_speed_choice", 1.0)
+        boost = getattr(self, "_vol_var", 100) > 100
+        self._speed_token = token = getattr(self, "_speed_token", 0) + 1
         src = self.player._filepath
-        if speed == 1.0 or not src or not self.media_path:
+        if (speed == 1.0 and not boost) or not src or not self.media_path:
             self.player.set_speed(1.0)
             return
-        path = stretch.cache_path(src, speed)
+        gain = stretch.BOOST if boost else 1.0
+        path = stretch.cache_path(src, speed, gain)
         if path.exists():
-            self.player.set_speed(speed, path)
+            self.player.set_speed(speed, path, boost)
             return
-        self._update_speed_btn("준비 중…")
+        if speed != self.player.speed:
+            self._update_speed_btn("준비 중…")
 
         def work():
             try:
-                p, err = stretch.render(src, speed), None
+                p, err = stretch.render(src, speed, gain=gain), None
             except Exception as e:   # noqa: BLE001
                 p, err = None, e
             self.after(0, lambda: done(p, err))
@@ -253,11 +261,11 @@ class PlaybackMixin:
             if token != self._speed_token or self.player._filepath != src:
                 return
             if err or p is None:
-                show_toast(self, "배속을 준비하지 못했어요")
+                show_toast(self, "소리를 준비하지 못했어요")
                 self._speed_choice = 1.0
                 self.player.set_speed(1.0)
             else:
-                self.player.set_speed(speed, p)
+                self.player.set_speed(speed, p, boost)
             self._update_speed_btn()
         threading.Thread(target=work, daemon=True).start()
 
@@ -292,6 +300,8 @@ class PlaybackMixin:
         self.player.set_speed(1.0)
         self._update_speed_btn()
         threading.Thread(target=stretch.clear, args=(self.player._filepath,), daemon=True).start()
+        if getattr(self, "_vol_var", 100) > 100:
+            self._apply_play_source()
 
     def _play_line(self, idx):
         """자막 한 줄만 처음부터 재생하고 그 줄 끝에서 멈춤."""

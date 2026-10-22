@@ -57,6 +57,7 @@ class MediaPlayer:
         self._watch_thread = None
         self._speed      = 1.0   # 재생 배속 (위치·길이는 항상 원본 시간 기준)
         self._speed_path = None  # 배속용으로 만든 소리 (1배면 원본)
+        self._boost      = False # _speed_path가 150%로 키운 소리인지
 
     def _init_pygame(self):
         if self._pg is not None:
@@ -98,7 +99,7 @@ class MediaPlayer:
     def load(self, path):
         self.stop()
         self._filepath = path
-        self._speed, self._speed_path = 1.0, None
+        self._speed, self._speed_path, self._boost = 1.0, None, False
         self._position = 0.0
         if not self._init_pygame():
             self._duration = 0.0
@@ -180,13 +181,17 @@ class MediaPlayer:
     def speed(self):
         return self._speed
 
-    def set_speed(self, speed, path=None):
-        """배속 바꾸기. path: 그 배속으로 만든 소리 (1배면 None). 재생 중이면 같은 위치에서 이어 재생."""
+    def set_speed(self, speed, path=None, boost=False):
+        """배속 바꾸기. path: 그 배속(boost면 150%로 키운) 소리 (원본이면 None). 재생 중이면 같은 위치에서 이어 재생."""
+        path = path if (speed != 1.0 or boost) else None
+        boost = bool(boost and path)
+        if float(speed) == self._speed and path == self._speed_path and boost == self._boost:
+            return
         pos = self.position
         was_playing = self.is_playing
         self._stop_music()
         self._speed = float(speed)
-        self._speed_path = path if speed != 1.0 else None
+        self._speed_path, self._boost = path, boost
         self._position = pos
         if was_playing:
             self._start_play(pos)
@@ -197,8 +202,7 @@ class MediaPlayer:
             return
         try:
             self._pg.mixer.music.load(str(self._speed_path or self._filepath))
-            # set_volume: 0.0~1.0
-            self._pg.mixer.music.set_volume(self._volume / 100.0)
+            self._pg.mixer.music.set_volume(self._mix_volume())
             # start_sec 위치부터 재생
             self._pg.mixer.music.play(start=start_sec / self._speed)
             self._playing    = True
@@ -278,12 +282,19 @@ class MediaPlayer:
         except Exception:
             pass
 
+    def _mix_volume(self):
+        """pygame 볼륨(0~1). 키운 소리를 틀 때만 100%를 넘길 수 있다."""
+        if self._boost:
+            from .stretch import BOOST
+            return self._volume / (100.0 * BOOST)
+        return min(self._volume, 100) / 100.0
+
     def set_volume(self, vol):
-        """볼륨 설정 (0~100)."""
-        self._volume = max(0, min(vol, 100))
+        """볼륨 설정 (0~150)."""
+        self._volume = max(0, min(vol, 150))
         try:
             if self._pg and self._pg.mixer.get_init():
-                self._pg.mixer.music.set_volume(self._volume / 100.0)
+                self._pg.mixer.music.set_volume(self._mix_volume())
         except Exception:
             pass
 

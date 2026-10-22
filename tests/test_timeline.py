@@ -296,8 +296,8 @@ def volume_set_mute_clamp_and_persist(app):
     app._set_volume(30)
     eq(app.player._volume, 30)
     eq(app._vol_pct.cget("text"), "30%")
-    app._set_volume(150)
-    eq(app._vol_var, 100, "100을 넘지 않음")
+    app._set_volume(170)
+    eq(app._vol_var, 150, "150을 넘지 않음")
     app._set_volume(-5)
     eq(app._vol_var, 0, "0 아래로 안 내려감")
     app._set_volume(60)
@@ -317,7 +317,21 @@ def volume_slider_drag(app):
     app._vol_press(Ev(c, w // 2, 5))
     app._vol_drag(Ev(c, w * 3 // 4, 5))
     app._vol_release(Ev(c, w * 3 // 4, 5))
-    near(app._vol_var, 75, 2, "슬라이더 위치가 볼륨")
+    near(app._vol_var, 112, 2, "슬라이더 위치가 볼륨 (끝이 150%)")
+
+
+def volume_over_100_plays_boosted_audio(app):
+    _audio_or_skip(app)
+    with_media(app)
+    app._set_volume(130)
+    wait_until(lambda: app.player._boost, 20, "키운 소리로 바뀜")
+    near(app.player._mix_volume(), 130 / 150, 0.01, "키운 소리 기준 볼륨")
+    app._media_play_pause()
+    expect(app.player.is_playing, "키운 소리 재생")
+    app._set_volume(80)
+    expect(not app.player._boost and app.player.is_playing, "100% 이하면 원래 소리로 이어 재생")
+    near(app.player._mix_volume(), 0.8, 0.01)
+    app._media_stop()
 
 
 # ───────── 재생 ─────────
@@ -482,7 +496,7 @@ def zoom(app):
 
 @test
 def volume(app):
-    steps(volume_set_mute_clamp_and_persist, volume_slider_drag)
+    steps(volume_set_mute_clamp_and_persist, volume_slider_drag, volume_over_100_plays_boosted_audio)
 
 
 @test

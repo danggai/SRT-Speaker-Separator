@@ -8,6 +8,8 @@ from ..srt_io import format_srt_time
 from ..theme import ACCENT, BG2, FG, FG_DIM, MEDIA_BG
 from ..widgets import IconButton, PopupMenu, Tooltip, flat_button
 
+VOL_MAX = 150   # 100% 넘으면 키운 소리로 재생
+
 
 class TimelineMixin:
     """미디어 패널: 재생바·파형·자막 레이어·확대/스크롤·볼륨."""
@@ -1575,18 +1577,22 @@ class TimelineMixin:
             self.after(50, self._vol_redraw)
             return
         c.delete("all")
-        v = self._vol_var          # 0~100
-        ratio = v / 100.0
-        filled = int(cw * ratio)
+        v = self._vol_var          # 0~VOL_MAX
+        filled = int(cw * v / VOL_MAX)
+        x100 = int(cw * 100 / VOL_MAX)
         track_y = ch // 2
 
         # 트랙 배경 (라운드 효과는 rect로 근사)
         c.create_rectangle(0, track_y - 4, cw, track_y + 4,
                            fill="#2A2A2A", outline="", tags="track")
-        # 채워진 부분 — ACCENT보다 약간 어두운 단일 색
+        # 채워진 부분 — ACCENT보다 약간 어두운 단일 색, 100% 넘은 부분은 주황
         if filled > 0:
-            c.create_rectangle(0, track_y - 4, filled, track_y + 4,
+            c.create_rectangle(0, track_y - 4, min(filled, x100), track_y + 4,
                                fill="#7A5FB0", outline="", tags="fill")
+        if filled > x100:
+            c.create_rectangle(x100, track_y - 4, filled, track_y + 4,
+                               fill="#C0803A", outline="", tags="fill")
+        c.create_line(x100, track_y - 6, x100, track_y + 6, fill="#888888", tags="track")
         # 핸들
         hx = max(6, min(filled, cw - 6))
         c.create_oval(hx - 6, track_y - 6, hx + 6, track_y + 6,
@@ -1594,7 +1600,8 @@ class TimelineMixin:
 
     def _vol_from_x(self, x):
         cw = self._vol_canvas.winfo_width()
-        return max(0, min(100, int(x / cw * 100)))
+        v = max(0, min(VOL_MAX, int(x / cw * VOL_MAX)))
+        return 100 if abs(v - 100) <= 3 else v   # 100%에 살짝 붙음
 
     def _vol_press(self, event):
         self._vol_dragging = True
@@ -1610,8 +1617,9 @@ class TimelineMixin:
         self._set_volume(self._vol_from_x(event.x))
 
     def _set_volume(self, v, save=True):
-        """볼륨 값(0~100) 반영: 플레이어·UI·아이콘 모두 갱신하고 설정에 저장."""
-        v = max(0, min(100, v))
+        """볼륨 값(0~VOL_MAX) 반영: 플레이어·UI·아이콘 모두 갱신하고 설정에 저장."""
+        v = max(0, min(VOL_MAX, v))
+        boost_changed = (v > 100) != (getattr(self, "_vol_var", 100) > 100)
         if save:
             # 드래그 중 매 움직임마다 파일을 쓰지 않도록, 멈춘 뒤 한 번만 저장
             if getattr(self, "_vol_save_job", None):
@@ -1633,6 +1641,8 @@ class TimelineMixin:
         self._vol_redraw()
         # 재생 중이어도 끊김 없이 실시간으로 볼륨만 반영
         self.player.set_volume(v)
+        if boost_changed and save:
+            self._apply_play_source()   # 100% 경계를 넘으면 키운 소리로 바꿈
 
     def _save_volume(self):
         self._vol_save_job = None
