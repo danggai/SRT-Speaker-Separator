@@ -57,9 +57,9 @@ class TipsMixin:
         on_timeline = focus is getattr(self, "_pb_canvas", None)   # 타임라인과 자막 줄은 같은 키도 동작이 다름
         if "ctrl" in mods:
             if on_timeline:
-                return [("Ctrl+경계 드래그", "옆 줄도 같이"), ("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "0.1초 이동"),
+                return [("Ctrl+경계 드래그", "옆 줄도 같이"), ("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "조금씩 이동"),
                         ("Ctrl+휠", "확대·축소"), ("Ctrl+Z", "실행 취소")]
-            return [("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "0.1초 이동"), ("Ctrl+C·V", "복사·붙여넣기"),
+            return [("Ctrl+클릭", "여러 줄 고르기"), ("Ctrl+←→", "조금씩 이동"), ("Ctrl+C·V", "복사·붙여넣기"),
                     ("Ctrl+F·H", "검색·바꾸기"), ("Ctrl+Z", "실행 취소")]
         if "shift" in mods:
             if on_timeline:

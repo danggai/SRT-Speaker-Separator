@@ -332,9 +332,9 @@ def play_pause_and_seek_keys(app):
     eq(app.btn_play._kind, "play")
     pos = app.player.position
     app_key("<Right>")
-    near(app.player.position, min(pos + 0.5, 40), 0.2, "→ 키는 0.5초 앞으로")
+    near(app.player.position, min(pos + 0.2, 40), 0.1, "→ 키는 0.2초 앞으로")
     app_key("<Left>")
-    near(app.player.position, pos, 0.2, "← 키는 0.5초 뒤로")
+    near(app.player.position, pos, 0.1, "← 키는 0.2초 뒤로")
     app_key("<Shift-Right>")
     near(app.player.position, min(pos + 5, 40), 0.3, "Shift+→ 는 5초")
     app._media_stop()

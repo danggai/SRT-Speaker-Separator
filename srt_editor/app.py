@@ -247,7 +247,7 @@ class SRTEditor(
         self.bind("<Alt-Shift-Right>", lambda e: self._nudge_edge("e", 1, e))
         self.bind("<Alt-Up>",   lambda e: self._move_boundary_word(True))    # 윗줄과 단어 하나 주고받기
         self.bind("<Alt-Down>", lambda e: self._move_boundary_word(False))
-        self.bind("<Control-Left>",  self._on_left_key)    # 재생 위치 0.1초 이동
+        self.bind("<Control-Left>",  self._on_left_key)    # 재생 위치 조금씩 이동 (설정: Ctrl 간격)
         self.bind("<Control-Right>", self._on_right_key)
         try:
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작

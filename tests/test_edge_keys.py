@@ -93,10 +93,10 @@ def touching_edges_move_together(app):
     near(times(app, 3)[1], 9.95, 0.002, "붙은 3번 끝도 같이")
     app._do_seek(3.0, update_selection=False)
     app_key("<Control-Right>", 0.02)
-    near(app.media_progress_var.get(), 3.1, 0.01, "Ctrl+→: 재생 위치 0.1초")
+    near(app.media_progress_var.get(), 3.05, 0.01, "Ctrl+→: 재생 위치 0.05초")
     near(times(app, 4)[0], 9.95, 0.002, "자막 시간은 그대로")
     app_key("<Control-Left>", 0.02)
-    near(app.media_progress_var.get(), 3.0, 0.01, "Ctrl+←: 0.1초 뒤로")
+    near(app.media_progress_var.get(), 3.0, 0.01, "Ctrl+←: 0.05초 뒤로")
     app._select_row(5, seek=False)   # 5번은 4번과 떨어져 있음
     app_key("<Alt-Left>", 0.02)
     near(times(app, 4)[1], 12.0, 0.002, "떨어진 줄은 그대로")
