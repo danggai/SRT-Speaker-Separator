@@ -15,6 +15,7 @@ from .ui.editing import EditingMixin
 from .ui.playback import PlaybackMixin
 from .ui.files import FileMixin
 from .ui.correct import CorrectionMixin
+from .ui.names import NameReviewMixin
 from .ui.tutorial import TutorialMixin
 from .ui.shortcuts import ShortcutsMixin
 from .ui.options import OptionsMixin
@@ -68,6 +69,7 @@ class SRTEditor(
     PlaybackMixin,
     FileMixin,
     CorrectionMixin,
+    NameReviewMixin,
     TutorialMixin,
     ShortcutsMixin,
     OptionsMixin,

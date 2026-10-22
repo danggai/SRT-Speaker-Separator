@@ -23,7 +23,10 @@ class CorrectionMixin:
         texts = [s.get("text", "") for s in self.subtitles]
         fixes = correction.suggest(texts, proper_nouns=self._proper_nouns)
         if not fixes:
-            messagebox.showinfo("자막 교정", "고칠 표기를 찾지 못했어요.", parent=self)
+            if self._name_groups():   # 줄별 제안이 없어도 이름 묶음은 있을 수 있음
+                self._open_name_review()
+            else:
+                messagebox.showinfo("자막 교정", "고칠 표기를 찾지 못했어요.", parent=self)
             return
 
         win = tk.Toplevel(self)
@@ -172,15 +175,20 @@ class CorrectionMixin:
                 fg=FG_DIM)
             _update_title()
 
+        def _to_names():
+            _close()
+            self._open_name_review()
+        flat_button(right_box, "이름 검수", _to_names, bg=BG3, hover="#33333C",
+                    padx=14, pady=6).pack(side="right", padx=(8, 0))
         if getattr(self, "media_path", None):
             check_btn = flat_button(right_box, "음성으로 다시 확인", _audio_check,
                                     bg=theme.ON_BG, fg=theme.ON_FG, hover=theme.ON_BG_HOVER,
                                     padx=14, pady=6)
-            check_btn.pack()
+            check_btn.pack(side="right")
         else:
             tk.Label(right_box, text="미디어를 열면 음성으로\n다시 확인할 수 있어요",
                      bg=BG, fg=FG_HINT, justify="right",
-                     font=(theme.FONT_FAMILY, 8)).pack()
+                     font=(theme.FONT_FAMILY, 8)).pack(side="right")
 
         # ── 하단 버튼 ─────────────────────────
         def _toggle_all():

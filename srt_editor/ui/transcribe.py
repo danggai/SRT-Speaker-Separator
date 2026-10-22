@@ -356,6 +356,7 @@ class TranscribeMixin:
                     self._set_doc_title(_base)
                     if _fixed:
                         show_toast(self, f"자주 고친 말 {_fixed}곳을 바로잡았어요", duration_ms=3000)
+                    self.after(400, self._offer_name_review)
                 self.after(0, _done)
 
             except Exception as e:
