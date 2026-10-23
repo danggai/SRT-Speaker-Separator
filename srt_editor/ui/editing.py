@@ -353,6 +353,8 @@ class EditingMixin:
             t_e = t
         if t_e - t_s < self._MIN_SUB_DURATION:
             return False
+        if (t_s, t_e) == cache[idx]:
+            return True   # 그대로면 실행 취소 기록도 남기지 않음
         link = self._linked_edge(idx, which)
         if link is not None:
             l_s, l_e = cache[link]

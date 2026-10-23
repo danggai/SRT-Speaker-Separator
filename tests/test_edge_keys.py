@@ -28,6 +28,7 @@ def q_w_set_start_and_end_to_playhead_with_undo(app):
     app_key("w")
     app._do_seek(9.3, update_selection=False)
     app_key("w")
+    app_key("w")   # 같은 자리에 한 번 더: 기록 안 남김
     app_key("<Control-z>")
     near(times(app, 3)[1], 9.0, 0.002, "W를 다시 찍고 Ctrl+Z: 바로 전에 찍은 자리로 (한 번씩 되돌림)")
     app_key("<Control-z>")
