@@ -334,8 +334,10 @@ class EditingMixin:
         if t is None:
             return None
         k = 1 if which == "s" else 0   # 시작이면 옆 줄의 끝, 끝이면 옆 줄의 시작
+        lanes = getattr(self, "_wf_lanes", {}) or {}
+        lane = lambda i: lanes.get(i, self.subtitles[i].get("_lane", 0) if i < len(self.subtitles) else 0)
         for j in sorted(range(max(0, idx - 3), min(len(cache), idx + 4)), key=lambda j: abs(j - idx)):
-            if j != idx and cache[j][k] is not None and abs(cache[j][k] - t) < 0.0015:
+            if j != idx and cache[j][k] is not None and abs(cache[j][k] - t) < 0.0015 and lane(j) == lane(idx):   # 같은 레이어만
                 return j
         return None
 

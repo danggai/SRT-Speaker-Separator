@@ -114,6 +114,16 @@ def touching_edges_move_together(app):
     app_key("<Alt-Left>", 0.02)
     near(times(app, 3)[1], 9.95, 0.002, "설정을 끄면 따로 움직임")
     app._set_opt("link_edges", True)
+    app.subtitles[3]["timestamp"] = f"{ts(7.5)} --> {ts(9.9)}"
+    app._rebuild_ts_cache()
+    app._wf_manual_lanes = 2
+    app.subtitles[3]["_lane"], app.subtitles[4]["_lane"] = 0, 1   # 다른 레이어
+    app._pb_redraw()
+    pump(0.05)
+    eq((app._wf_lanes.get(3), app._wf_lanes.get(4)), (0, 1))
+    app._select_row(4, seek=False)
+    app_key("<Alt-Left>", 0.02)
+    near(times(app, 3)[1], 9.9, 0.002, "다른 레이어 줄은 붙어 있어도 따로")
 
 
 @test
