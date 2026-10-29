@@ -204,13 +204,18 @@ def split_at_pauses(seg, pause=None, min_chars=None):
     return out
 
 
-def finish_text(text, add_period):
+_CASUAL_DROP = re.compile(r"[.,。，](?!\d)|(?<!\d)[.,。，]")   # 숫자 사이(3.5, 100,000)는 남김
+_QUOTES = re.compile(r"[\"“”‘’「」『』]")
+
+
+def finish_text(text, formal):
+    """formal: 쉼표·온점·따옴표를 살리고 문장 끝에 온점. 아니면 ?!~만 남김."""
     text = text.strip()
     if not text:
         return text
-    if add_period:
-        return text if text[-1] in "。.!?！？" else text + "."
-    return text[:-1].rstrip() if text[-1] in ".。" else text   # Whisper가 붙인 온점만 뺌 (?! 유지)
+    if formal:
+        return text if text[-1] in "。.!?！？\"”’…~" else text + "."
+    return re.sub(r"\s{2,}", " ", _CASUAL_DROP.sub(" ", _QUOTES.sub("", text))).strip()
 
 
 def drop_repeats(lines, keep=1, run=3):

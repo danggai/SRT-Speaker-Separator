@@ -75,7 +75,7 @@ def hallucinations_and_repeats_are_removed():
     segs = [{"start": 0, "end": 3, "text": "마무 루시, 헥시아, 아구, 아빠킹, 아즈, 레비안, 마무"},
             {"start": 4, "end": 5, "text": "루시, 헥시아 왔어?"},
             {"start": 6, "end": 7, "text": "마무 루시 헥시아 아구"}]
-    eq([l["text"] for l in T.build_lines(segs, 25, prompt_words=words)], ["루시, 헥시아 왔어?", "마무 루시 헥시아 아구"],
+    eq([l["text"] for l in T.build_lines(segs, 25, prompt_words=words)], ["루시 헥시아 왔어?", "마무 루시 헥시아 아구"],
        "사전 단어만 쉼표로 늘어놓은 줄(힌트가 새어 나온 것)만 뺌")
 
 
@@ -100,6 +100,9 @@ def period_option_adds_or_strips_whisper_period():
     eq(T.finish_text("안녕하세요.", False), "안녕하세요")
     eq(T.finish_text("진짜?", False), "진짜?")
     eq(T.finish_text("안녕하세요", True), "안녕하세요.")
+    eq(T.finish_text("아, 그래서 \"진짜\"라고 했어요.", False), "아 그래서 진짜라고 했어요", "격식 끄면 쉼표·따옴표·온점 빼기")
+    eq(T.finish_text("3.5배, 100,000원...", False), "3.5배 100,000원", "숫자 안의 점·쉼표는 남김")
+    eq(T.finish_text("아, 그래서 \"진짜\"라고 했어", True), "아, 그래서 \"진짜\"라고 했어.", "격식 켜면 그대로 두고 온점")
 
 
 @test

@@ -618,8 +618,8 @@ class SettingsMixin:
         Segmented(right, [("한국어", "ko"), ("자동 감지", "auto")], _lang_var, _save_lang).pack()
 
         card = self._settings_card(parent, "다듬기")
-        # 문장 끝 마침표
-        _, right = self._settings_row(card, ".", "문장 끝 마침표", None)
+        # 문장부호 (격식체)
+        _, right = self._settings_row(card, ".", "문장부호 살리기", "쉼표·온점·따옴표 (끄면 ?!만)")
         if not hasattr(self, "_transcribe_period_var"):
             self._transcribe_period_var = tk.BooleanVar(
                 value=getattr(self, "_transcribe_period", False))

@@ -233,7 +233,7 @@ class TranscribeMixin:
         def _save_period():
             self._transcribe_period = self._transcribe_period_var.get()
             cfg = _load_config(); cfg["transcribe_period"] = self._transcribe_period; _save_config(cfg)
-        _, right = self._settings_row(card, ".", "문장 끝 마침표")
+        _, right = self._settings_row(card, ".", "문장부호 살리기", "쉼표·온점·따옴표 (끄면 ?!만)")
         ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
 
         def _start():
