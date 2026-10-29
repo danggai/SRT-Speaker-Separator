@@ -499,6 +499,15 @@ def search_is_case_insensitive_and_handles_regex_chars(app):
     app._search_var.set("[x]")
     pump(0.2)
     eq(app._search_hits, [4])
+    app.subtitles[4]["text"] = "아니 아니 그게 아니라"
+    app._search_var.set("아니")
+    pump(0.2)
+    eq(app._search_hits, [4, 4, 4], "한 줄에 여러 번이면 그만큼 셈")
+    eq(app._search_count.cget("text"), "1 / 3")
+    app._replace_var.set("어")
+    app._search_step(1)
+    app._replace_one()
+    eq(app.subtitles[4]["text"], "아니 어 그게 아니라", "바꾸기는 찾은 곳 하나만")
     app._close_search()
 
 

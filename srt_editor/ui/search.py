@@ -15,7 +15,7 @@ class SearchMixin:
         bar = tk.Frame(parent, bg=BG2, highlightthickness=1, highlightbackground="#3A3A48")
         self._search_bar, self._search_before = bar, before
         self._search_var = tk.StringVar()
-        self._search_hits = []
+        self._search_hits, self._search_starts = [], []
         self._search_pos = -1
 
         tk.Label(bar, text="⌕", bg=BG2, fg=FG_DIM,
@@ -91,8 +91,11 @@ class SearchMixin:
         if rx is None or not self._search_hits or self._search_pos < 0:
             return
         idx = self._search_hits[self._search_pos]
+        at = self._search_starts[self._search_pos] if self._search_pos < len(self._search_starts) else None
         sub = self.subtitles[idx]
-        new = trim_text(rx.sub(lambda m: self._replace_var.get(), sub.get("text", "")))
+        text = sub.get("text", "")
+        m = rx.match(text, at) if at is not None else None
+        new = trim_text(text[:m.start()] + self._replace_var.get() + text[m.end():]) if m else text   # 찾은 곳 하나만
         if new != sub.get("text", ""):
             self._push_undo()
             self._learn_fixes([(sub.get("text", ""), new)])
@@ -168,8 +171,18 @@ class SearchMixin:
             self._search_hits, self._search_pos = [], -1
             self._search_count.configure(text="", fg=FG_DIM)
             return
-        self._search_hits = [i for i, s in enumerate(self.subtitles)
-                             if q in s.get("text", "").lower() or q in s.get("speaker", "").lower()]
+        hits, starts = [], []   # 일치한 곳마다 (줄, 글자 위치) — 한 줄에 두 번이면 두 개
+        for i, s in enumerate(self.subtitles):
+            text = s.get("text", "").lower()
+            at, k = [], text.find(q)
+            while k >= 0:   # 겹치지 않게 (ㅋㅋㅋ에서 ㅋㅋ는 한 번)
+                at.append(k)
+                k = text.find(q, k + len(q))
+            if not at and q in s.get("speaker", "").lower():
+                at = [None]   # 화자 이름 일치
+            hits += [i] * len(at)
+            starts += at
+        self._search_hits, self._search_starts = hits, starts
         if not self._search_hits:
             self._search_pos = -1
             self._search_count.configure(text="없음", fg="#FF6B8A")
