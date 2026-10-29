@@ -236,6 +236,8 @@ class SRTEditor(
             self.bind(f"<{_k}>", self._on_speaker_key)
         self.bind("m", self.merge_selected)
         self.bind("M", self.merge_selected)
+        self.bind("t", self._fill_text_shortcut)
+        self.bind("T", self._fill_text_shortcut)
         self.bind("s", self._split_subtitle_shortcut)
         self.bind("S", self._split_subtitle_shortcut)
         self.bind("v", self._toggle_video)
@@ -256,6 +258,7 @@ class SRTEditor(
             # 한글 입력 상태(한영)에서 's' 키 위치에 대응하는 'ㄴ'도 동일하게 동작
             self.bind("ㄴ", self._split_subtitle_shortcut)
             self.bind("ㅡ", self.merge_selected)
+            self.bind("ㅅ", self._fill_text_shortcut)
             self.bind("ㅍ", self._toggle_video)
             self.bind("ㄹ", self._review_next_check)
             self.bind("ㅂ", lambda e: self._mark_edge("s", e))

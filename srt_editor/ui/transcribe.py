@@ -36,6 +36,78 @@ class TranscribeMixin:
             total += n
         return total
 
+    def _fill_targets(self):
+        """받아 적을 줄: 선택한 줄 중 빈 줄 (빈 줄이 없으면 선택한 줄 전부)."""
+        sel = [i for i in self._selected_targets() if 0 <= i < len(self.subtitles)
+               and i < len(self._ts_cache) and None not in self._ts_cache[i]]
+        empty = [i for i in sel if not (self.subtitles[i].get("text") or "").strip()]
+        return empty or sel
+
+    def _fill_text_shortcut(self, event=None):
+        """T: 선택한 구간만 자동 자막."""
+        if isinstance(self.focus_get(), tk.Entry):
+            return
+        self._fill_text()
+        return "break"
+
+    def _fill_text(self):
+        """선택한 줄의 구간 소리만 받아 적어 내용 채우기."""
+        if not self.media_path:
+            show_toast(self, "미디어를 먼저 열어 주세요")
+            return
+        if getattr(self, "_fill_busy", False):
+            show_toast(self, "받아 적는 중이에요")
+            return
+        idxs = self._fill_targets()
+        if not idxs:
+            return
+        self._blur_all_entries()
+        subs = [self.subtitles[i] for i in idxs]
+        spans = [list(self._ts_cache[i]) for i in idxs]
+        hint = self._build_proper_noun_hint()
+        lang = getattr(self, "_transcribe_language", "ko")
+        job = {"type": "fill", "media": self.media_path, "spans": spans,
+               "mode": getattr(self, "_diarize_mode_init", None) or _DEFAULT_ASR_MODE,
+               "language": None if lang == "auto" else lang, "hotwords": hint.get("hotwords")}
+        self._fill_busy = True
+        show_toast(self, f"받아 적는 중… ({len(subs)}줄)")
+
+        def work():
+            try:
+                texts, err = self._run_ai_job(job)["texts"], None
+            except Exception as e:   # noqa: BLE001
+                texts, err = [], e
+            self.after(0, lambda: done(texts, err))
+
+        def done(texts, err):
+            self._fill_busy = False
+            if err:
+                show_toast(self, "받아 적지 못했어요")
+                return
+            words = set(getattr(self, "_proper_nouns", None) or ())
+            period = getattr(self, "_transcribe_period", False)
+            lines = [{"text": transcript_post.finish_text(t, period) if t else ""} for t in texts]
+            self._apply_learned_fixes(lines)
+            alive = {id(s) for s in self.subtitles}
+            pairs = [(s, l["text"]) for s, l in zip(subs, lines)
+                     if id(s) in alive and l["text"] and not transcript_post.is_hallucination(l["text"])
+                     and not transcript_post.is_prompt_leak(l["text"], words)]
+            if not pairs:
+                show_toast(self, "알아듣지 못했어요")
+                return
+            self._push_undo()
+            for s, t in pairs:
+                s["text"] = t
+            self._unsaved = True
+            self._fill_slots(self._vscroll_top)
+            self._pb_redraw()
+            show_toast(self, f"{len(pairs)}줄 받아 적음")
+
+        def start():
+            import threading
+            threading.Thread(target=work, daemon=True).start()
+        self._ensure_ai(start)
+
     def _open_auto_transcribe(self):
         """툴바 '자동 자막': 열린 미디어로 자막을 새로 만든다 (있던 자막은 바뀜)."""
         if not self.media_path:

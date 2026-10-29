@@ -348,6 +348,18 @@ def job_verify(job):
     return {"results": res}
 
 
+def job_fill(job):
+    import correction_audio
+    def prog(n, total):
+        status(f"받아 적는 중…  {n} / {total}", "asr", 100.0 * n / max(1, total))
+    status("음성 인식 모델 불러오는 중...", "model", 0)
+    texts = correction_audio.transcribe_spans(job["media"], [tuple(s) for s in job["spans"]],
+                                              mode=job.get("mode", "accurate"), device=job.get("device", "auto"),
+                                              language=job.get("language") or None, hotwords=job.get("hotwords") or None,
+                                              on_progress=prog)
+    return {"texts": texts}
+
+
 def job_probe(job):
     import torch
     import whisperx  # noqa: F401  (불러와지는지 확인)
@@ -371,7 +383,7 @@ def job_echo(job):
     return {"echo": job.get("value")}
 
 
-JOBS = {"diarize": job_diarize, "transcribe": job_transcribe, "verify": job_verify, "probe": job_probe,
+JOBS = {"diarize": job_diarize, "transcribe": job_transcribe, "verify": job_verify, "fill": job_fill, "probe": job_probe,
         "echo": job_echo}
 
 

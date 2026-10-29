@@ -595,6 +595,14 @@ class SubtitleTableMixin:
                          accelerator="Del",
                          command=lambda: self._on_delete())
         menu.add_separator()
+        fill = self._fill_targets()
+        empty = fill and not any((self.subtitles[i].get("text") or "").strip() for i in fill)
+        menu.add_command(label=("이 구간 자동 자막" if empty else "이 구간 다시 받아 적기")
+                         + (f" ({len(fill)}개)" if len(fill) > 1 else ""),
+                         accelerator="T",
+                         state="normal" if fill and self.media_path else "disabled",
+                         command=self._fill_text)
+        menu.add_separator()
 
         # ── 화자 변경 ─────────────────────────
         if self.speakers:

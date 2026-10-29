@@ -226,6 +226,33 @@ def narrow_window_hides_shortcut_buttons_and_restores_them(app):
 
 
 @test
+def t_key_fills_empty_selected_lines_from_audio(app):
+    from harness import app_key
+    load_sample(app, with_wav=True)
+    for i in (2, 3):
+        app.subtitles[i]["text"] = ""
+    keep = app.subtitles[4]["text"]
+    app._selected_rows = {2, 3, 4}
+    app._selected_row_idx = 2
+    jobs = []
+    app._ensure_ai = lambda then: then()
+
+    def fake(job, **k):
+        jobs.append(job)
+        return {"texts": ["새로 들은 말", ""]}
+    app._run_ai_job = fake
+    app_key("t")
+    wait_until(lambda: app.subtitles[2]["text"] == "새로 들은 말", 5, "받아 적은 글 채움")
+    eq(jobs[0]["type"], "fill")
+    eq(len(jobs[0]["spans"]), 2, "선택 중 빈 줄만 보냄")
+    near(jobs[0]["spans"][0][0], app._ts_cache[2][0], 0.001)
+    eq(app.subtitles[3]["text"], "", "못 알아들은 줄은 그대로")
+    eq(app.subtitles[4]["text"], keep, "글이 있던 줄은 그대로")
+    app._undo()
+    eq(app.subtitles[2]["text"], "", "실행 취소 한 번에 되돌림")
+
+
+@test
 def auto_transcribe_loads_lines_and_removes_temp_file(app):
     import tempfile
     p = load_sample(app, n=4, with_wav=True)
