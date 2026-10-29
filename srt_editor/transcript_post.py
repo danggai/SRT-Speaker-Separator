@@ -258,11 +258,21 @@ def fill_gaps(lines, max_gap=None):
     return lines
 
 
-def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False):
-    """whisperx segments → 자막 줄 목록 [{start, end, text, speaker}]."""
+def is_prompt_leak(text, words):
+    """사전 단어 나열(Whisper에 넘긴 힌트)을 그대로 받아 적은 조각인지."""
+    if not words or "," not in text:
+        return False
+    toks = [t for t in re.split(r"[\s,.!?…]+", text) if t]
+    hits = sum(t in words for t in toks)
+    return hits >= 3 and hits >= 0.8 * len(toks)
+
+
+def build_lines(segments, max_chars=DEFAULT_MAX_CHARS, add_period=False, prompt_words=None):
+    """whisperx segments → 자막 줄 목록 [{start, end, text, speaker}]. prompt_words: Whisper에 넘긴 사전 단어."""
+    words = set(prompt_words or ())
     lines = []
     for seg in segments:
-        if is_hallucination(seg.get("text") or ""):
+        if is_hallucination(seg.get("text") or "") or is_prompt_leak(seg.get("text") or "", words):
             continue
         for piece in split_at_pauses(seg):
             for l in split_segment(piece, max_chars):

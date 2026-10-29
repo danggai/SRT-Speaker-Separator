@@ -71,6 +71,12 @@ def hallucinations_and_repeats_are_removed():
        "지어낸 문장은 빼고, 실제로 말할 법한 '감사합니다'와 긴 문장은 남김")
     eq((round(lines[2]["start"], 3), round(lines[2]["end"], 3)), (7.95, 12.95),
        "반복 줄은 하나로 합치고 시간은 이어 붙임 (시작 0.05초 앞당김, 끝은 다음 줄까지 메움)")
+    words = ["마무", "루시", "헥시아", "아구", "아빠킹", "아즈", "레비안"]
+    segs = [{"start": 0, "end": 3, "text": "마무 루시, 헥시아, 아구, 아빠킹, 아즈, 레비안, 마무"},
+            {"start": 4, "end": 5, "text": "루시, 헥시아 왔어?"},
+            {"start": 6, "end": 7, "text": "마무 루시 헥시아 아구"}]
+    eq([l["text"] for l in T.build_lines(segs, 25, prompt_words=words)], ["루시, 헥시아 왔어?", "마무 루시 헥시아 아구"],
+       "사전 단어만 쉼표로 늘어놓은 줄(힌트가 새어 나온 것)만 뺌")
 
 
 def timing_fix_removes_overlap_and_stretches_tiny_lines():

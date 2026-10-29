@@ -294,7 +294,8 @@ class TranscribeMixin:
 
                 self.after(0, lambda: _set("자막 줄 나누는 중...", 72 if with_diarize else 92))
                 split_segs = transcript_post.build_lines(
-                    segments, getattr(self, "_transcribe_max_chars", transcript_post.DEFAULT_MAX_CHARS), getattr(self, "_transcribe_period", False))
+                    segments, getattr(self, "_transcribe_max_chars", transcript_post.DEFAULT_MAX_CHARS), getattr(self, "_transcribe_period", False),
+                    prompt_words=getattr(self, "_proper_nouns", None) if _hint else None)
                 _fixed = self._apply_learned_fixes(split_segs)
 
                 _auto = None
