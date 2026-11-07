@@ -173,40 +173,39 @@ def job_diarize(job):
 
 
 def _load_audio(path, lo, hi):
-    """whisperx.load_audio와 같은 결과 (16kHz 모노 float32). 긴 파일도 진행률을 알림."""
-    import re
-    import subprocess
-    import threading
+    """whisperx.load_audio와 같은 결과 (16kHz 모노 float32). 긴 파일도 진행률을 알림.
+    ffmpeg 실행 파일 대신 PyAV(faster-whisper가 같이 설치)로 읽어 ffmpeg가 PATH에 없어도 된다."""
+    import av
     import numpy as np
-    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-threads", "0", "-i", path, "-f", "s16le", "-ac", "1",
-           "-acodec", "pcm_s16le", "-ar", str(SR), "-"]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    dur, err = [0.0], []
-
-    def read_err():
-        for line in iter(p.stderr.readline, b""):
-            err.append(line)
-            m = not dur[0] and re.search(rb"Duration: (\d+):(\d+):(\d+\.?\d*)", line)
-            if m:
-                dur[0] = int(m[1]) * 3600 + int(m[2]) * 60 + float(m[3])
-    t = threading.Thread(target=read_err, daemon=True)
-    t.start()
     progress = _stage_progress("음성 불러오는 중", "audio", lo, hi)
     status("음성 불러오는 중...", "audio", lo)
-    buf = bytearray()
-    while True:
-        b = p.stdout.read(SR * 2 * 60)   # 1분 분량씩
-        if not b:
-            break
-        buf += b
-        if dur[0]:
-            progress(min(99.0, 100 * len(buf) / (SR * 2 * dur[0])))
-    p.wait()
-    t.join(2)
-    if p.returncode:
-        raise RuntimeError("음성을 불러오지 못했어요: " + b"".join(err[-5:]).decode("utf-8", "replace").strip())
-    audio = np.frombuffer(buf, np.int16).astype(np.float32)
+    chunks, n = [], 0
+    try:
+        with av.open(path) as c:
+            if not c.streams.audio:
+                raise ValueError("오디오 트랙이 없어요")
+            stream = c.streams.audio[0]
+            dur = c.duration / 1e6 if c.duration else 0.0
+            res = av.AudioResampler(format="s16", layout="mono", rate=SR)   # s16 출력이라 ffmpeg -ac 1과 같은 채널 평균
+            for packet in c.demux(stream):
+                try:
+                    frames = packet.decode()
+                except av.error.InvalidDataError:   # ffmpeg처럼 깨진 조각은 건너뜀
+                    continue
+                for frame in frames:
+                    for f in res.resample(frame):
+                        a = f.to_ndarray().reshape(-1)
+                        chunks.append(a)
+                        n += len(a)
+                if dur:
+                    progress(min(99.0, 100 * n / (SR * dur)))
+            for f in res.resample(None):
+                chunks.append(f.to_ndarray().reshape(-1))
+    except Exception as e:
+        raise RuntimeError(f"음성을 불러오지 못했어요: {e}") from e
+    if not chunks:
+        return np.zeros(0, np.float32)
+    audio = np.concatenate(chunks).astype(np.float32)
     audio /= 32768.0
     return audio
 
