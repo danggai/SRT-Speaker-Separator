@@ -164,10 +164,20 @@ def split_segment(seg, max_chars):
         last = max(last, min(t, t_e))
         fixed.append((p, last))
     at = _time_at(fixed)
-    out, pos = [], 0
+    ws = seg.get("words") or []
+    toks = text.split()
+    timed = len(ws) == len(toks) and all("start" in w and "end" in w for w in ws)
+    out, pos, ti = [], 0, 0
     for line in lines:
         n = len(line.replace(" ", ""))
-        out.append({"start": at(pos), "end": at(pos + n), "text": line, "speaker": seg.get("speaker", "")})
+        ln = {"start": at(pos), "end": at(pos + n), "text": line, "speaker": seg.get("speaker", "")}
+        lt = line.split()
+        if timed and toks[ti:ti + len(lt)] == lt:   # 단어 사이 틈 시각 (S로 나눌 때 단어 경계 찾기)
+            ln["gaps"] = [(ws[k - 1]["end"] + ws[k]["start"]) / 2 for k in range(ti + 1, ti + len(lt))]
+            ti += len(lt)
+        else:
+            timed = False
+        out.append(ln)
         pos += n
     return out
 

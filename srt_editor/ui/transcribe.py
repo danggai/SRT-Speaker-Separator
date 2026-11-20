@@ -418,6 +418,10 @@ class TranscribeMixin:
                         pass
                     if _auto is not None and len(_auto) == len(self.subtitles):
                         self._mark_auto_speakers(range(len(self.subtitles)), _auto)
+                    if len(split_segs) == len(self.subtitles):
+                        for sub, sg in zip(self.subtitles, split_segs):
+                            if sg.get("gaps") is not None:
+                                sub["_gaps"] = sg["gaps"]
                     # 저장 경로를 원본 미디어 파일과 같은 이름/위치로 미리 지정
                     # (예: movie.mp4 → movie.srt). 아직 그 경로에 실제로 쓰여진
                     # 것은 아니므로 미저장 상태로 표시해, 저장(Ctrl+S) 한 번이면

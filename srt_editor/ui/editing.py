@@ -18,6 +18,20 @@ def split_text_by_ratio(text, ratio):
     return (front, back) if front and back else None
 
 
+def split_text_by_gaps(text, gaps, pos):
+    """단어 사이 틈 시각(gaps) 중 pos에 가장 가까운 곳에서 나눔. (앞, 뒤, 앞 틈, 뒤 틈) 또는 None."""
+    toks = text.split()
+    if not gaps or len(toks) != len(gaps) + 1:
+        return None
+    j = min(range(len(gaps)), key=lambda k: abs(pos - gaps[k]))
+    return " ".join(toks[:j + 1]), " ".join(toks[j + 1:]), gaps[:j], gaps[j + 1:]
+
+
+def valid_gaps(sub):
+    g = sub.get("_gaps")
+    return g if g is not None and len(sub.get("text", "").split()) == len(g) + 1 else None
+
+
 class EditingMixin:
     """실행 취소/다시 실행, 잘라내기/복사/붙여넣기, 자막 추가·분할·삭제."""
 
@@ -270,14 +284,21 @@ class EditingMixin:
         speaker = sub.get("speaker", "")
 
         front, back = text, text
+        g_front = g_back = None
         if self._opt("split_text"):
-            parts = split_text_by_ratio(text, (pos - t_s) / (t_e - t_s))
+            by_word = split_text_by_gaps(text, valid_gaps(sub), pos)   # 자동 자막 단어 시간이 있으면 그 경계
+            parts = by_word[:2] if by_word else split_text_by_ratio(text, (pos - t_s) / (t_e - t_s))
             if parts:
                 front, back = parts
+            if by_word:
+                g_front, g_back = by_word[2:]
         sub["timestamp"] = f"{format_srt_time(t_s)} --> {format_srt_time(pos)}"
         sub["text"] = front
         new_sub = {"timestamp": f"{format_srt_time(pos)} --> {format_srt_time(t_e)}",
                    "text": back, "speaker": speaker}
+        sub.pop("_gaps", None)
+        if g_front is not None:
+            sub["_gaps"], new_sub["_gaps"] = g_front, g_back
         # 뒷부분도 원본과 같은 레이어를 유지하도록 _lane을 그대로 물려준다.
         # (안 그러면 새 자막은 _lane이 없어 매번 새로 자동 배치되면서
         #  원본과 다른 레이어로 튀어버리는 버그가 있었다)
@@ -435,6 +456,13 @@ class EditingMixin:
                 share[spk] = share.get(spk, 0.0) + max(0.0, t_e - t_s)
         speaker = max(share, key=share.get) if share else ""
         text = " ".join(t for t in (self.subtitles[i].get("text", "").strip() for i in targets) if t)
+        gaps = []   # 이어 붙인 줄의 단어 틈 (모든 줄에 있고 시간 순일 때만)
+        for k, (i, (t_s, t_e)) in enumerate(zip(targets, times)):
+            g = valid_gaps(self.subtitles[i])
+            if g is None or (k and t_s < times[k - 1][0]):
+                gaps = None
+                break
+            gaps += ([(times[k - 1][1] + t_s) / 2] if k else []) + g
 
         self._push_undo()
         first = targets[0]
@@ -443,6 +471,9 @@ class EditingMixin:
                                f"{format_srt_time(max(t for _, t in times))}")
         merged["text"] = text
         merged["speaker"] = speaker
+        merged.pop("_gaps", None)
+        if gaps is not None:
+            merged["_gaps"] = gaps
         for i in sorted(targets[1:], reverse=True):
             self.subtitles.pop(i)
         self._selected_rows = set()

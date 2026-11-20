@@ -231,6 +231,8 @@ class FileMixin:
         # 화자 분석이 자동으로 정한 줄·확인 필요 줄 (다시 분석할 때 직접 지정한 줄만 기준으로 쓰도록)
         if len(getattr(self, "_wf_tracks", ())) > 1:   # 파형 줄별 트랙
             meta["wave_tracks"] = self._wf_row_tracks()
+        if any(s.get("_gaps") for s in self.subtitles):   # 단어 사이 틈 (1/100초)
+            meta["word_gaps"] = [[round(g * 100) for g in s.get("_gaps") or ()] for s in self.subtitles]
         auto = [i for i, s in enumerate(self.subtitles) if s.get("_auto")]
         if auto:
             meta["auto_lines"] = auto
@@ -253,6 +255,11 @@ class FileMixin:
                 if isinstance(ln, int):
                     sub["_lane"] = ln
         n_sub = len(self.subtitles)
+        wg = meta.get("word_gaps")
+        if isinstance(wg, list) and len(wg) == n_sub:
+            for sub, g in zip(self.subtitles, wg):
+                if isinstance(g, list) and g and all(isinstance(v, int) for v in g):
+                    sub["_gaps"] = [v / 100 for v in g]
         for key, flag in (("auto_lines", "_auto"), ("check_lines", "_check")):
             idx = meta.get(key)
             if isinstance(idx, list):

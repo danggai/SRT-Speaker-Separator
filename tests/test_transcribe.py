@@ -59,6 +59,8 @@ def short_segment_splits_at_pause_or_sentence_end_but_keeps_tiny_pieces():
     seg3 = {"start": 0.0, "end": 2.0, "text": "예? 울지마!",
             "words": [{"word": "예?", "start": 0.0, "end": 0.3}, {"word": "울지마!", "start": 0.4, "end": 1.0}]}
     eq([l["text"] for l in T.build_lines([seg3], 20)], ["예?", "울지마!"], "짧아도 문장 끝(?!)이면 나눔 — 말 주고받는 곳")
+    eq([l.get("gaps") for l in T.build_lines([seg2], 20)], [[0.4, 0.95, 1.15], [], []],
+       "줄마다 단어 사이 틈 시각 (S로 나눌 때 씀)")
 
 
 def hallucinations_and_repeats_are_removed():

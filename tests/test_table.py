@@ -322,6 +322,32 @@ def split_keeps_layer_of_original(app):
     eq(app.subtitles[3].get("_lane"), 1, "뒷부분도 같은 레이어")
 
 
+def split_uses_word_gaps_merge_and_save_keep_them(app):
+    import os
+    from harness import fresh_dir
+    load_sample(app)
+    # 자막 2: 5.0 ~ 7.0, 글자 수 비율로는 6.0에서 "가나다라마바 / 사 아"가 아닌 곳에서 잘림
+    app.subtitles[2]["text"] = "가나다라마바 사 아"
+    app.subtitles[2]["_gaps"] = [6.0, 6.5]
+    app._rebuild_ts_cache()
+    app.split_subtitle_at(2, 6.03)
+    eq((app.subtitles[2]["text"], app.subtitles[3]["text"]), ("가나다라마바", "사 아"), "단어 틈 시각에서 나눔")
+    eq((app.subtitles[2].get("_gaps"), app.subtitles[3].get("_gaps")), ([], [6.5]), "틈도 나눠 가짐")
+    app._selected_rows = {2, 3}
+    app._selected_row_idx = 2
+    app.merge_selected()
+    eq((app.subtitles[2]["text"], app.subtitles[2].get("_gaps")), ("가나다라마바 사 아", [6.03, 6.5]),
+       "합치면 두 줄 사이도 틈으로")
+    p = os.path.join(fresh_dir(), "gaps.srt")
+    app._do_write_srt(p)
+    app._load_srt(p)
+    eq(app.subtitles[2].get("_gaps"), [6.03, 6.5], "저장했다 다시 열어도 남음")
+    app.subtitles[2]["text"] = "가나다라마바사아"
+    app._rebuild_ts_cache()
+    app.split_subtitle_at(2, 6.03)
+    expect(app.subtitles[2].get("_gaps") is None, "글자를 고쳐 단어 수가 바뀌면 틈은 안 씀")
+
+
 def split_time_never_produces_invalid_timestamp(app):
     load_sample(app)
     import re
@@ -652,7 +678,7 @@ def delete_copy_paste(app):
 
 @test
 def split_and_merge(app):
-    steps(split_subtitle_at_position, alt_arrows_move_one_word_across_split, split_keeps_layer_of_original, split_time_never_produces_invalid_timestamp, merge_selected_rows, merge_single_selection_merges_with_next_and_last_row_is_ignored)
+    steps(split_subtitle_at_position, alt_arrows_move_one_word_across_split, split_keeps_layer_of_original, split_uses_word_gaps_merge_and_save_keep_them, split_time_never_produces_invalid_timestamp, merge_selected_rows, merge_single_selection_merges_with_next_and_last_row_is_ignored)
 
 
 @test
