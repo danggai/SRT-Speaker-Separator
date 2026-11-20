@@ -237,6 +237,7 @@ class TranscribeMixin:
         ToggleSwitch(right, self._transcribe_period_var, _save_period).pack()
 
         def _start():
+            _cs_entry_commit()   # Enter 없이 바로 눌러도 입력한 글자 수 반영
             hf_tok = hf_tok_var.get().strip()
             if mode_var.get() == "diarize" and not hf_tok:
                 messagebox.showwarning("자막 생성", "HuggingFace 토큰을 입력해 주세요.", parent=win)

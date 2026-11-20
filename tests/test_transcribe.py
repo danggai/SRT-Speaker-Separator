@@ -340,5 +340,63 @@ def line_building():
 
 
 @test
+def max_chars_survives_restart_and_shows_on_drop(app):
+    from harness import new_app, pump, toplevels
+    from srt_editor.config import _load_config, _save_config
+
+    def dialog_chars(a, drag_to=None):
+        a._ask_auto_transcribe(os.path.join(fresh_dir(), "새영상.mp3"))
+        pump(0.3)
+        win = [w for w in toplevels() if w.title() == "자막 자동 생성"][-1]
+        found = []
+
+        def walk(x):
+            for c in x.winfo_children():
+                if type(c).__name__ == "PurpleSlider":
+                    found.append(c)
+                walk(c)
+        walk(win)
+        val = found[0]._value
+        if drag_to:
+            sl = found[0]
+            sl.event_generate("<Button-1>", x=2, y=sl.winfo_height() // 2)
+            for k in range(1, 6):
+                x = int(sl.winfo_width() * (drag_to - sl.from_) / (sl.to - sl.from_) * k / 5)
+                sl.event_generate("<B1-Motion>", x=x, y=sl.winfo_height() // 2)
+            sl.event_generate("<ButtonRelease-1>", x=x, y=sl.winfo_height() // 2)
+            pump(0.2)
+        win.destroy()
+        return val
+    cfg = _load_config(); cfg["transcribe_max_chars"] = 17; _save_config(cfg)
+    app = new_app()
+    eq(dialog_chars(app, drag_to=30), 17, "켜자마자 새 파일을 넣어도 저장된 글자 수")
+    v = app._transcribe_max_chars
+    expect(v != 17, f"슬라이더로 바꿈 ({v})")
+    app = new_app()
+    eq((app._transcribe_max_chars, dialog_chars(app)), (v, v), "바꾼 값도 다시 켜면 그대로")
+
+    # 숫자 칸에 쓰고 Enter 없이 바로 생성 시작
+    import tkinter as tk
+    app._auto_transcribe = lambda *a, **k: None
+    app._ask_auto_transcribe(os.path.join(fresh_dir(), "새영상2.mp3"))
+    pump(0.3)
+    win = [w for w in toplevels() if w.title() == "자막 자동 생성"][-1]
+    ws = []
+
+    def walk(x):
+        for c in x.winfo_children():
+            ws.append(c)
+            walk(c)
+    walk(win)
+    ent = next(w for w in ws if isinstance(w, tk.Entry) and w.get() == str(v))
+    ent.delete(0, "end")
+    ent.insert(0, "14")
+    btn = next(w for w in ws if type(w).__name__ == "FlatButton" and w.itemcget("label", "text") == "생성 시작")
+    btn.event_generate("<ButtonRelease-1>", x=3, y=3)
+    pump(0.2)
+    eq((app._transcribe_max_chars, _load_config().get("transcribe_max_chars")), (14, 14), "입력만 하고 시작해도 반영·저장")
+
+
+@test
 def toolbar_layout(app):
     steps(toolbar_button_asks_before_replacing_and_opens_options, slide_opens_and_closes_sections_smoothly, narrow_window_hides_shortcut_buttons_and_restores_them)
