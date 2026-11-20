@@ -188,7 +188,7 @@ def split_at_pauses(seg, pause=None, min_chars=None):
         chars = sum(len((x.get("word") or "").strip()) for x in cur)
         gap = (nxt["start"] - w["end"]) if "start" in nxt and "end" in w else 0.0
         ends = (w.get("word") or "").rstrip("\"'”’)]").endswith(("?", "!", ".", "…", "~"))
-        if chars >= min_chars and (gap >= pause or ends):
+        if ends or (chars >= min_chars and gap >= pause):   # "어?"처럼 짧아도 문장 끝이면 나눔 (말 주고받는 곳)
             pieces.append(cur)
             cur = []
     pieces.append(cur)
